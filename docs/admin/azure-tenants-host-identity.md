@@ -61,6 +61,8 @@ Open `/admin/tenants` and select **Add connection**.
 | Azure cloud | The cloud the tenant lives in |
 | Authentication method | **Host identity (managed identity / az login)** |
 
+{% include screenshot.html file="admin-tenant-host-identity.png" title="Host-identity form with read-only onboarding" caption="The explanatory panel replaces stored credential fields. This is an unsaved test-data example, not a verified managed identity or CLI session; no Azure connectivity or discovery was tested." %}
+
 There are no credential fields — the method shows an explanatory panel instead. Save, then **Test** and **Discover**.
 
 ## Capabilities and limits

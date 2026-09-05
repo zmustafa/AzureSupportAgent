@@ -17,6 +17,7 @@ feature_ids: [ROUTE:dashboard]
 
 The Dashboard is the application's home base. Use it after sign-in to finish setup, choose a primary workload, review Mission readiness and cached estate signals, resume recently visited work, and jump to the feature that owns the underlying detail.
 
+{% include screenshot.html file="core-dashboard.png" title="Dashboard workload readiness and saved activity" caption="Start with the selected workload, readiness, and source coverage, then open the owning feature. This synthetic browser example does not represent a live Azure scan or prove that setup and downstream access were verified." %}
 
 ### When to use it
 

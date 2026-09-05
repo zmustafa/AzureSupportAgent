@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import hash_password
@@ -122,12 +122,14 @@ class PasswordReset(BaseModel):
 async def _tenant_user_or_404(
     db: AsyncSession, principal: Principal, user_id: str,
 ) -> User:
+    # Authentication may have cached this user before an access-control lock was
+    # acquired. In particular, never check last-admin safety against a stale status.
     user = (
         await db.execute(
             select(User).where(
                 User.id == user_id,
                 User.tenant_id == principal.tenant_id,
-            )
+            ).execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if user is None:
@@ -286,24 +288,31 @@ async def update_user(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
+    if body.role_ids is not None or body.status is not None:
+        # Lock before reading the target or invariant, not just before the write.
+        await _lock_admin_invariant(db)
     user = await _tenant_user_or_404(db, principal, user_id)
-    # Validate the lockout invariant before changing or committing any other field. A rejected
-    # role change must not still persist an email/status edit from the same request.
+    # Validate everything before staging any edit: a rejected request must not leave
+    # profile, session or assignment changes that a subsequent flush could persist.
     if body.role_ids is not None:
         await _validate_role_ids(db, principal, body.role_ids)
-        await _ensure_not_last_admin(db, principal, user, body.role_ids)
     if body.group_ids is not None:
         await _validate_group_ids(db, principal, body.group_ids)
-    if body.email is not None:
-        user.email = body.email.strip().lower()
-    if body.display_name is not None:
-        user.display_name = body.display_name
     if body.status is not None:
         if body.status not in ("active", "disabled"):
             raise HTTPException(status_code=400, detail="status must be 'active' or 'disabled'.")
         # Don't let an admin disable their own account (lockout safety).
         if body.status == "disabled" and user.id == principal.subject:
             raise HTTPException(status_code=400, detail="You cannot disable your own account.")
+    if body.role_ids is not None or body.status is not None:
+        await _ensure_not_last_admin(
+            db, principal, user, body.role_ids, new_status=body.status,
+        )
+    if body.email is not None:
+        user.email = body.email.strip().lower()
+    if body.display_name is not None:
+        user.display_name = body.display_name
+    if body.status is not None:
         user.status = body.status
         if body.status == "disabled":
             await revoke_all_for_user(db, user.id, commit=False)
@@ -361,6 +370,7 @@ async def delete_user(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
+    await _lock_admin_invariant(db)
     user = await _tenant_user_or_404(db, principal, user_id)
     if user.id == principal.subject:
         raise HTTPException(status_code=400, detail="You cannot delete your own account.")
@@ -374,10 +384,43 @@ async def delete_user(
     return {"ok": True}
 
 
+async def _lock_admin_invariant(db: AsyncSession) -> None:
+    """Serialize direct-admin removals across sessions/workers until their commit.
+
+    The immutable built-in role is a shared coordination row (across tenants).
+    Updating a non-key column to itself obtains a PostgreSQL row lock and starts
+    SQLite's write transaction; SELECT FOR UPDATE alone would not lock SQLite.
+    Do this before target/invariant reads and retain this same transaction through
+    all writes. Helpers must use commit=False; get_db rolls back rejected requests
+    when it closes their session. No role data is changed or seeded here.
+
+    PostgreSQL's default READ COMMITTED isolation re-reads after the lock wait.
+    A pre-existing stricter-isolation snapshot can instead abort with a database
+    serialization error; it must never be treated as permission to skip the check.
+    """
+    await db.execute(
+        update(Role)
+        .where(
+            Role.name == "admin",
+            Role.is_system.is_(True),
+            Role.tenant_id == "default",
+        )
+        .values(description=Role.description)
+        .execution_options(synchronize_session=False)
+    )
+
+
 async def _ensure_not_last_admin(
-    db: AsyncSession, principal: Principal, user: User, new_role_ids: list[str],
+    db: AsyncSession, principal: Principal, user: User, new_role_ids: list[str] | None,
+    *, new_status: str | None = None,
 ) -> None:
-    """Block changes that would remove the final direct admin from this tenant."""
+    """Protect the final ACTIVE direct built-in admin under _lock_admin_invariant.
+
+    Omitted roles/status preserve the current value. Inactive users, custom roles
+    and group-derived admin permissions are not direct recovery administrators.
+    """
+    if user.status != "active":
+        return
     admin_role = (
         await db.execute(
             select(Role).where(
@@ -392,7 +435,10 @@ async def _ensure_not_last_admin(
     # Is this user currently an admin (directly)?
     current = await user_role_ids(db, user.id)
     user_is_admin = admin_role.id in current
-    will_be_admin = admin_role.id in new_role_ids
+    will_be_admin = (
+        (new_status if new_status is not None else user.status) == "active"
+        and admin_role.id in (new_role_ids if new_role_ids is not None else current)
+    )
     if user_is_admin and not will_be_admin:
         others = (
             await db.execute(
@@ -402,7 +448,9 @@ async def _ensure_not_last_admin(
                     UserRole.role_id == admin_role.id,
                     UserRole.user_id != user.id,
                     User.tenant_id == principal.tenant_id,
+                    User.status == "active",
                 )
+                .limit(1)
             )
         ).scalars().all()
         if not others:

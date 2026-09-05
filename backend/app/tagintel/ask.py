@@ -121,7 +121,7 @@ def answer(question: str, census: dict[str, Any], resources: list[dict[str, Any]
             "kind": "keys",
             "answer": f"{len(matches)} tag keys match '{q}'.",
             "data": [{"key": k["key"], "count": k["count"], "category": k["category"]} for k in matches],
-            "generated_query": f"resources\n| where isnotempty(tags)\n| project id, name, tags",
+            "generated_query": "resources\n| where isnotempty(tags)\n| project id, name, tags",
         }
     return {
         "kind": "unknown",

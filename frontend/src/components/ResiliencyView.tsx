@@ -245,7 +245,7 @@ export function ResiliencyPanel() {
   const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 300_000 });
   const canEdit = hasEffectivePermission(me.data, "resiliency.admin");
 
-  const meta = useQuery({ queryKey: ["resiliency", "meta"], queryFn: api.resiliencyMeta });
+  const meta = useQuery({ queryKey: ["resiliency", "meta"], queryFn: api.resiliencyMeta, retry: false });
   const snapshot = useQuery({
     queryKey: ["resiliency", "snapshot", scope],
     queryFn: () => api.resiliencySnapshot(scope),
@@ -464,6 +464,35 @@ export function ResiliencyPanel() {
                       data-testid="resiliency-note">{note}</div>}
         {/* On every tab: a reader who switched tabs mid-run must still see it is running. */}
         <AnalysisProgress job={job.data?.job} />
+        {scopeReady && snapshot.isError && (
+          <div role="alert" data-testid="resiliency-snapshot-error"
+               className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+            <p>Could not load the saved recovery analysis. {formatError(snapshot.error)}</p>
+            {snap?.report_exists && <p className="mt-1 text-xs">Showing the last loaded analysis.</p>}
+            <button onClick={() => void snapshot.refetch()} disabled={snapshot.isFetching}
+                    className="mt-2 rounded border border-rose-300 px-2 py-1 text-xs font-medium disabled:opacity-50">
+              {snapshot.isFetching ? "Retrying…" : "Retry saved analysis"}
+            </button>
+          </div>
+        )}
+        {/* Metadata only supplies labels/columns. Its loading or failure must not hide
+            the independently loaded report, resource list, or analysis history. */}
+        {snap?.report_exists && (meta.isPending || meta.isError || !scenarios.length) && (
+          <div role={meta.isPending ? "status" : "alert"} data-testid="resiliency-meta-status"
+               className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <p>{meta.isPending ? "Loading recovery scenario definitions…"
+              : meta.isError ? `Could not load recovery scenario definitions. ${formatError(meta.error)}`
+              : "No recovery scenario definitions were returned."}</p>
+            <p className="mt-1">You can still view saved resources and any available history.
+              {scenarios.length > 0 && " Showing the last loaded scenario definitions."}</p>
+            {!meta.isPending && (
+              <button onClick={() => void meta.refetch()} disabled={meta.isFetching}
+                      className="mt-2 rounded border border-amber-300 px-2 py-1 font-medium disabled:opacity-50">
+                {meta.isFetching ? "Retrying…" : "Retry scenario definitions"}
+              </button>
+            )}
+          </div>
+        )}
         {/* Above the content and on EVERY tab: an empty grid on a scope we could not read
             is indistinguishable from a clean one, and the Overview banner is below the fold. */}
         {estateUnreadable && (
@@ -481,7 +510,13 @@ export function ResiliencyPanel() {
                data-testid="resiliency-no-scope">
             Choose a workload or subscription to begin.
           </div>
-        ) : !snap?.report_exists ? (
+        ) : !snap && snapshot.isPending ? (
+          <div role="status" data-testid="resiliency-loading"
+               className="rounded-xl border bg-white p-10 text-center text-sm text-gray-600">
+            Loading saved recovery analysis…
+          </div>
+        ) : !snap && snapshot.isError ? null
+        : !snap?.report_exists ? (
           <NeedsAnalysis onAnalyze={analyze} running={running}
                          startedAt={job.data?.job?.started_at}
                          message={job.data?.job?.messages?.slice(-1)[0]?.message ?? ""} />

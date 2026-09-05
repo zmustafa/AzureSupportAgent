@@ -193,7 +193,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
           <div className="flex items-center gap-2">
             <span className="text-xl">🛡️</span>
             <h1 className="text-lg font-bold text-gray-800">Azure Policy</h1>
-            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">Governance toolkit</span>
+            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand-dark">Governance toolkit</span>
           </div>
           <div className="flex items-center gap-2">
             {workloads.length > 0 && (

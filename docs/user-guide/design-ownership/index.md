@@ -21,7 +21,7 @@ Design & Ownership brings architecture context, operational knowledge, accountab
 | [Know-Me]({{ site.baseurl }}/user-guide/design-ownership/know-me/) | Maintain support-ready workload knowledge derived from architecture memory. |
 | [Ownership]({{ site.baseurl }}/user-guide/design-ownership/ownership/) | Maintain owners and teams, assignments, coverage, suggestions, and attestations. |
 | [Estate Graph]({{ site.baseurl }}/user-guide/design-ownership/estate-graph/) | Explore relationships, paths, blast radius, and cached operational overlays. |
-| [Network and DNS Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/network-dns-diagnostics/) | Prove reachability and name resolution from inside the network, with Azure evidence beside the result. |
+| [Network and DNS Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/network-dns-diagnostics/) | Observe reachability and name resolution from a sandbox host and investigate possible Azure configuration causes. |
 | [Sandbox VM Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/sandbox-diagnostics/) | Run bounded in-guest commands, and understand the approval and audit boundaries around them. |
 
 ## Recommended sequence
@@ -32,8 +32,10 @@ Design & Ownership brings architecture context, operational knowledge, accountab
 4. Assign accountable people or teams in [Ownership]({{ site.baseurl }}/user-guide/design-ownership/ownership/).
 5. Use [Estate Graph]({{ site.baseurl }}/user-guide/design-ownership/estate-graph/) to inspect cross-workload dependencies and cached risk signals.
 6. Add [AI Insight Packs]({{ site.baseurl }}/user-guide/design-ownership/ai-insight-packs/) for recurring review of material changes.
-7. When a diagram's expected flow disagrees with reality, prove it with [Network and DNS Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/network-dns-diagnostics/) rather than inferring it from configuration.
+7. When a diagram's expected flow disagrees with observations, use [Network and DNS Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/network-dns-diagnostics/) and inspect every required probe step, not just the aggregate verdict.
 
 ## Shared safety model
 
 These views combine stored application records, cached Azure observations, and optional AI output. Generated diagrams, narratives, suggestions, and runbooks are decision support—not authoritative Azure state. Confirm freshness, scope, and source evidence before operational use. Actions that can change Azure, such as applying ownership tags, require an explicit preview and appropriate write access.
+
+“Read” permission names do not consistently mean no side effects: Graph saves views, profiler creates evidence/findings, and selected architecture/Memory endpoints save content under read grants. Diagnostic traffic and optional sandbox tool installation have operational effects even though the DNS/connectivity tools do not deploy Azure configuration. Use the feature-specific permission and safety sections before granting access or starting a task.

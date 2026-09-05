@@ -13,10 +13,10 @@ feature_ids: [AUTOMATIONS_NAV:playbooks]
 
 ## Prerequisites
 
-- `playbooks.read` and `playbooks.write`.
-- Saved, individually tested workbooks for every step.
-- `playbooks.read` to export; `playbooks.write` to import and run.
-- `tasks.write` to schedule and `tasks.run` to validate immediately.
+- `playbooks.read` to list/export/history; `playbooks.write` to author, import, use AI design, and run. The current UI disables the whole panel without write access.
+- Saved, individually tested workbooks for every step; `workbooks.read` for the picker/evidence and `workbooks.write` to create or correct workbooks.
+- `tasks.read` and `tasks.write` to operate schedules, and `tasks.run` to validate immediately.
+- Reviewed workbook defaults and connection scope. The playbook form has no connection picker or run-time input dialog.
 
 ## Route
 
@@ -25,53 +25,78 @@ feature_ids: [AUTOMATIONS_NAV:playbooks]
 
 ## How to build and validate a playbook
 
-1. Select **New playbook**, or use **Generate with AI** and review the generated draft and proposed workbooks.
-2. Name the playbook and add steps in dependency order.
+1. Select **New playbook**, or use **Generate with AI** and review its draft. Generation does not save anything; proposed workbooks must be created separately in Workbooks and then added as steps.
+2. Name the playbook and add steps in execution order. The form adds/removes steps but does not have a drag/reorder or dependency-graph validator.
 3. Select a workbook for each step.
 4. Set **Always run** or a running-severity threshold of warning, error, or critical.
-5. Where supported by the draft/editor, map static parameters and structured output from earlier steps; ensure the producer emits each referenced key.
+5. Check whether the draft/import uses static `params` or `param_map`. There is no parameter-map editor in this form. A map such as `s1.count` reads a top-level structured key from a prior step; missing keys leave static/default values in place rather than failing closed.
 6. Optionally emit a completion notification event and choose its minimum severity.
-7. Save, select **Run**, and confirm execution.
-8. Open **History** and expand the run to inspect each succeeded, failed, or skipped step and its reason.
+7. Select **Save**, then use **Export** to inspect any mappings and stored connection reference before selecting **Run**. Run starts immediately—there is no additional confirmation dialog.
+8. Read the result modal, open **History**, and expand the run to inspect succeeded, failed, or skipped steps. Open the underlying workbook histories for raw/structured output and rendered commands.
 
-**Expected result:** Enabled steps execute in order; severity gates skip steps below their threshold; the run records the worst severity and per-step outcomes.
+**Expected result:** Steps execute in list order; severity gates compare the highest severity reached so far, starting at info. The run records overall status, highest severity, and per-step outcomes.
 
-**Verification:** Run at least one healthy and one warning/error scenario. Confirm gates, mappings, failure stopping behavior, and the final notification event if enabled.
+**Verification:** Use controlled read-only healthy and warning/error scenarios to check gates and mappings. A returned workbook failure marks the playbook failed but allows later steps; a raised exception stops the sequence. Empty/all-skipped flows can still succeed. Confirm every intended step and any qualifying completion event, not just the badge.
 
 ## How to import, export, and schedule a playbook
 
-1. Select **Export** to download the playbook bundle, including its referenced workbooks.
+1. Select **Export** to download the playbook bundle and its resolvable referenced workbooks. Review commands, defaults, connection/tenant fields, and destinations before sharing; history is not included.
 2. In the destination environment, select **Import** and choose the reviewed bundle.
-3. Inspect the imported playbook and every imported workbook for commands, identifiers, parameters, and connection scope.
+3. Review the import feedback for **step(s) dropped (unresolved)**. Import creates a new playbook, remaps references, and can reuse workbooks matching name/runtime/body/parameters. Reuse does not compare connection, AI, alert, or tile settings; inspect all resolved workbooks, not just new ones.
 4. Run each workbook independently, then run the playbook and inspect per-step history.
-5. Go to `/automations/tasks`, create a playbook-target schedule, and save it paused.
+5. Go to `/automations/tasks`, create a playbook-target schedule, turn **Schedule enabled** off, and select **Create schedule**.
 6. Use **Run now**, inspect task and playbook histories, then enable the schedule.
 
 **Expected result:** The playbook and required workbooks are available in the destination and execute correctly before recurrence is enabled.
 
-**Verification:** Confirm references resolve, no required step is missing, and the scheduled run links to the expected playbook result.
+**Verification:** Confirm the complete intended step count, resolved workbook defaults, and manual/scheduled outputs. The task's playbook link opens the library; use History to locate the corresponding result. The imported-workbook count can include reused definitions.
+
+## How to recover from a partial or failed playbook
+
+1. Pause any referencing schedule before investigating, so a second sequence does not repeat completed work.
+2. Expand the playbook run in **History**. Compare its returned steps with the saved definition: steps after an exception may be absent rather than explicitly marked skipped.
+3. Inspect each executed workbook's History and any external destination. A returned failed workbook can be followed by further execution; do not assume failure stopped downstream actions.
+4. Correct the workbook, parameters, missing reference, or severity gate. Explicitly check mapping inputs because unavailable structured values do not cause automatic rejection.
+5. Start one new full run only after deciding it is safe to repeat earlier steps. There is no retry-failed, resume-from-step, or rollback action.
+
+**Expected result:** Recovery accounts for work already performed and repairs the source of failure without assuming transactional rollback.
+
+**Verification:** Inspect every step of the new run and confirm previous external effects were not unintentionally duplicated. If playbook history is absent, workbook evidence may still exist because overall history is persisted best-effort after execution.
+
+## How to remove an obsolete playbook
+
+1. Disable or archive schedules that reference it and decide what definition/evidence must be retained.
+2. Use **Export** for its definition bundle and inspect History before deleting; export does not contain run evidence.
+3. Select **Delete** only when intended. The action is immediate and has no confirmation, trash, or restore.
+4. Review remaining workbook definitions and provider artifacts separately; playbook deletion does not remove them.
+
+**Expected result:** The playbook definition is removed without undoing prior workbook runs or external actions.
+
+**Verification:** Confirm its card is gone and schedules are paused. Reimport creates a new ID and does not restore old task references or history associations.
 
 ## Safety and rollback
 
-Imported portability does not prove provider compatibility. Pause or archive the schedule first, then remove an invalid playbook only after checking references. External writes require provider-specific rollback.
+Authoring/import writes application definitions; Run executes the saved workbook operations. A gate is workflow logic, not authorization. Playbook execution does not send workbook write confirmation, and there is no follow-up approval dialog here. Command classification and downstream authorization remain relevant; arbitrary host scripts must not be treated as safely read-only.
 
-A gate is workflow logic, not authorization. Every step retains its workbook's provider permissions and side effects. Keep detection and remediation separate. Edit or delete the playbook to stop future manual use, and pause any scheduled task that references it; reverse provider-side changes separately.
+Imported portability does not prove provider compatibility. Keep detection and remediation separate. External effects require provider-specific recovery. Closing the result UI is not cancellation, and execution is not checkpointed across restarts.
 
 ## Troubleshooting
 
-| Symptom | Resolution |
+| Symptom | Cause and resolution |
 | --- | --- |
-| Missing workbook | re-import the complete playbook export and review import feedback. |
-| Duplicate-looking workbook | compare definitions and references before deleting either copy. |
-| Scheduled run differs from manual run | compare connection, parameter, run mode, and actor context. |
-| Unexpected skip | inspect the accumulated severity before that step and its threshold. |
-| Empty mapping | enable structured extraction in the producing workbook and match its key exactly. |
-| Run stops | inspect the first failed step; later steps are not a recovery mechanism unless explicitly designed. |
-| Wrong scope | verify each workbook's connection and parameters, not only the playbook. |
-| [Playbooks overview]({{ site.baseurl }}/user-guide/automations/playbooks/) | Review connector configuration and retry. |
-| [Build and run workbooks]({{ site.baseurl }}/how-to/automations-connectors/workbooks/) | Review connector configuration and retry. |
+| Missing workbook | Inspect import/generation feedback and saved references; create or reimport a reviewed workbook definition and update the affected step. A new workbook ID does not automatically repair old references. |
+| Duplicate-looking workbook | A changed name/runtime/body/parameter signature can create another imported workbook. Compare definitions and references before deleting either copy. |
+| Scheduled run differs from manual run | Compare current saved workbook/playbook definitions, connection, parameters, and trigger. Agent Review/Autonomous is not a playbook run setting. |
+| Unexpected skip | Initial severity is info; thresholds use the highest previous severity, not previous status. Inspect earlier results and confirm that a workbook was selected. |
+| Empty mapping | Missing structured keys are ignored. Enable extraction in the producer, match its top-level key exactly, and inspect retained static/default values. |
+| Run stops or continues unexpectedly | A raised exception stops; a returned failed workbook continues. Read per-step status/error and check all downstream effects before rerunning. |
+| Wrong scope | A stored playbook connection overrides workbook defaults; absent that, each workbook resolves its own default. Review the exported playbook and every workbook's parameters/connection before another run. |
+| Imported settings differ | Workbook reuse compares name/runtime/body/parameters only. Inspect connection, AI, alert, and tile settings on the reused definition. |
+| Green success with no checks | An empty or all-skipped sequence can succeed. Verify every expected step and add an Always run evidence step. |
 
 ## Related docs
 
 - [Schedule and operate tasks]({{ site.baseurl }}/how-to/automations-connectors/scheduled-tasks/)
 - [Notifications]({{ site.baseurl }}/how-to/automations-connectors/notifications/)
+- [Playbooks overview]({{ site.baseurl }}/user-guide/automations/playbooks/)
+- [Build and run workbooks]({{ site.baseurl }}/how-to/automations-connectors/workbooks/)

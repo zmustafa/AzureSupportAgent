@@ -133,13 +133,31 @@ def _scope(workload_id: str | None, subscription_id: str | None,
            management_group_id: str | None) -> tuple[str, str]:
     from app.backup_manager import service
 
-    return service.scope_identity(workload_id, subscription_id, management_group_id)
+    try:
+        return service.scope_identity(workload_id, subscription_id, management_group_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _connection(connection_id: str | None, workload_id: str | None) -> dict[str, Any]:
     from app.backup_manager import service
+    from app.demo_catalog import is_demo_workload
 
-    return service.resolve_selected_connection(connection_id, workload_id)
+    # Catalog demos are synthetic and have no Azure scope to resolve. Only an omitted
+    # connection takes this path: an explicit selection must still be found, enabled,
+    # and compatible with the workload's canonical connection (even for a demo id).
+    if not connection_id and workload_id and is_demo_workload(workload_id):
+        return {}
+    try:
+        if workload_id and not is_demo_workload(workload_id):
+            workload, _ids, _subs = service.workload_context(workload_id)
+            if workload is None:
+                raise LookupError("The selected workload was not found.")
+        return service.resolve_selected_connection(connection_id, workload_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 async def _subscriptions_for(
@@ -188,10 +206,10 @@ class ScopeParams:
         management_group_id: str | None = None,
         connection_id: str | None = None,
     ):
-        self.workload_id = workload_id
-        self.subscription_id = subscription_id
-        self.management_group_id = management_group_id
-        self.connection_id = connection_id
+        self.workload_id = (workload_id or "").strip() or None
+        self.subscription_id = (subscription_id or "").strip() or None
+        self.management_group_id = (management_group_id or "").strip() or None
+        self.connection_id = (connection_id or "").strip() or None
 
 
 # --------------------------------------------------------------------------- meta
@@ -225,8 +243,6 @@ async def analyze_start(
 
     scope_kind, scope_id = _scope(scope.workload_id, scope.subscription_id,
                                   scope.management_group_id)
-    if scope_kind == "none":
-        raise HTTPException(400, "Choose a workload, subscription or management group first.")
     connection = _connection(scope.connection_id, scope.workload_id) or {}
     cid = str(connection.get("id") or "")
     key = f"{principal.tenant_id}|{cid}|{scope_kind}|{scope_id}"

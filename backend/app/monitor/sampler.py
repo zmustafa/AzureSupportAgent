@@ -103,31 +103,43 @@ def _collect_ping_widgets() -> list[tuple[str, dict[str, Any]]]:
 class PingSampler:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
-        self._stop = asyncio.Event()
+        self._stop: asyncio.Event | None = None
 
     def start(self) -> None:
         if self._task is None or self._task.done():
-            self._stop.clear()
-            self._task = asyncio.create_task(self._loop())
+            loop = asyncio.get_running_loop()
+            # Event.clear() does not release its old event-loop binding.
+            stop = asyncio.Event()
+            self._stop = stop
+            self._task = loop.create_task(self._loop(stop))
             logger.info("Monitor ping sampler started (tick=%ss)", TICK_SECONDS)
 
     async def stop(self) -> None:
-        self._stop.set()
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        task, stop = self._task, self._stop
+        if task is None:
+            return
+        if stop is not None:
+            stop.set()
+        if not task.done() and not task.cancelling():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # An earlier stop must not discard a newer run's handles.
+            if self._task is task:
+                self._task = None
+                self._stop = None
 
-    async def _loop(self) -> None:
-        while not self._stop.is_set():
+    async def _loop(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
             try:
                 await self._tick()
             except Exception as exc:  # noqa: BLE001 - never let the loop die
                 logger.warning("Ping sampler tick error: %s", exc)
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=TICK_SECONDS)
+                await asyncio.wait_for(stop.wait(), timeout=TICK_SECONDS)
             except asyncio.TimeoutError:
                 pass
 

@@ -16,7 +16,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:privileged]
 - Product permission `entra.read` for every view on this page. `entra.admin` is only needed to start a collection or change finding state.
 - Tier 1 consent for directory role definitions and assignments.
 - Tier 3 consent for PIM depth: per-role configuration, eligibility schedules, and activation history. Activation *history* is a separate scope from PIM *configuration*, so PIM can be measured while activations remain blind.
-- Entra ID P1 for PIM schedules and Entra ID P2 for PIM depth. A license gap is reported as unlicensed, not as a missing permission.
+- Appropriate P2/ID Governance licensing for PIM. For native activation detail, use `RoleManagement.Read.Directory` for schedule instances and `AuditLog.Read.All` for the PIM audit log; adding Graph write scopes is not the read-only solution.
 - An Azure ARM connection for the cross-plane view. Without it the Azure side is reported as unavailable with a reason, rather than shown as zero.
 - A completed collection for the tenant.
 
@@ -29,10 +29,10 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:privileged]
 1. Open `/entra/privileged` on the **Overview** sub-tab and read the KPI row: global admins, privileged principals, standing privileged, eligible, how many roles are fully configured in PIM, and how many principals hold power in both planes.
 
 2. Treat the standing privileged figure as the headline. Standing privilege is permanent power that never passes through an approval, a justification or an expiry.
-3. Open the **Assignments** sub-tab and switch between standing and eligible assignments. Filter by role tier and by principal type to separate people from service principals and guests.
+3. Open Assignments and switch standing/eligible/all, then search by principal or role. Tier and principal-type filters are API parameters, not current UI selectors. Inspect permanence: the standing lens alone does not prove every active row is permanent.
 4. Search for a principal or a role to narrow the list. Each row carries the role, the assignment kind — active, group-derived or eligible — and the last activation recorded for that principal and role.
 5. Pay particular attention to group-derived assignments. Privilege inherited through a group is the form most often missed in a manual review.
-6. Use the **JIT hygiene** sub-tab for the drift view: privilege that was meant to be just-in-time and quietly became permanent, and eligible roles nobody ever activates.
+6. Use JIT hygiene only with its separate source/error notes and `identity.read`. Its bundled legacy live pipeline has standing candidates but no live schedule-only groups. Use native PIM config/Activations for collected schedule evidence instead of treating demo-only hygiene rows as real history.
 
 **Expected result:** A candidate list of standing assignments to convert to eligibility, and eligible assignments to remove because they are never used.
 
@@ -60,11 +60,17 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:privileged]
 4. Select a tile to filter to that cohort — for example out-of-hours activations. Out-of-hours is judged against your browser's timezone offset, which is shown, rather than against UTC.
 5. Search across person, role, scope, reason and ticket number to follow one thread.
 6. Open a session to read who elevated, the role and scope, when it started and ended, how long it was granted for, the outcome, the justification quality, and whether it was self-service or granted by someone else.
-7. From the session, request what the principal actually did during that activation. This is the only on-demand call to Microsoft in the feature; it reads one window for one session because doing it during a collection would add tens of minutes across a large estate.
+7. Select **what they did** to open the drawer and start its action read immediately. It uses a two-minute padded window and, for Azure activations, the session's own subscription. Read error notes before interpreting an empty result. Attribution checks broad standing-role presence, not exact historical permission for every operation.
 
 **Expected result:** A short list of activations that need an explanation, each with the actions taken during the elevated window.
 
 **Verification:** Confirm the activation and its justification in Microsoft Entra PIM, and confirm the actions against the Azure activity log for the subscription in question.
+
+The following browser fixtures illustrate the session-to-action review, not a live Microsoft Graph read or a computed assessment of privileged activity.
+
+{% include screenshot.html file="identity-activation-ledger.png" title="Privileged activity: review recorded activation sessions" caption="Start with the role, principal and time window on the two modeled Entra sessions. Aggregate facet counts are not populated by this fixture, so the tiles must not be treated as measured review totals." %}
+
+{% include screenshot.html file="identity-activation-actions.png" title="Activation drawer: actions and elevation attribution" caption="Open a session to compare its actions with the attribution labels, which are leads rather than causal proof. The on-demand action read shown here is answered by a fixture, not Microsoft Graph." %}
 
 ## How to check cross-plane power and produce the evidence pack
 
@@ -72,8 +78,8 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:privileged]
 
 2. Read the availability and age of the Azure side first. If the ARM link is unavailable or stale, the page says so with a reason — the correlation is only as current as its weaker half.
 3. Prioritize principals holding power in both planes. A principal who can grant themselves directory roles and also controls subscriptions is a single point of total compromise, and this correlation does not exist in any Microsoft surface.
-4. Open a principal to read the full dossier: effective roles, every assignment including group-derived and eligible, recent activations, the Azure side, and the findings raised against that object.
-5. Produce the evidence pack from the activations export for the window under review. Each row keeps its provenance — the source endpoint the claim came from and the ledger timestamps — so an auditor can see not only what happened but where the statement originated.
+4. Use the principal's Investigate link with `investigate.read`; applicable non-Azure activity may load automatically under `investigate.activity`. The API-only privilege dossier is a separate endpoint, not the link's destination.
+5. Use `/api/entra/privileged/activations-export` for retained sessions in the review window, or Posture's workbook. The Activations tab itself has no export button. The table loads at most 500 sessions, Cross-plane 1,000; neither page count guarantees export completeness.
 6. Store the export as governance material. It contains identity metadata; it contains no secret or certificate value, because none is ever retrieved.
 
 **Expected result:** A dated evidence pack for the review window, plus a named list of cross-plane principals to reduce.
@@ -82,7 +88,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:privileged]
 
 ## Safety and rollback
 
-Every view on this page is read-only. This product does not activate a role, approve a request, create or remove an assignment, or change a PIM policy. Fetching the actions taken during one activation reads Microsoft on demand and still writes nothing. The local writes available from privileged review are finding workflow state and, on the Conditional Access tab, break-glass confirmation — both stored per tenant and reversible here.
+These views do not activate roles, approve requests or change assignments/PIM policies. Action enrichment reads Microsoft and stores a local cache; native refresh also updates the activation ledger, retained up to 100,000 sessions. A cached action result can be older than later events and needs an API `refresh=true` to bypass it. Preserve raw source evidence for consequential conclusions.
 
 Removing standing privilege, converting an assignment to eligible, or tightening an activation policy happens in Microsoft Entra PIM through your approved change process. Plan the rollback before the change: keep at least two confirmed emergency access accounts, stage the removal of standing privilege one role at a time, and re-collect afterwards so the next review sees the new state. Exports and dossiers name real people and real roles — never paste tenant IDs, object IDs, user principal names or justification text into tickets, prompts or shared examples.
 

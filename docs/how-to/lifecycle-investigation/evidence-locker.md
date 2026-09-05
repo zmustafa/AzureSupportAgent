@@ -11,58 +11,55 @@ feature_ids: [PROACTIVE_NAV:evidence, ROUTE:evidence, EVIDENCE_CONTENT_TABS:inve
 
 # Capture and manage investigation evidence
 
-**Exact route:** `/evidence`.
+## Route
+
+Open `/evidence`.
 
 ## Prerequisites
 
 - Product permissions `evidence.read` and `evidence.write` for capture and lifecycle actions.
 - Source permissions for every selected section and a defined retention purpose.
-- A same-tenant case/ticket when attaching evidence.
-
-## Route
-
-**Exact route:** `/evidence`.
+- `workloads.read` for the workload picker. An enabled Jira/ServiceNow connector and `connectors.manage` for the ticket picker; `cases.write` separately for a structured case attachment.
 
 ## How to capture and verify a snapshot
 
 1. Open `/evidence` and select **New snapshot**.
 
-2. Enter a non-sensitive name and choose workload, subscription, or explicit-resource scope.
+2. Enter a non-sensitive name and choose workload, subscription, or explicit-resource scope. Workload capture follows the workload's connection; the other scopes use the default connection.
 3. Include only required sections: inventory, properties, changes, metrics, findings, architecture, memory, or activity.
 4. Choose **standard** or **audit** retention and add non-sensitive tags.
 5. Select **Capture snapshot**.
-6. Record snapshot ID, creation time, creator, size, section counts, retention class, and SHA-256 digest.
-7. Open the snapshot; integrity is verified when content is read.
+6. Open the snapshot and record creation time, creator, retention class, and SHA-256. Use **Export** for metadata including snapshot ID, size, and section counts.
+7. Check the detail view's integrity result. Detail and export verify the digest; content tabs, diff, and shared reads do not independently re-verify it.
 
 **Expected result:** An immutable point-in-time bundle with a recorded digest.
 
-**Verification:** Confirm scope/sections and successful integrity check. Empty sections can reflect source permission or freshness gaps.
+**Verification:** Confirm scope/sections and successful integrity check. Inventory capture does not apply per-membership workload exclusions. Inspect notes: metrics are currently a placeholder, findings require workload scope and saved successful runs, and **Recent changes** does not apply the resolved scope predicate to its last-14-days query. Confirm each resource/change target before including it in the incident's evidence.
 
 ## How to compare and export snapshots
 
 1. Select two snapshots with comparable scope and sections.
 
-2. Run **Snapshot diff** and review added, removed, and changed inventory/findings.
+2. Select **Diff selected** and confirm the before → after heading. Review added, removed, and changed inventory/findings; filter by resource type or finding check ID if needed.
 3. Validate material changes against source systems.
-4. Open a snapshot and select **Export** for its JSON bundle where authorized.
+4. Open a snapshot and select **Export** for its JSON bundle with `evidence.read`; there is no ZIP export or import control.
 5. Verify exported ID, digest, generated time, and section counts, then store securely.
 
 **Expected result:** A point-in-time comparison and portable evidence bundle.
 
-**Verification:** Reopen both snapshots and reproduce key differences; a diff is not meaningful when scope/section selection differs.
+**Verification:** Reopen both snapshots and reproduce key differences; a diff is not meaningful when scope/section selection differs. Only inventory and finding status/severity are compared, and large changed-field values are abbreviated.
 
 ## How to attach or share evidence safely
 
-1. Attach the snapshot to a same-tenant case or supported ticket.
-
-2. If external read-only access is necessary, select **Share read-only link**.
-3. Copy the time-limited token only into an approved secure channel.
+1. Use **Attach to RCA** for a snapshot-metadata linkage marker, not an update to a selected RCA or case. For a case, record its snapshot ID in a note or use the case attachment API with field `evidence_snapshot_ids` and `cases.write`.
+2. Use **Attach to ticket**, then choose an enabled Jira/ServiceNow connector to create a new ticket containing snapshot metadata and SHA. It sends on selection without a separate approval step; it does not upload the whole bundle or attach to an existing ticket.
+3. If sharing is justified, select **Share read-only link** and copy the token/expiry only into an approved secure channel. The UI requests 30 days and does not offer a duration editor; the API accepts a minimum of one day.
 4. Record recipient, purpose, and expiry; do not place the token in public tickets or docs.
 5. After expiry, create a new short-lived link only if access is still justified.
 
-**Expected result:** A traceable pointer or time-limited share; the immutable snapshot content is unchanged.
+**Expected result:** Attachment/share metadata is recorded without changing the content hash. Ticket creation writes to an external system; sharing permits retrieval through the shared API rather than a public anonymous page.
 
-**Verification:** Confirm the intended recipient can access only the expected snapshot and that expiry is correct.
+**Verification:** Confirm the ticket's metadata/SHA and the intended snapshot/expiry. A recipient needs authentication and `evidence.read`, but token lookup does not enforce caller-tenant equality. Do not assume tenant isolation from token possession; neither Trash nor a new share revokes an existing unexpired token.
 
 ## How to trash, restore, or permanently delete evidence
 
@@ -70,15 +67,17 @@ feature_ids: [PROACTIVE_NAV:evidence, ROUTE:evidence, EVIDENCE_CONTENT_TABS:inve
 
 2. Use **Restore** to reverse a mistaken soft deletion.
 3. Use **Delete forever** for one item or **Empty Trash** only after retention/legal-hold review.
-4. Read the confirmation carefully; permanent deletion removes the hash-stamped blob and cannot be undone.
+4. Read the confirmation carefully; purge removes snapshot metadata and attempts deletion of the hash-stamped blob. It cannot be undone through the application.
+
+Standard/audit labels express retention intent, not a legal hold. Both classes allow manual purge. Automatic standard-expiry cleanup is not wired into the current application, so do not rely on the displayed 90-day/seven-year labels to perform cleanup.
 
 **Expected result:** Soft deletion remains reversible; purge is permanent.
 
-**Verification:** Restored items reappear with the same metadata/digest. Purged items no longer appear and must not be assumed recoverable.
+**Verification:** Restored items reappear with the same content/digest and cleared deletion metadata. Purged items no longer appear and must not be assumed recoverable; the purge attempts blob removal but does not certify storage erasure or removal of exported/ticket copies.
 
 ## Safety and rollback
 
-Snapshots are writes, but content is not edited in place. Capture can preserve sensitive metrics, identifiers, memory, and activity. Minimize scope and sections. Trash is rollback for soft delete; purge and Empty Trash have no rollback. A share token is a bearer credential until expiry—handle it like a secret.
+Snapshots are application writes, but content is not edited in place and Azure resources are not changed. Capture can preserve sensitive resource properties, identifiers, memory, and activity. Minimize scope and sections. Trash reverses soft deletion; purge and Empty Trash have no rollback. Treat share tokens as secrets even though shared reads also require authentication and `evidence.read`.
 
 ### Freshness and partial results
 
@@ -86,13 +85,13 @@ A snapshot never refreshes; it preserves what collectors could see at capture ti
 
 ## Troubleshooting
 
-| Symptom | Resolution |
+| Symptom | Cause and resolution |
 | --- | --- |
 | Integrity verification fails | Stop using the bundle, preserve audit details, and capture from authoritative sources again. |
 | Diff is empty | Confirm distinct IDs, times, scopes, and included sections. |
-| Expected section is empty | Check source permission, freshness, scope, and capture selection. |
-| Attach fails | Verify same tenant, target existence, and write permission. |
-| Share expired | Create a new short-lived share; never reuse or publish the old token. |
+| Expected section is empty | Check notes, source permission, freshness, scope, and capture selection. The metrics checkbox does not yet collect samples; repeating capture will not fill that placeholder. |
+| Ticket picker is empty or attachment fails | Picker loading requires `connectors.manage`; attachment itself needs `evidence.write`, an enabled connector, and destination access. Check for a ticket created before a timeout before repeating the request. |
+| Share expired or denied | An expired token needs a newly authorized share; a forbidden read needs authenticated `evidence.read`. Never reuse or publish an old token. |
 
 ## Related docs
 

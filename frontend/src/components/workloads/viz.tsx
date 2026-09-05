@@ -145,10 +145,12 @@ export function HealthRadar({ health, size = 120 }: { health: WorkloadProfile["h
 export function ScoreBadge({ score, band, size = "md" }: { score: number | null; band: string; size?: "sm" | "md" | "lg" }) {
   const dim = size === "lg" ? "h-14 w-14 text-xl" : size === "sm" ? "h-8 w-8 text-xs" : "h-11 w-11 text-base";
   const color = bandColor(band);
+  // Keep the accent fill/ring, but use darker text on the tinted badge surface.
+  const textTone = band === "good" ? "text-green-800" : band === "warn" ? "text-amber-800" : band === "poor" ? "text-red-800" : "text-gray-600";
   return (
     <div
-      className={`flex ${dim} items-center justify-center rounded-full font-bold tabular-nums`}
-      style={{ color, backgroundColor: `${color}1a`, border: `2px solid ${color}55` }}
+      className={`flex ${dim} items-center justify-center rounded-full font-bold tabular-nums ${textTone}`}
+      style={{ backgroundColor: `${color}1a`, border: `2px solid ${color}55` }}
       title={score == null ? "Not analyzed yet" : `Health score ${score}/100`}
     >
       {score == null ? "—" : score}

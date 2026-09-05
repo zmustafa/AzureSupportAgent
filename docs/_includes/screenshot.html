@@ -1,0 +1,11 @@
+<figure class="doc-screenshot" style="margin: 1.5rem 0;">
+  <a href="{{ site.baseurl }}/assets/screenshots/{{ include.file | escape }}" aria-label="View full-size: {{ include.title | escape }}">
+    <img src="{{ site.baseurl }}/assets/screenshots/{{ include.file | escape }}" alt="{{ include.title | escape }}" width="1600" height="1050" loading="lazy" decoding="async" style="display: block; width: 100%; height: auto; border: 1px solid #d1d5db; border-radius: 6px;" />
+  </a>
+  <figcaption style="margin-top: 0.5rem; font-size: 0.875rem;">
+    <strong>{{ include.title | escape }}.</strong>
+    {{ include.caption | escape }}
+    Synthetic example data; names, identifiers and measurements do not describe a live tenant.
+    <a href="{{ site.baseurl }}/assets/screenshots/{{ include.file | escape }}">View full-size screenshot</a>.
+  </figcaption>
+</figure>

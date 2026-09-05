@@ -1115,10 +1115,10 @@ def _diag_covers(settings: list[dict[str, Any]], required: set[str]) -> bool:
     every required individual log category (Activity-Log category check for CIS 6.1.1.2)."""
     for s in settings or []:
         logs = ((s.get("properties") or {}).get("logs")) or []
-        enabled_groups = {str(l.get("categoryGroup", "")).lower() for l in logs if l.get("enabled")}
+        enabled_groups = {str(log_entry.get("categoryGroup", "")).lower() for log_entry in logs if log_entry.get("enabled")}
         if "alllogs" in enabled_groups:
             return True
-        enabled_cats = {str(l.get("category", "")) for l in logs if l.get("enabled")}
+        enabled_cats = {str(log_entry.get("category", "")) for log_entry in logs if log_entry.get("enabled")}
         if required and required.issubset(enabled_cats):
             return True
     return False
@@ -1131,14 +1131,14 @@ def _diag_resource_ok(settings: list[dict[str, Any]], required: set[str]) -> boo
     2.1.7 Databricks log delivery) any enabled log entry suffices."""
     for s in settings or []:
         logs = ((s.get("properties") or {}).get("logs")) or []
-        for l in logs:
-            if not l.get("enabled"):
+        for log_entry in logs:
+            if not log_entry.get("enabled"):
                 continue
             if not required:
                 return True
-            if str(l.get("categoryGroup", "")).lower() in ("alllogs", "audit"):
+            if str(log_entry.get("categoryGroup", "")).lower() in ("alllogs", "audit"):
                 return True
-            if str(l.get("category", "")) in required:
+            if str(log_entry.get("category", "")) in required:
                 return True
     return False
 

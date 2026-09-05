@@ -32,9 +32,15 @@ Select one prompt, edit and save it, or reset it to the built-in seed. Prompt te
 
 With `settings.read` alone, both routes remain visible but the shared Settings wrapper disables mutation controls. Backend prompt and scoring writes require `settings.write`.
 
+{% include screenshot.html file="admin-prompts-chat-agent-default.png" title="Built-in Chat Agent prompt and usage guidance" caption="Inspect the shipped instructions before considering an override. The prompt was not edited, saved, or reset, and no AI operation was invoked; this is configuration text, not a generated response." %}
+
 ### Assessments & Architecture
 
 The page displays assessment severity weights, healthy and at-risk score bands, Workload Health Score signal weights, the nightly-refresh toggle, and architecture category color overrides. Known category overrides use `#rrggbb`; clearing an override restores the built-in color.
+
+{% include screenshot.html file="admin-scoring-assessment-defaults.png" title="Assessment severity weights and score-band defaults" caption="The upper configuration section shows severity weighting, recovery opt-in, and score bands. These are interpretation settings, not measured Azure posture; no values were changed and no assessment was run." %}
+
+{% include screenshot.html file="admin-scoring-workload-health-weights.png" title="Workload Health Score weights and nightly-refresh control" caption="This distinct lower section shows relative signal weights and the nightly-refresh control. Neither was changed or exercised; the current settings update contract does not accept these fields, so their visibility is not proof of persistence." %}
 
 ## Freshness and scope behavior
 

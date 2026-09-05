@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Coroutine
 from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,6 +33,40 @@ router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 require_admin = require_permission("coverage.read")
 _manage = require_permission("coverage.manage")
 log = logging.getLogger("app.api.telemetry")
+_refresh_tasks: set[asyncio.Task[dict[str, Any]]] = set()
+
+
+def _start_refresh(coroutine: Coroutine[Any, Any, dict[str, Any]]) -> asyncio.Task[dict[str, Any]]:
+    """Own the runner independently of its HTTP/SSE waiter, including detached failures."""
+    task = asyncio.create_task(coroutine, name="telemetry-refresh")
+    _refresh_tasks.add(task)
+
+    def _finished(completed: asyncio.Task[dict[str, Any]]) -> None:
+        _refresh_tasks.discard(completed)
+        if not completed.cancelled():
+            exc = completed.exception()
+            if exc is not None:
+                log.error("Telemetry refresh failed", exc_info=(type(exc), exc, exc.__traceback__))
+
+    task.add_done_callback(_finished)
+    return task
+
+
+async def shutdown_refresh_tasks(*, timeout_seconds: float = 5.0) -> None:
+    """Cancel/drain local scans during app shutdown, before shared services are closed.
+
+    The application shutdown coordinator must call this alongside the durable executors.
+    Client disconnects must NOT call it: they detach only their stream/waiter.
+    """
+    tasks = list(_refresh_tasks)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        done, pending = await asyncio.wait(tasks, timeout=max(0.1, timeout_seconds))
+        _refresh_tasks.difference_update(done)
+        if pending:
+            log.warning("Telemetry refresh tasks exceeded the graceful shutdown window")
 
 
 def _settings() -> tuple[int, list[str], int]:
@@ -238,6 +273,33 @@ async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]
     }
 
 
+async def _refresh_snapshot(
+    principal: Principal, scope_kind: str, scope_id: str, *,
+    connection_id: str | None = None,
+    progress: Callable[[int, int, str], Awaitable[None]] | None = None,
+) -> dict[str, Any]:
+    """Collect/cache and record exactly one attempt, regardless of attached clients."""
+    from app.core import coverage_runs, coverage_trends
+
+    snap = await _get_snapshot(
+        principal, scope_kind, scope_id, force=True,
+        connection_id=connection_id, progress=progress,
+    )
+    # A failed attempt can return the previous good snapshot plus scan_error. Do not
+    # re-record that old posture as a new healthy observation (or re-run the scan).
+    if not any(str(snap.get(key) or "").strip() for key in ("scan_error", "error")):
+        coverage_runs.save_run(
+            "telemetry", principal.tenant_id or "default", scope_kind, scope_id, snap,
+            headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
+            resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
+        )
+        coverage_trends.record(
+            "telemetry", principal.tenant_id or "default", scope_kind, scope_id,
+            pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
+        )
+    return snap
+
+
 @router.post("/refresh")
 async def refresh(
     workload_id: str | None = Query(default=None),
@@ -247,22 +309,12 @@ async def refresh(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
-    # Shield so the compute finishes + caches even if the client navigates away mid-refresh.
-    snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True, connection_id=connection_id))
-    scan_failed = bool(str(snap.get("scan_error") or snap.get("error") or "").strip())
-    # Record a compact trend point so this scan can be charted over time.
-    from app.core import coverage_trends, coverage_runs
-
-    if not scan_failed:
-        coverage_trends.record(
-            "telemetry", principal.tenant_id or "default", scope_kind, scope_id,
-            pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
-        )
-        coverage_runs.save_run(
-            "telemetry", principal.tenant_id or "default", scope_kind, scope_id, snap,
-            headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
-            resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
-        )
+    # Shield the TASK, not just collection: history/trends belong to the same runner.
+    # The request-scoped database session remains on this side of the detach boundary.
+    task = _start_refresh(_refresh_snapshot(
+        principal, scope_kind, scope_id, connection_id=connection_id,
+    ))
+    snap = await asyncio.shield(task)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -284,49 +336,45 @@ async def refresh_stream(
     principal: Principal = Depends(require_admin),
 ):
     """TP4 — live coverage scan over SSE: start → progress* (scanned X of N) → done(snapshot).
-    The scan runs as a shielded background task (drained via a queue) so it finishes + caches
-    even if the client disconnects; the result is also recorded as a trend point + saved run."""
+    A tracked, detached runner owns collection, cache, history and trends. Disconnecting
+    stops delivery, not the runner; application shutdown explicitly cancels the runner."""
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
-    tenant_id = principal.tenant_id or "default"
 
     async def _gen():
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        attached = True
 
         async def _progress(done: int, total: int, name: str) -> None:
-            await queue.put({"done": done, "total": total, "resource": name})
+            if attached:
+                queue.put_nowait({"done": done, "total": total, "resource": name})
 
         async def _run() -> dict[str, Any]:
             try:
-                return await _get_snapshot(
-                    principal, scope_kind, scope_id, force=True, connection_id=connection_id, progress=_progress,
+                return await _refresh_snapshot(
+                    principal, scope_kind, scope_id, connection_id=connection_id, progress=_progress,
                 )
             finally:
-                await queue.put(None)  # sentinel
+                queue.put_nowait(None)  # terminal even on failure/cancellation
 
         try:
+            # create_task requires a coroutine. shield returns a Future and is only
+            # appropriate when awaiting an already-owned task, not creating one.
+            task = _start_refresh(_run())
             yield {"event": "start", "data": json.dumps({"scope_kind": scope_kind, "scope_id": scope_id})}
-            task = asyncio.create_task(asyncio.shield(_run()))
             while True:
                 ev = await queue.get()
                 if ev is None:
                     break
                 yield {"event": "progress", "data": json.dumps(ev)}
-            snap = await task
-            from app.core import coverage_trends, coverage_runs
-
-            coverage_trends.record(
-                "telemetry", tenant_id, scope_kind, scope_id,
-                pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
-            )
-            coverage_runs.save_run(
-                "telemetry", tenant_id, scope_kind, scope_id, snap,
-                headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
-                resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
-            )
+            snap = await asyncio.shield(task)
             yield {"event": "done", "data": json.dumps(snap)}
         except Exception as exc:  # noqa: BLE001
-            log.exception("telemetry refresh stream failed")
             yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+        finally:
+            attached = False
+            # Do not retain progress for a disconnected reader or cancel its scan.
+            while not queue.empty():
+                queue.get_nowait()
 
     return EventSourceResponse(_gen())
 

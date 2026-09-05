@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:advisors, POLICY_NA
 
 # Azure Policy
 
-**Product permissions:** `policy.read`; saving drafts, simulations, snapshots, enforcement links, and IaC source requires `policy.write`. The same write permission gates exemption create, update, and delete operations against Azure.
+**Product permissions:** `policy.read` for inventory, analysis, previews and Excel export; `policy.write` for saved simulations, snapshots, drafts, enforcement links, IaC source changes, history deletions and Azure exemption mutations. **Analyze coverage** is an exception: it automatically saves its analysis under `policy.read`.
 
 ## Purpose
 
@@ -19,8 +19,6 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:advisors, POLICY_NA
 Azure Policy provides governance inventory and analysis. It can author proposals, resolve effective policy, estimate blast radius, and build staged rollout plans, but it does not assign or deploy policy definitions or assignments to Azure. The Exemptions tab is the exception to the otherwise analytical workflow: with `policy.write` and a write-enabled connection, it can create, update, or delete Azure policy exemptions.
 
 ## Prerequisites and data sources
-
-### Prerequisites
 
 - An ARM/Resource Graph-capable connection with Reader access to selected scopes.
 - Policy Insights read access for compliance summaries.
@@ -30,8 +28,6 @@ Azure Policy provides governance inventory and analysis. It can author proposals
 
 ## Tabs and actions
 
-### Tabs
-
 - **Overview**: governance KPIs and current inventory summary.
 - **Inventory**: definitions, initiatives, assignments, exemptions, scope tree, and available compliance.
 - **Assignments**: detailed register with scope, definition, effect, enforcement mode, exclusions, and identity.
@@ -39,24 +35,22 @@ Azure Policy provides governance inventory and analysis. It can author proposals
 - **By subscription**: scope-oriented policy view.
 - **Timeline**: assignment/compliance history from captured data.
 - **Pivot builder**: custom analysis across policy dimensions.
-- **Governance**: promotion and governance insights.
-- **Exemptions**: expiry and hygiene analysis.
-- **Effective policy**: resolves inheritance minus excluded scopes and applicable exemptions for a supplied scope.
+- **Governance**: dry-run exposure, attribution, scope density, missing descriptions and recently created assignments.
+- **Exemptions**: expiry/hygiene analysis plus create, edit, preview and remove dialogs.
+- **Effective policy**: matches assignment scope prefixes, removes matching `notScopes`, and attaches exemption records for review.
 - **Advisors**: promote-to-deny candidates, remediation gaps, conflicts, exemption hygiene, and baseline coverage.
 - **Rollout Planner**: streaming simulation for deploy, promote, or finding-driven scenarios.
 - **AI tools**: author JSON, explain a rule, triage a deny, and propose tag governance.
 - **Drift & IaC**: compares stored source-of-truth material with observed policy and proposes reconciliation.
-- **History**: saved simulations and coverage runs.
+- **History**: **Take snapshot**, saved inventory/compliance summaries and count deltas. Saved simulations are on Rollout Planner; saved coverage analyses are on Advisors.
 
 Within **Exemptions**, the **Table** and **Pivot** nested views support scope/group/column filters, saved perspectives, CSV/Excel export, and drill-down. **Pivot builder** also supports reorderable row dimensions, presets, saved local perspectives, date granularity, expand/collapse, CSV, and Excel.
 
 ## Freshness and scope behavior
 
-### Collection and freshness
+Policy inventory is cached persistently by application tenant, connection, workload, and whether compliance was requested. Opening a page reads only that cache, even on a miss. **Refresh** forces a live inventory collection; **Scan compliance** forces collection with Policy Insights summaries. Once compliance is selected in the current page session, subsequent Refresh calls retain that choice. Selecting a workload makes its configured connection authoritative.
 
-Policy inventory is cached persistently by tenant, connection, workload, and whether compliance was requested. A normal load and the basic cached refresh do not scan Azure on a cache miss. Use **Scan Compliance**/the explicit force action to collect live definitions, initiatives, assignments, exemptions, subscriptions, and—when requested—Policy Insights summaries.
-
-Because the cache has no automatic expiry, always inspect `fetched_at`/age. Resource Graph result-size limits can truncate large policy sets. Compliance is slower and permission-dependent; unavailable compliance does not mean compliant.
+Because the cache has no automatic expiry, always inspect `fetched_at`/age and errors. Collection is bounded before workload filtering: definitions and assignments at 2,000 each; initiatives and exemptions at 1,000 each. Subscription-name lookup is capped at 1,000 and management-group names at 2,000. Compliance discovery considers up to 200 subscriptions and summarizes at most 24, with six concurrent requests and `$top=200` per summary. A successful subset makes compliance available; it does not establish complete subscription coverage. Some caps are not separately flagged in the UI, so a warning-free page is not proof of completeness.
 
 ## Workflow overview
 
@@ -78,13 +72,17 @@ A 100% compliant audit assignment is not automatically safe to deny: sample limi
 
 ## Interpretation of results
 
-An effective-policy result is calculated from the loaded assignment/exemption snapshot; it is not a live Azure evaluation trace. Advisor labels such as **safe to promote** are leads derived from available compliance and can be unsafe when the collection is stale, partial, or unrepresentative. Missing compliance is unknown, and a saved simulation is a local point-in-time analysis rather than deployment evidence.
+An effective-policy result is not a live Azure evaluation trace. The resolver tests string-prefix ancestry and `notScopes`; it does **not** expand management-group ancestry for an arbitrary subscription/resource target. It attaches all known exemptions referencing each assignment without checking exemption scope, expiry or initiative reference IDs, and does not subtract them from the count. Verify those separately in Azure.
+
+**Safe to promote** is a lead, not a safety guarantee: once any compliance summary is available, an assignment absent from that summary can be treated as zero non-compliant. Missing assignment-level evidence is therefore unknown even if the card says **safe**. Baseline coverage is keyword matching over assignment names/categories, not proof that required effects, parameters and scopes are enforced. The three shipped baselines contain 8 WAF, 8 MCSB and 7 CIS controls.
 
 ## Exports, history, scheduling, and integrations
 
-### AI, IaC, remediation, and export
+Assignment and exemption tables/pivots provide CSV and Excel. Rollout results provide copy-only CLI and JSON artifacts. Pivot perspectives are browser-local layouts, not saved data or scheduled scans.
 
-AI output is proposal text/JSON; validate aliases, modes, effects, parameters, and resource-provider behavior. Drift compares a locally stored source of truth and returns analysis/reconciliation proposals. It does not synchronize Azure or provide a built-in deployment/export pipeline.
+Rollout Planner attempts to save each completed simulation automatically; verify it appears under **Saved simulations**, since a missing `policy.write` grant can leave a displayed result unsaved. Advisors automatically saves coverage runs. History displays up to 30 snapshot summaries; storage retains at most 60 snapshots, 100 simulations and 100 coverage runs across their respective registries, not a guaranteed quota per connection. Confirm each record's scope before comparing.
+
+AI output is proposal text/JSON; validate aliases, modes, effects, parameters, and resource-provider behavior. **Detect drift** first saves the editor content, then asks AI to compare it with up to 120 summarized assignments and the first 20,000 source characters. Saved source is application-tenant-wide, not per selected Azure connection/workload. Neither drift nor rollout deploys definitions or assignments. There is no dedicated scheduling control in these Policy tabs.
 
 DeployIfNotExists and Modify remediation require assignment identity, location where applicable, suitable role-definition IDs, and Azure remediation tasks. The view highlights gaps but does not execute remediation.
 
@@ -105,6 +103,9 @@ DeployIfNotExists and Modify remediation require assignment identity, location w
 7. Capture a snapshot or save analysis only when the record is needed.
 
 - Policy analysis, simulation, and local saves are read-only with respect to Azure. Exemption apply/remove is not: it performs audited ARM create, update, or delete operations after preview and connection/write checks.
+- The exemption API allows writes when `read_only=false` **or** `auto_execute_writes=true`; the dialog shows direct apply based on `read_only`. It revalidates guardrails, but has no separate approval record, ETag/stale-version check or automatic rollback. Organizational approval is external; this is not a statement about Chat autonomy.
+- The exemption dialog previews generated CLI, not a live before/after diff. It does not expose initiative reference-ID editing; preserve and verify those values separately before modifying a selective initiative exemption.
+- Resource counting narrows by subscription/resource group only. A management-group target does not expand its descendants, and a resource ID narrows to its resource group rather than that single resource. The sample is at most 25 resources. Treat broader estimates and provider errors as unknown impact, not zero breakage.
 - Removing an exemption can immediately restore enforcement. Recreate the previously approved values to recover an accidental update or removal; remove an accidentally created exemption only after checking impact.
 - What-if translates only supported policy-rule patterns into Resource Graph predicates; unsupported results require external testing.
 - Match samples are limited and Resource Graph itself is eventually consistent.
@@ -118,12 +119,14 @@ DeployIfNotExists and Modify remediation require assignment identity, location w
 
 | Symptom | Check |
 | --- | --- |
-| Inventory says never loaded | Use the explicit live scan, not a cache-only refresh. |
+| Inventory says never loaded | Page visits do not collect. Select Refresh for inventory or Scan compliance for inventory plus compliance. |
 | Compliance is unavailable | Verify Policy Insights access, subscription coverage, and connection token/scope. |
 | Assignments appear missing | Check workload filtering, Resource Graph truncation, scope visibility, and cache age. |
 | What-if is unsupported | The rule cannot be translated safely; validate through an external test assignment in audit. |
 | Remediation gap is reported | Add an assignment identity and least-privilege role at the correct scope before external deployment. |
 | Drift does not update Azure | Expected: Drift is analysis only; reconcile through reviewed IaC. |
+| Exemption apply fails although your own CLI succeeds | Apply uses the connection identity, not the signed-in operator. Verify that identity's exemption rights at the target scope; use approved external execution if it should remain read-only. |
+| Saved rollout is absent | Displaying a result does not prove autosave succeeded. Check `policy.write` and reopen Saved simulations before treating it as retained evidence. |
 
 ## Related pages
 

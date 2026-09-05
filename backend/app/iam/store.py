@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import desc, select, update
 
 from app.core.db import SessionLocal
-from app.iam import cache, compose, diff as diff_mod, schema
+from app.iam import cache, compose, diff as diff_mod
 from app.models import IamScanRun
 
 log = logging.getLogger("app.iam.store")

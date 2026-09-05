@@ -81,6 +81,10 @@ The application axis exists because a policy can reach every user in a cohort an
 
 Selecting a cell opens a drill-down listing the policies that produced it, the applications in the class that are not reached, and the members of the cohort left uncovered, flagging those with no MFA method. Both lists are capped samples and say so.
 
+The screenshots below illustrate coverage and exposure with browser fixtures. Their figures are not a computed security assessment of a tenant.
+
+{% include screenshot.html file="identity-ca-coverage.png" title="Conditional Access: coverage across users and applications" caption="Read both the cohort and application axes before treating a control as covered. Unsupported device-registration controls remain unavailable, and sign-in attribution is not measured in this example." %}
+
 ### Derived classes
 
 Two groups sit below the matrix and are labeled **Derived**, because they are conclusions drawn from the analysis rather than targets a policy can name. Neither has a control axis: there is no policy anyone could write to turn them green.
@@ -99,6 +103,10 @@ Expanding a row gives, for each finding, what the exposure means, its blast radi
 
 The row set is exportable as CSV from the button on the page, or from `/api/entra/ca/exposure/export?fmt=csv`.
 
+{% include screenshot.html file="identity-ca-exposure.png" title="Conditional Access: prioritize application-class exposure" caption="Use the worst finding on each application-class row to choose where to investigate next, then return to Coverage for the affected cohort and control. The illustrative ranking is not a live security verdict." %}
+
+For the expanded impact and first-step view, see [How to prioritize application-class exposure]({{ site.baseurl }}/how-to/governance-identity/close-ca-coverage-gaps/#how-to-prioritize-application-class-exposure).
+
 **Policies** is a filterable table of policy name, state, effective user count, excluded user count, controls and application scope. Opening a policy shows its resolved detail together with a sample of the users it effectively covers, a sample of the users excluded from it, and any conflicts that involve it. The samples are capped; large identifier lists are deliberately not sent to the grid.
 
 **Conflicts** lists every detection with a kind, the policies involved, an explanation and the number of principals affected.
@@ -107,11 +115,11 @@ The row set is exportable as CSV from the button on the page, or from `/api/entr
 
 **Simulate** is described under its own heading below.
 
-A policy-as-code export is served by the API at `/api/entra/ca/export` in either JSON or Markdown. The Markdown form is a policy book with one section per policy giving effective and excluded user counts, applications, client app types, controls, the grant operator and a stable fingerprint; the JSON form resolves names alongside the raw identifiers so the artifact is both readable and re-applyable.
+A policy export is served by the API at `/api/entra/ca/export` in JSON or Markdown; there is no policy-export button in the current CA tab. Markdown is a policy book. JSON contains normalized analysis fields, not an unmodified Microsoft Graph create/update payload, so it is review evidence—not a directly re-applicable policy backup.
 
 ### The simulator
 
-The simulator answers "if I make this change, what changes" — never "here is what happens". It computes a baseline result and a proposed result per principal per sign-in context and reports only the difference, in five categories: newly blocked, protection lost, newly challenged, newly granted, and unchanged. Break-glass impact is rendered first and is never collapsed.
+The simulator compares baseline and proposed outcomes per principal **and context**, in six categories: newly blocked, protection lost, newly challenged, newly granted, session restricted and unchanged. These counts are cases, not unique users; one person can contribute in several contexts. Confirmed break-glass impact has its own distinct-principal count and is rendered first.
 
 A run posts to `/api/entra/ca/simulate` with a list of changes, an optional list of sign-in contexts, an optional list of cohorts, a sample size that defaults to 400 and is clamped between 50 and 5000, and optional save and label fields. The change vocabulary is closed: enable, disable, set to report-only, delete, add and modify. Anything else is rejected rather than ignored. The page builds single-policy enable, disable, report-only and delete changes.
 
@@ -119,7 +127,9 @@ Contexts and cohorts are published by `/api/entra/ca/simulate/contexts`, which a
 
 The two user-action contexts behave differently from the application ones, and the difference is not cosmetic. In Entra a policy targets cloud applications, or user actions, or an authentication context — the three are mutually exclusive on the target blade. A policy scoped to *All cloud apps* therefore does **not** protect device registration or security-information registration, and the simulator models that. Treating the wildcard as covering user actions would report almost every tenant as protected against an attack it is wide open to.
 
-Saving a run stores it locally with its input and result. The saved list shows the label, timestamp, headline counts, break-glass impact and a staleness marker when the run predates the current snapshot. Re-running a saved simulation evaluates the same input against the current snapshot; if the change refers to a policy that no longer exists, the re-run is refused with an explanation rather than silently returning a different answer.
+Saving stores the input and result locally, retaining the latest 50 runs per tenant. The list shows label, timestamp, counts, break-glass impact and age relative to the snapshot. **Re-run** updates that saved record's result and timestamp in place; preserve earlier evidence before using it. Invalid new changes return 400, missing saved records 404, and stale saved policy references can return 409. The current list offers Re-run, not an open-result or delete control.
+
+The 13 default contexts share a **20,000 principal/context evaluation budget**; only the first 100 changed cases are returned for display. Inspect `sampling.case_budget_exhausted` in the response: the UI does not separately surface this flag. Always-full cohorts avoid random sampling only within the selected pool; they do not override the global case budget. An empty result cannot certify unprocessed cases.
 
 ## Freshness and scope behavior
 
@@ -165,9 +175,9 @@ The application-class detectors that feed the Exposure tab each answer a differe
 
 Break-glass detection is a heuristic and is labeled as one everywhere it appears. It scores signals such as not being covered by any enforced security policy, being explicitly excluded from one, holding Global Administrator, being cloud-only, matching an emergency naming pattern, having no department or job title, and having no recent interactive sign-in. Guests are never candidates. The decision to accept a candidate is always the operator's, and it is a local annotation: confirming or rejecting an account is stored with the finding state for this product and is never written to Entra.
 
-In the simulator, the distinction that carries the value is between a challenge and an effective block. "Requires MFA" is friction for a user with a registered method and a hard block for a service account that has none, and the model computes that from each principal's capability profile rather than assuming everyone can satisfy a control. Where MFA registration could not be read, the result says how many principals are unknown instead of guessing. Where the run was sampled, it states how many principals were evaluated out of how many exist.
+The simulator distinguishes a challenge from an effective block using modeled capabilities. **Unknown MFA registration is assumed satisfiable**, with a warning that real blocks may be higher; it is not an indeterminate verdict. OR grants use a fixed preferred-control order rather than evaluating every satisfiable branch. Named locations, application classes, device state and user-action targeting are approximations. A low blocked count is not evidence that missing/partial inputs were safely resolved.
 
-Every result carries a confidence label and the published limitations. Read them: the model does not cover Continuous Access Evaluation revocation timing, app-enforced session restrictions inside the application, per-application authentication context inside workloads, live device compliance evaluation, or guest MFA satisfaction from a home tenant beyond what the cross-tenant access policy states. Risk levels are hypothetical inputs, not predictions, and only enabled policies are evaluated.
+Every result is labeled **Modelled locally**. Session restrictions are reported separately from sign-in verdicts: adding one can produce **Session restricted**, and removing one can produce **Protection lost**. The model cannot establish what SharePoint/Exchange actually permits, CAE revocation timing, workload authentication-context behavior or live device compliance. No Microsoft evaluation call runs in this endpoint. Only enabled policies are evaluated; risk contexts are hypothetical inputs.
 
 ## Safety and limitations
 

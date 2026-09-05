@@ -5,8 +5,6 @@ retune the bands without code changes. The evaluator is a pure function over a `
 it is trivially unit-testable."""
 from __future__ import annotations
 
-from typing import Any
-
 from app.quota.model import QuotaResult, RiskLevel
 
 # Defaults (percent). Healthy < watch <= Watch < warning <= Warning < critical <= Critical.

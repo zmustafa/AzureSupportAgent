@@ -76,6 +76,8 @@ Open `/admin/tenants` and select **Add connection**.
 | Client (application) ID | Application (client) ID |
 | Certificate (PEM: private key + certificate) | Contents of `connection.pem` |
 
+{% include screenshot.html file="admin-tenant-service-principal-certificate.png" title="Service-principal certificate form — unsaved" caption="The certificate method requests a combined private-key and certificate PEM instead of a client secret. Credential material is intentionally absent in this test-data draft; no save, certificate validation, Azure connectivity, or Graph consent check occurred." %}
+
 Keep **Read only** enabled. Save, then **Test**, **Discover**, and **Validate EntraID** if Graph access was granted.
 
 The PEM is encrypted at rest and write-only. Leave the field blank on a later edit to keep the stored certificate.

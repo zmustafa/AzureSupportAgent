@@ -520,7 +520,7 @@ export function TelemetryCoveragePanel() {
               <span>{data?.kpis.pct_with_any_diag ?? 0}% with diag</span>
               <span>{data?.kpis.pct_with_all_categories ?? 0}% all categories</span>
               <span>{data?.kpis.pct_to_approved ?? 0}% to approved WS</span>
-              <span className="text-amber-600">{data?.kpis.unknown_destinations ?? 0} unknown dest</span>
+              <span className="text-amber-700">{data?.kpis.unknown_destinations ?? 0} unknown dest</span>
             </div>
           </div>
           {enabled && (
@@ -581,10 +581,10 @@ export function TelemetryCoveragePanel() {
 
         {tab === "coverage" && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-gray-400">Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Resource Graph + Monitor"}</span>
+          <span className="text-gray-500">Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Resource Graph + Monitor"}</span>
           <span className="text-gray-300">·</span>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search resources…" className="w-44 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400" />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+          <select aria-label="Telemetry coverage status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
             <option value="all">All statuses</option>
             <option value="none">🔴 No diagnostics</option>
             <option value="partial">🟠 Partial / drift</option>
@@ -640,7 +640,7 @@ export function TelemetryCoveragePanel() {
           />
         )}
         {!enabled ? (
-          <div className="py-16 text-center text-sm text-gray-400">
+          <div className="py-16 text-center text-sm text-gray-500">
             {scopeReady
               ? <>Pick a workload, then click <b>Load coverage</b> to audit its diagnostic-settings / log coverage.</>
               : "Pick a workload or enter a subscription to begin."}

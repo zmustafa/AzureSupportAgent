@@ -52,6 +52,10 @@ No extra consent is needed for the partner-tenant resolution or the cross-tenant
 
 **Verification:** Confirm each candidate's external user state and creation date on the user object in the Microsoft Entra admin center before removing it. The snapshot has an age; the portal is live.
 
+The screenshots on this page use illustrative browser fixtures, not live directory reads or a computed guest-access assessment.
+
+{% include screenshot.html file="identity-guests-pending-invitations.png" title="Guest review: isolate unaccepted invitations" caption="Set the lifecycle filter to Invitation pending, then review the invitation age and organization for each candidate. Pending is distinct from accepted-unused or not measured; confirm ownership before proposing removal." %}
+
 ## How to find access that was accepted and never used
 
 1. Set the **Lifecycle** filter to **Accepted, never used**.
@@ -91,6 +95,8 @@ No extra consent is needed for the partner-tenant resolution or the cross-tenant
 **Expected result:** A per-organization review list ordered by exposure, with the partners no cross-tenant policy names identified.
 
 **Verification:** Confirm the cross-tenant access settings for that partner tenant in the Microsoft Entra admin center. The verdict is derived from the collected partner list, so a policy added after the last collection will not appear until you refresh.
+
+{% include screenshot.html file="identity-guests-partner-organizations.png" title="Guest review: group the review by partner organization" caption="Use external mail domains to choose a partner cohort, then inspect its people. Policy visibility is unknown in this fixture, so these rows are not a list of partners proven to lack governance." %}
 
 ## How to export the campaign and work it offline
 

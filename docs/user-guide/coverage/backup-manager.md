@@ -19,7 +19,11 @@ feature_ids: [PROACTIVE_NAV:backup-manager, ROUTE:backup-manager, BACKUP_MANAGER
 
 Backup Manager is the operational management plane for Azure Backup and Azure Site Recovery. It is the sibling of Alerts Manager: there the inbox is fired alerts, here it is failed backup jobs; there the rules are alert rules, here they are backup policies; and the destinations are vaults rather than action groups. Backup & DR Coverage remains the separate read-only scoring view, and its findings can be ingested here as a remediation queue.
 
-Some actions mutate Azure. Availability depends on both the signed-in user's permission and the connection's read-only policy.
+Some actions mutate Azure. Availability depends on both the signed-in user's permission and the connection's read-only policy. Local drill records, reference edits, and Cleanup actions have their own permissions and are not Azure apply requests.
+
+> **Screenshot context:** These native application views use isolated synthetic demo data, not live Azure evidence. Demo Azure writes are disabled. Example recovery points, jobs and drills do not prove a real recovery, and displayed demo costs are estimates rather than actual Azure billing.
+
+{% include screenshot.html file="ops-backup-overview.png" title="Backup Manager protection and recovery overview" caption="Start with protection, job health, recovery-point and vault-posture indicators, then inspect the source rows and their timestamps. Missing protection evidence is unknown, not confirmed absence." %}
 
 ## What this module deliberately does not do
 
@@ -44,11 +48,11 @@ Only **stop protection with data retained** exists. A request to stop protection
 ### Data sources
 
 - **Azure Resource Graph** is the spine: protected items, backup instances, policies, jobs, Site Recovery replicated items, and recovery plans, collected from nine independent queries.
-- **ARM configuration reads**, one per vault, for the facts Resource Graph does not expose.
+- **ARM configuration reads**, potentially several per vault, for the facts Resource Graph does not expose.
 - **Azure Cost Management** for invoiced spend, and the **Azure Retail Prices** API for list prices.
 - **Log Analytics** for job history beyond the Resource Graph window.
 
-Every source is fail-soft. A permission gap or unsupported table degrades that one section and is recorded in `errors` rather than failing the analysis.
+Individual Resource Graph failures degrade the affected section and appear in `errors`; if all nine sources fail, the analysis fails and keeps the previous snapshot. Inspect per-vault enrichment errors as well: not every failed supplemental read is represented by the top-level partial flag.
 
 ## Tabs and actions
 
@@ -56,16 +60,42 @@ Every source is fail-soft. A permission gap or unsupported table degrades that o
 - **Protection flow** renders the estate as a Sankey: which subscription, workload, resource type, policy and vault each item flows through, and how it ends up. Columns are configurable, flows can be weighted by item count or by real money, and unprotected resources are drawn as their own branch.
 - **Protection** lists every protected item with its vault, policy, state and latest recovery point, and flags orphaned and stopped items.
 - **Job inbox** clusters failures by root cause against a knowledge base of Azure Backup error codes rather than listing every job, and surfaces chronic failures and backup-window congestion.
-- **Policies** analyses sprawl, drift and retention floors, and models the exact recovery-point impact of a proposed retention change before anything is submitted.
+- **Policies** analyzes sprawl, drift and retention floors, and models recovery-point impact without submitting a policy change. Exact enumeration is bounded; the dialog distinguishes exact and estimated items.
 - **Vaults** scores ransomware readiness per vault and offers the hardening controls that are safe to automate.
 - **Gaps** detects backup-eligible resources with no protection and ingests findings from Backup & DR Coverage, then plans protection for the selected ones.
 - **DR & drills** reports Site Recovery readiness and RPO attainment, and maintains the recovery drill register.
 - **Cost & waste** layers list prices, measured consumption and invoiced spend, and prices recoverable waste.
 - **Managed changes** is the approval ledger: pending, approved, applying, applied, failed, rejected and rolled-back requests.
 
-Tab controls are permission- and capability-dependent. A read-only connection disables every write control even when the signed-in user holds the permission.
+Tab controls are permission- and capability-dependent. A read-only connection disables Azure-management controls even when the signed-in user holds the permission. Local Cleanup/reference operations have separate authorization and are not universally disabled by that connection flag.
+
+The target registry also defines vault creation, backup-policy changes, and auto-protect assignments. A registry entry or permission is not a visible authoring workflow: the current Manager tabs provide retention modeling and vault hardening, not general vault/policy/assignment creation forms.
 
 Above those tabs sits a view strip — **Manager · Fleet · Cleanup** — matching Backup & DR Coverage and Change Explorer. The tabs above answer questions about the selected scope; **Fleet** and **Cleanup** are estate-wide and are therefore a level up rather than peers in the same row.
+
+### Protection inventory
+
+Use **Protection** to trace an item to its source, policy and vault, then inspect its recovery-point age. Stopped and orphaned labels deserve review; retained backup data can still exist and incur charges even when the source is absent.
+
+{% include screenshot.html file="ops-backup-protected-items.png" title="Protected items, recovery points and orphaned sources" caption="Compare each item's state and latest recovery point with its policy and vault. A protected-item row is not a restore test, and an orphan label requires independent confirmation of source absence." %}
+
+### Policy sprawl
+
+The **Policies** view puts duplicate, unused and below-baseline policies beside their retention and item counts. These are investigation cues, not automatic permission to shorten retention or delete a policy; unknown retention must remain unknown rather than zero.
+
+{% include screenshot.html file="ops-backup-policy-sprawl.png" title="Backup policy duplication and retention baseline" caption="Identify policy sprawl and retention exceptions before modeling an impact. A duplicate-looking policy can still serve a distinct scope, and changing retention can prune recovery points." %}
+
+### Vault posture
+
+Read the score with its underlying controls and enrichment warnings. Supported hardening actions and portal-only controls are distinct; a high score cannot compensate for an unreadable control or missing recovery exercise.
+
+{% include screenshot.html file="ops-backup-vault-posture.png" title="Vault posture and ransomware-readiness controls" caption="Use per-vault control coverage to prioritize hardening, then inspect failed, warning and unreadable controls. The posture score is configuration assessment, not a guarantee that recovery will succeed." %}
+
+### Site Recovery
+
+**DR & drills** brings replication health, RPO and drill age together. A healthy replica answers a different question from a recently exercised recovery procedure; neither a displayed demo drill nor a scheduled register entry proves that an actual test ran.
+
+{% include screenshot.html file="ops-backup-site-recovery.png" title="Site Recovery health, replication lag and drill age" caption="Read replication health and RPO alongside drill freshness. These synthetic rows illustrate review only; no test failover or cleanup was executed, and live tests require separate approvals." %}
 
 ## Fleet
 
@@ -77,16 +107,16 @@ The grid is served entirely from stored results and **never reads Azure**. Openi
 
 ### Launching a sweep
 
-Select workloads and choose **Analyze selected**. Each selection starts the same server-side analysis the Analyze button starts on a single scope, so:
+Select workloads and choose **Analyze selected**. One durable batch owns the selected workload list and invokes the same analysis pipeline as a single-scope analysis:
 
 - Analyses continue if you navigate away or close the tab, and the grid reconnects to them when you return.
-- A workload that is already analyzing is not analyzed twice — the launch re-attaches to the running job.
-- **Two analyses run at a time.** A backup analysis is nine Resource Graph queries per subscription plus per-vault configuration reads, Cost Management and retail pricing calls; launching thirty at once would throttle the tenant. The client queues the rest and the server enforces the same cap independently, so a scripted caller cannot bypass it.
-- Starts are spaced so a large batch does not arrive as one burst.
+- Repeated single-scope starts reattach to that scope's running job. Fleet is a separate durable batch path; do not start overlapping single-scope and Fleet work expecting one shared job record.
+- **Two Backup Manager batch items run at a time.** The server owns admission and the queued tail, including restart recovery; the browser does not hold the remaining work. An analysis collects nine Resource Graph sources in bounded subscription batches plus per-vault configuration, cost, and pricing reads.
+- **Cancel pending** cancels queued items, not already-submitted Azure operations. Completed analysis results remain available.
 
-Rows show `analyzing…` with the current phase, `queued`, or `failed` with the error on hover. **Retry failed** re-queues only the failures. Demo workloads are listed but cannot be launched — they are synthetic and composed on read.
+Rows show `analyzing…` with the current phase, `queued`, or `failed` with details on hover. Read the batch bar to distinguish failed, partial, and cancelled items; the row presentation groups those outcomes as failed. **Retry failed** creates a retry batch for failed, partial, and cancelled items, not successful ones. Demo workloads are listed but cannot be launched — they are synthetic and composed on read.
 
-Cost is included in a fleet sweep exactly as it is in a single-scope analysis: Cost Management actuals and retail list prices are both collected, so the money column is real rather than an estimate-only placeholder.
+Cost is collected as in a single-scope analysis, including actuals when available. The Fleet column is nevertheless **Est. cost / mo** from the estimate summary; open Cost & waste to inspect invoiced or allocated actuals.
 
 ### Sorting
 
@@ -122,13 +152,15 @@ One-click selectors pick every orphan, or everything older than thirty days. Pur
 
 Every completed analysis also records a compact history entry — headline protection percentage, counts, cost totals and any source errors, but none of the row-level inventory. History is what makes "how did this workload look last week?" answerable without keeping thousands of rows per run.
 
-The history list groups by scope and offers the standard presets: retain the last N per scope, older than 7 / 30 / 90 days, demo runs, and empty runs. Deletion is two-stage — **Trash** is restorable, **Purge** is permanent and approver-gated.
+The history list groups by scope and offers the current presets: retain the last N per scope, older than 30 / 90 days, demo runs, and empty runs. **Trash** is restorable; **Purge** is permanent and approver-gated, and can be requested directly without trashing first. History's scope grouping is not a connection-specific current-snapshot comparison.
 
 ## Freshness and scope behavior
 
-Backup Manager does **not** read Azure on page load, on tab switch, or when the scope changes. A full estate sweep is expensive, and numbers that move while an operator is working a decision are worse than numbers that are slightly old. Reading Azure happens only when **Analyze backups** is clicked.
+The Manager's ordinary data tabs load the completed snapshot rather than starting an Azure estate sweep on page load, tab switch, or scope change. A full estate sweep is expensive, and numbers that move while an operator is working a decision are worse than numbers that are slightly old. **Analyze backups** explicitly refreshes that snapshot. Scope-picker discovery, a different cost period, retention modeling, and mutation preflights can separately read Azure; legacy inventory/summary APIs are also not cache-only snapshot endpoints.
 
-One analysis produces the data for every tab, so the job count on the Overview is by construction the same set of rows the Job inbox lists. Until a scope has been analyzed, every tab shows the same prompt to analyze rather than silently starting a sweep.
+One analysis supplies the Azure-data sections for every tab. Overview and Job inbox derive from that same snapshot, with different windows and display limits. Until a scope has been analyzed, the Manager tabs show the analyze prompt rather than silently starting a sweep; live ledgers are handled separately.
+
+Overview job totals use a trailing 24-hour window, while Job inbox can show the broader retained job window and applies a display cap. Match those windows before expecting visible row counts to equal the headline. Workload collection currently resolves member subscriptions and collects their backup estate; it is not a per-datasource workload membership filter. Verify resource IDs before acting on a row or attributing all scope costs to that workload.
 
 The analysis runs on the server and survives navigation: closing the tab or moving elsewhere in the app does not abandon it, and returning reconnects to its progress. Progress is reported per phase — resolving scope, reading Resource Graph, checking for orphans, reading vault configuration, analyzing, pricing, saving — with the row count each of the nine Resource Graph sources returned. Starting an analysis for a scope that is already analyzing re-attaches to the running job instead of launching a second sweep.
 
@@ -164,7 +196,10 @@ workspace failures and any aggregate that cannot be safely scoped are reported a
 
 Management-group scope is **analysis-only**. All tabs, filters, portal links, CSV/XLSX exports,
 history and Cleanup remain available, but drafting or applying Azure changes requires narrowing to
-a workload or subscription. This restriction is enforced by both the UI and API.
+a workload or subscription in the UI. Scope-bearing mutation and retention-impact APIs reject a
+management-group request. The decision/apply endpoints operate on ledger IDs rather than an
+analysis scope; review each change's connection and target instead of assuming the picker limits
+those operations.
 
 ## Exports and Azure portal links
 
@@ -267,13 +302,15 @@ Changing the period or the cost type is an explicit action and fetches that peri
 3. Click any bar or ribbon to highlight its complete paths; each node also shows its own weight.
 4. Use a preset, or build a chain and save it as a named perspective for later. Perspectives are stored per browser.
 
-Selecting a node offers the matching action — the unprotected terminal opens Gaps with those resources preselected, a vault opens its posture, a policy opens retention modeling.
+Selecting a node offers a related action: a vault opens its posture and a policy opens the Policies tab, where the intended policy must be selected for modeling. The unprotected action preselects the snapshot's gaps, not just a searched ribbon. Recheck the selection before submission. Flow freshness uses a fixed 48-hour threshold, while Job inbox and DR use their separate reference/tier thresholds.
+
+{% include screenshot.html file="ops-backup-protection-flow.png" title="Trace protection from resource through policy and vault" caption="Follow a branch to understand the protection outcome, then verify targets in the destination tab before acting. Cost weighting may use allocated actuals or estimates; it is not a per-item billing record." %}
 
 ### Sweep the whole estate
 
 1. Open **Fleet** from the view strip at the top of the module. Every workload is listed with the headline of its last analysis; nothing is fetched from Azure to draw the grid.
 2. Sort worst-first (the default) to see what has never been measured, then what has the most gaps.
-3. Select the workloads to measure and choose **Analyze selected**. Two run at a time; the rest queue.
+3. Select the workloads to measure and choose **Analyze selected**. Two batch items run at a time; the server keeps the remaining queue.
 4. Leave the tab if you want — the analyses run on the server. Come back and the grid reconnects to whatever is still running.
 5. Work the worst rows: open a workload to land in its per-scope tabs with the connection already set.
 
@@ -286,7 +323,8 @@ Selecting a node offers the matching action — the unprotected terminal opens G
 
 ## Interpretation of results
 
-- An **orphaned** item is a protected item whose source resource no longer exists; it is still billing. Orphan detection fails open: if the resource sweep cannot run, nothing is reported as orphaned rather than everything.- **RPO attainment** is measured against the retention tier configured in the editable reference, not an Azure setting.
+- An **orphaned** item is a protected item whose source was not found; retained backup data can still bill. If the resource sweep fails, orphan detection is omitted. Its resource lookup is capped, so confirm the source's absence in Azure before treating a row as deleted.
+- **RPO attainment** is measured against the tier in the editable reference, not an Azure setting. Missing recovery-point ages count separately as unknown; an empty eligible set can still yield a 100% display, which is not evidence of recoverability.
 - **Ransomware readiness** is a weighted score over vault controls. Controls that are portal-only are scored but never offered as an action.
 - **Estimated cost** is a list price. It is not a bill, and it will usually differ from invoiced spend because it assumes a full month at the current footprint.
 - **Applied** means the request completed. Only a fresh analysis proves Azure converged.
@@ -306,23 +344,29 @@ Variance refuses to compare a partial period, such as month-to-date, or two peri
 
 ## Approval, apply, and rollback
 
-Every write drafts a managed change. Submission and approval do not touch Azure; only **Apply to Azure** does.
+Every supported Azure mutation drafts a managed change. Submission and approval do not change Azure; only **Apply to Azure** submits the operation. On-demand backup, cancellation of a running Recovery Services job, test failover, and test-failover cleanup are material operations, not read-only diagnostics. Drill-register outcomes, reference edits, and Cleanup write local application state immediately instead.
 
-High-risk targets require **two distinct approvers**. The first approval records the approver and returns the change as awaiting a second; the same person cannot supply both. Such rows are excluded from bulk approval and must be approved individually.
+The `asr_test_failover` target requires **two distinct approvers**. The first approval records the approver and leaves the request pending; the same person cannot supply both. Such rows are excluded from bulk approval and must be approved individually. The target's dual-approval flag, not a generic high-risk label, controls this requirement. Requester/approver separation is not enforced; arrange independent review operationally.
+
+Managed apply remains approval-gated even when chat is autonomous. Its helper checks `read_only=false`, not `auto_execute_writes=false`; a gated connection is recommended, but that mode setting is not an additional API gate. Bulk decision acts on pending rows only. The individual decision API can reject an approved-but-unapplied request, whereas the current UI's bulk Reject skips it. Select carefully: bulk selection is not the Alerts Manager cross-page dependency-closure workflow.
 
 Azure Backup writes are long-running. Apply parks the row in an `applying` state with the operation URL, and a dedicated poller drives it to applied or failed, with a 120-minute deadline. A row that is still applying is not lost if the browser closes.
 
-Optimistic concurrency compares a hash of the target's state captured at draft time. If Azure changed in the meantime, the row is marked stale and must be re-drafted rather than forced.
+Optimistic concurrency runs for updates that carry an expected hash. A mismatch returns 409 and is recorded as **failed** with a state-changed message, not a dedicated `stale` status. Not every operation carries this hash; inspect the operation and fresh Azure state rather than assuming a universal conflict guarantee.
 
-Where a rollback is supported it is prepared as a new reviewed request. Rollback is not available for operations the module refuses to perform in the first place.
+Where a rollback is supported it is prepared as a new reviewed request: a protection create can become stop-with-data-retained; vault-security, vault-alert, and backup-policy updates need a stored before-state; an auto-protect assignment create can become assignment deletion. On-demand backups, job cancellation, test failovers/cleanup, vault creates, and diagnostic creates have no generic rollback here. Reversing a policy setting cannot recover recovery points already pruned.
+
+**Schedule drill** creates a register entry, not scheduled execution of a restore. The UI creates a restore record with a default 180-day cadence and offers Passed/Failed recording with evidence. A completed non-cancelled recurring record creates its next occurrence. Actual Site Recovery test failover defaults to **NoNetwork** and creates billable drill resources; after review/testing, draft and apply cleanup separately.
 
 ## Exports, evidence, and the editable reference
 
-Protected items, jobs, policies, gaps, posture and drills each export to CSV. Export is read-only and audited.
+The CSV API supports protected items, jobs, policies, gaps, posture, and drills. The current UI exposes per-grid CSV buttons for Protection and Job inbox, plus the Overview workbook. CSV and workbook downloads do not mutate Azure; these two endpoints do not themselves write an export audit record.
 
-Applying a change and recording a drill outcome both capture an Evidence Locker snapshot.
+The explicit Evidence API captures a completed snapshot, and drill outcomes can request evidence (the UI does). The current apply and LRO paths do not automatically capture Evidence Locker snapshots, so do not assume that an applied change has an evidence ID.
 
 The failure knowledge base, vault checks, retention tiers, service limits and cost rates live in a versioned, editable reference document with bounded revision history. Editing requires `backup_manager.reference_write`; a revision can be restored, and the whole document can be reset to the shipped seed.
+
+The reference keeps 50 revisions. Its service-limit defaults are planning inputs, not a live quota probe: 2,000 Recovery Services items per vault, 5,000 Backup vault instances, 200 policies, and an 80% warning threshold. Retention modeling enumerates at most 25 candidate Recovery Services items, estimates the rest, and returns at most 200 item-detail rows. Cost detail keeps the top 200 rows; actual-cost cache TTL is six hours and retail-price TTL is seven days. The workbook managed-change sheet is capped at 10,000 rows and reports truncation.
 
 ## Safety and limitations
 
@@ -341,9 +385,9 @@ The failure knowledge base, vault checks, retention tiers, service limits and co
 
 ## Troubleshooting
 
-| Symptom | Resolution |
+| Symptom | Cause and resolution |
 | --- | --- |
-| Every tab asks me to analyze | This is intended. The module never reads Azure on its own. Click **Analyze backups**. |
+| Every Manager tab asks me to analyze | No completed snapshot exists for the selected scope. Click **Analyze backups**; ordinary tab navigation does not start that sweep. |
 | Management-group picker is empty or unavailable | Confirm the selected connection can read the management-group hierarchy. Use **Retry** after correcting access; the picker never falls back to another connection. |
 | Management-group analysis says no visible subscriptions | The group is empty for this connection, or the identity cannot see its descendants. Grant hierarchy and subscription Reader access, then retry. The product will not substitute an all-visible scan. |
 | Management-group analysis is partial | Open the progress details and workbook **Coverage & limitations**. One or more ARG batches, Cost Management subscriptions, Log Analytics workspaces, or cached Backup & DR Coverage subscription scans were unavailable or capped. |
@@ -357,21 +401,24 @@ The failure knowledge base, vault checks, retention tiers, service limits and co
 | Per-item cost looks approximate | It is apportioned. Azure bills backup to the vault, not the item. The rows reconcile to the vault total exactly and each states its basis. |
 | Backup Reports are unavailable | Enable vault diagnostics to a Log Analytics workspace, and use a service-principal or managed-identity connection — pasted tokens cannot query Log Analytics. |
 | A write button is disabled | Check the specific product permission, the connection's `read_only` state, and the capability matrix. |
-| A change is stuck in **applying** | Azure Backup writes are long-running. The poller has a 120-minute deadline; after that the row is marked timed out and must be re-drafted. |
-| A change is marked **stale** | Azure changed after the request was drafted. Analyze again and create a new request instead of forcing the original payload. |
-| I approved a change but it will not apply | It is a high-risk target requiring two distinct approvers. A second, different approver must approve it, and it cannot be approved in bulk. |
+| A change is stuck in **applying** | The poller stops after 120 minutes or 240 polls and records failed/`OperationTimeout`. Check the actual Azure job before any retry: the timeout does not prove Azure cancelled or undid the operation. |
+| A change failed with 409 or an Azure-state-changed message | An expected update hash did not match. Read the live target and prepare a corrected request; repeated unchanged drafts can also indicate a snapshot/hash-shape mismatch requiring application support. Never force the old payload. |
+| I approved a test failover but it remains pending | Its dual-approval flag requires a second, different approver. Use the row-level Approve control; bulk approval skips these requests. |
+| Reject skips an approved Backup Manager row | Bulk decision only accepts pending rows. The individual decision API supports rejecting an approved-but-unapplied row; use an authorized review of that API rather than treating bulk success as cancellation. |
+| Retention impact looks exact for every item | Exact enumeration covers at most 25 candidate Recovery Services items; other items use estimates. Read exact/estimated counts and verify unknown current retention in Azure before planning a decrease. |
 | Restore is not offered anywhere | Intentional and permanent. Perform restores in the Azure portal under the owning team's change control. |
 | A gap cannot be remediated | The preview states why. The most common cause is a target vault in a different subscription from the resource. |
 | A vault redundancy action disappeared | The vault already holds a protected item, after which Azure locks redundancy. |
 | Saved flow perspectives vanished | They are stored per browser. A different browser, machine, or a cleared cache has no access to them. |
 | Fleet says a workload was never analyzed but I analyzed it | The analysis was for a different connection than the one the workload is registered with, or its stored analysis was purged. Analyze it from the Fleet row to record it against the workload's own connection. |
 | A fleet sweep seems slow | Two analyses run at a time on purpose. The header shows how many are outstanding; each row shows its current phase. |
-| A fleet row sat on "analyzing" and then went idle | The job stopped reporting for longer than the grace window — usually a backend restart. Nothing was applied; select the row and analyze again. |
+| A fleet row sat on "analyzing" and then went idle | Check the durable batch status and Last analysis before relaunching: the item may have completed or been requeued after interruption. Reopen Fleet to reconnect; retry failed/partial items only after inspecting the result. |
 | A tab went back to "No backup analysis yet" | The stored analysis for that scope was evicted by the store's scope cap or purged in Cleanup. Analyze the scope again, and purge orphaned scopes so the cap protects the ones you use. |
 | Purge is disabled in Cleanup | Permanent deletion requires `backup_manager.approve`. Trash is available to anyone with read access and is restorable. |
 
 ## Related pages
 
+- [Operate Backup Manager: inspect details, triage jobs and review cost]({{ site.baseurl }}/how-to/coverage/backup-manager/)
 - [Backup & DR Coverage]({{ site.baseurl }}/user-guide/coverage/backup-dr-coverage/)
 - [Alerts Manager]({{ site.baseurl }}/user-guide/coverage/alerts-manager/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)

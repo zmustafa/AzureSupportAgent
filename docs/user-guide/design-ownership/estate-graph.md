@@ -17,7 +17,7 @@ Estate Graph combines workloads, architectures, cached inventory, findings, and 
 
 **Application routes:** `/graph` and `/graph/:focusId`.
 
-![Estate Graph showing connected workload and resource nodes]({{ site.baseurl }}/assets/estate-graph.png)
+{% include screenshot.html file="core-estate-graph.png" title="Estate Graph tenant, workload, architecture, and resource relationships" caption="Use typed relationships to navigate from an estate overview to the owning records. Nodes and edges are synthetic browser fixtures, not live traffic, a fresh Azure scan, or evidence of causality." %}
 
 ## Common use cases
 
@@ -30,7 +30,7 @@ Estate Graph combines workloads, architectures, cached inventory, findings, and 
 
 ## Prerequisites, permissions, and data
 
-- `graph.read` is required; deployments may restrict this permission to administrators.
+- `graph.read` gates graph endpoints, including AI questions, saved-view writes/deletes, and layout preferences. Built-in operator and auditor roles include it; it is not intrinsically admin-only or a no-local-write grant. Owner decoration also calls the ownership resolver with `ownership.read`.
 - Workload definitions, architecture records, and cached inventory populate core nodes and edges.
 - Findings and overlays depend on available assessment, cost, monitoring coverage, Retirement Radar, RBAC, and Change Explorer data.
 - Select the correct Azure connection before interpreting tenant-specific scope.
@@ -44,11 +44,11 @@ Search for nodes, select one to inspect, double-select to expand where supported
 
 ### Path mode
 
-Choose a source and target. The graph highlights the computed path through currently supplied nodes and edges. No path means no relationship is present in the assembled graph; it does not prove that no real-world dependency exists.
+Choose a source and target. The UI requests an **undirected** shortest path through the currently loaded graph model. Hiding a layer changes its display, not the model sent to the path API; a result can include hidden nodes. No path means no relationship was found in that supplied model, not that no real-world dependency exists.
 
 ### Blast mode
 
-Choose a source node to highlight direct and indirect impacted nodes up to the configured depth. The result reports impacted nodes and workloads. Treat this as topology analysis, not a failure simulation.
+Choose a source node to highlight direct and indirect connected nodes. The UI requests an **undirected, three-hop** analysis (the API clamps depth to 1–6). It is not exclusively downstream impact and does not establish that every returned workload would fail. Hiding layers does not remove those nodes from the analysis.
 
 ### Focus, overlays, and drift
 
@@ -60,11 +60,11 @@ Focus a workload before applying overlays or drift. Available overlays are:
 - **Access** — RBAC/access context;
 - **Changes** — recent cached Change Explorer records.
 
-Drift and compare views depend on available snapshots. An empty overlay may mean no findings, no supported data, stale cache, or insufficient permission.
+Drift compares intended architecture membership with cached inventory, not a fresh Azure scan. The API's compare operation compares two workload/subscription scopes, not two historical snapshots; it is not a separate visible Compare tab here. An empty overlay may mean no findings, no supported data, or stale/missing cache. Graph permission gates these aggregate reads; opening a contributing module uses that module's own permission.
 
 ### Additional tools
 
-Use node details, analytics, AI narrative or ask features where enabled, undo/redo for structural view changes, and saved views for a reusable combination of focus, lens, layout, hidden kinds, and overlays. Keyboard shortcuts shown in the UI include fit, blast, search, and clear.
+Use the node inspector's **Open in** links for underlying records. **Estate analytics** computes concentration risk, communities, hygiene, and candidate workloads over the full cached estate, not just the visible canvas. **Ask the graph** also searches the full cached model; narrative uses an estate summary and adds drift for a focused workload. Neither inherits all visual filters. Saved views preserve focus, lens, layout, hidden kinds, and overlays; undo/redo covers local structural view changes. Keyboard shortcuts include fit, blast, search, and clear.
 
 ## Workflow
 
@@ -83,7 +83,7 @@ Node and edge presence means that the relationship was assembled from applicatio
 ## Exports, history, and integrations
 
 - Export the current visible graph as high-resolution PNG.
-- Export current nodes and edges as JSON for analysis or evidence handling.
+- Export current model nodes and edges as JSON for analysis or evidence handling. Unlike PNG, JSON includes loaded hidden-layer nodes; hiding is not redaction.
 - Save named views and delete obsolete ones.
 - Local undo/redo covers visual structural changes during the session; source history remains in the contributing modules.
 - The graph integrates with [Architectures]({{ site.baseurl }}/user-guide/design-ownership/architectures/), [Ownership]({{ site.baseurl }}/user-guide/design-ownership/ownership/), [Assessments]({{ site.baseurl }}/user-guide/assessment-performance/assessments/), cached inventory, coverage, retirement, RBAC, cost, and changes.
@@ -91,7 +91,7 @@ Node and edge presence means that the relationship was assembled from applicatio
 ## Safety and limitations
 
 - Estate Graph is primarily cache-backed and can be stale or incomplete.
-- Hidden nodes and workload filters change path, centrality, and blast results.
+- Workload focus, expansion, and collapse change the supplied model. Layer hiding alone does not exclude nodes from path, blast, or JSON export; estate analytics is separately computed over the full cached graph.
 - The blast-radius tool does not model redundancy, failover, traffic routing, or application behavior.
 - AI narrative is advisory and should be checked against node details and source modules.
 - Exported images and JSON can reveal topology and resource identifiers; store them securely.
@@ -106,7 +106,7 @@ Node and edge presence means that the relationship was assembled from applicatio
 | Search misses a resource | Confirm it is inside cached inventory and the selected connection; try workload or resource name. |
 | No path is found | Expand relevant nodes, unhide node kinds, and verify the relationship exists in architecture/inventory. |
 | Graph is crowded | Focus fewer workloads, hide irrelevant kinds, collapse findings, or change layout. |
-| Export differs from expectation | Export uses the current visible canvas/filter state; fit and reveal required nodes first. |
+| JSON contains hidden resources | JSON exports the loaded model, not only visible layers. Review the artifact before sharing; use a smaller focused model rather than hiding sensitive nodes. |
 
 ## Related docs
 

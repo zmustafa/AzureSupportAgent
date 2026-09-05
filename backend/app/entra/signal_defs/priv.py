@@ -20,7 +20,6 @@ from app.entra.collectors.roles import (
 )
 from app.entra.signals import (
     IMPACT_BINARY,
-    IMPACT_RATIO,
     IMPACT_SATURATING,
     SignalContext,
     SignalSpec,

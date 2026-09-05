@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:performance, ROUTE:performance]
 
 # Run Performance Profiler
 
-![Performance Profiler heatmap]({{ site.baseurl }}/assets/performance-profiler.png)
+> **Screenshot context:** These native application examples use isolated synthetic demo data, not live Azure evidence or measured production performance. Demo Azure writes are disabled. Use the live verification steps below before treating a metric, score or headroom estimate as capacity evidence.
 
 ## Prerequisites
 
@@ -38,6 +38,17 @@ Open `/performance`. Its top-level views are **🔥 Profiler**, **🚀 Fleet**, 
 
 **Verification:** Match the scope, connection, start/end, status, completeness percentage, scan-cap flag, and a sample metric in Azure Monitor. Use the coarser of the configured interval and that AMBA alert's `window_size` when comparing buckets.
 
+## How to recover an interrupted focused stream
+
+1. Read the stream error. A premature disconnect clears the browser's running indicator and refreshes history/Fleet; it does not establish the server task's final status.
+2. Reopen `/performance` with the same workload or subscription and inspect **Profile history** for the same time window. The server task may still be collecting and can save its attempt after the browser disconnects.
+3. Open the saved attempt when available and inspect its status, completeness, and errors. A saved failed attempt is diagnostic history, not a successful profile.
+4. Do not immediately duplicate the scan because browser progress stopped. If the server restarted, do not expect focused-run replay or automatic resumption; use **Fleet** for durable queue tracking and restart recovery.
+
+**Expected result:** An interrupted browser stream is reported rather than remaining indefinitely marked running, and any completed server attempt is discoverable in history.
+
+**Verification:** Match the saved attempt's scope and time window and inspect its terminal status before retrying or using its score.
+
 ## How to analyze the heatmap and all resources
 
 1. Open **Heatmap** and start with highest bottleneck scores and red/amber cells.
@@ -50,6 +61,10 @@ Open `/performance`. Its top-level views are **🔥 Profiler**, **🚀 Fleet**, 
 **Expected result:** A small set of candidate bottlenecks is supported by metric observations.
 
 **Verification:** Reproduce important values in Azure Monitor for the same resource, aggregation, and time window.
+
+{% include screenshot.html file="ops-performance-resource-metrics.png" title="Inspect resource metrics, thresholds and headroom" caption="Compare sparklines and observed values with the applicable threshold, units and time window. Headroom is an interpretation of those inputs, not a tested scaling limit, and absent observations must remain unknown." %}
+
+{% include screenshot.html file="ops-performance-resource-inventory.png" title="Check the profiled estate and reference membership" caption="Use All Resources to compare the discovered footprint with supported, scored rows. Reference membership is not a health verdict; resources without a supported metric definition remain inventory context." %}
 
 ## How to use narrative, findings, tickets, evidence, and PDF
 
@@ -169,7 +184,7 @@ Open `/performance`. Its top-level views are **🔥 Profiler**, **🚀 Fleet**, 
 | Symptom | Resolution |
 | --- | --- |
 | Fleet batch stays queued after deployment | Apply migration `0007_perf_profile_fleet`, confirm database availability, and confirm the Fleet worker started. Restarting is safe because queued and running rows are recovered. |
-| Browser reload loses focused-run progress | Focused SSE progress is browser-memory state. Check history for a terminal attempt; use Fleet for restart-durable execution. |
+| Browser reload loses focused-run progress, or the stream disconnects before completion | Focused progress is browser-memory state. Stream errors clear the local running indicator and refresh history/Fleet, while the server task may continue. Reopen history for the same scope/window before retrying; use Fleet for restart-durable execution. |
 | Cancel appears incomplete | **Cancel pending** stops queued items only. Wait for the claimed workload to finish and for aggregate counts to become terminal. |
 | Many items become partial with `429` or `5xx` errors | Lower metric concurrency, increase Fleet start delay, and let the reported `Retry-After` expire before retrying. Check retry and throttle counters rather than blindly increasing attempts. |
 | Workload times out | Narrow scope or window, validate service-principal login and Azure Monitor access, inspect the last resource/error, then adjust the bounded timeout only with evidence. |

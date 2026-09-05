@@ -63,6 +63,12 @@ The one-click template creates a Container App, Container Apps environment, Post
 - Treat AI output as advisory. Verify evidence and review proposed changes before approval or execution.
 - Decide whether Microsoft Graph features are needed before granting Graph application permissions.
 
+## Choose coverage tools after setup
+
+After [first-run setup]({{ site.baseurl }}/getting-started/first-run/), open `/proactive` and search for coverage to find Monitoring Coverage, Telemetry Coverage, and Backup & DR Coverage. This is a capability directory, not the Dashboard or a set of scan results.
+
+{% include screenshot.html file="admin-onboarding-proactive-coverage-directory.png" title="Proactive Support directory filtered for coverage" caption="The cards explain which coverage question each tool answers. This local test-data view does not show completed scans or verify any OAuth sign-in, AI-provider connection, or Azure connectivity." %}
+
 ## Readiness checklist
 
 - [ ] Deployment owner can create the required Azure resources.

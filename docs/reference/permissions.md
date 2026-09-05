@@ -37,6 +37,7 @@ read-gated route.
 | Surface and route | Open/read | Mutate or author | Effect boundary |
 | --- | --- | --- | --- |
 | Chat (`/chat`, `/c/{chatId}`) | `chat.use` | `chat.use` for chat lifecycle and turns | Application chat state and AI/tool execution; each downstream tool keeps its own approval and Azure authorization boundary. |
+| Workloads (`/workloads`, `/workloads/{id}`) | `workloads.read` | `workloads.write` for membership Refresh and definition changes | Refresh reads Azure, then reconciles the application definition only after complete enumeration. Failed or incomplete enumeration leaves membership unchanged; it does not mutate Azure. |
 | Personal notifications (`/notifications`) | `notifications.read` | `notifications.read` to mark one/all read | Tenant-scoped application read state only. |
 | Notification rules (`/automations/notifications`) | `notifications.manage` | `notifications.manage` | Application routing configuration; later matched events can produce external connector deliveries. |
 | AI Providers, General, Prompts, Scoring (`/admin/...`) | `settings.read` | `settings.write` | Application configuration only, except provider tests/OAuth operations can contact external providers. |
@@ -62,6 +63,10 @@ Backup Manager separates by target as well as by verb: protecting an item, editi
 - Custom roles contain exactly the selected catalog keys. `users.manage` is special: it makes the holder an effective administrator and therefore satisfies every product-permission guard.
 
 Direct and group roles normally contribute to one union. Selecting an active role restricts that session to one already-assigned role. The `rbac.read` legacy key is accepted and migrated to `iam.read` so existing custom roles do not lose IAM access after the route rename.
+
+{% include screenshot.html file="admin-access-built-in-roles.png" title="Application role definitions in Access Control" caption="The built-in role catalog makes the exact permission sets inspectable. This local reference view does not show an Azure role assignment, Graph consent, or a successful authorization test; no roles were changed." %}
+
+See [Manage Access Control]({{ site.baseurl }}/how-to/administration/access-control/) to compare user assignments with this catalog and verify a least-privilege role.
 
 Most feature endpoints have an exact product-permission dependency. Intentional exceptions are limited to authentication/bootstrap callbacks, signed-in identity/profile/active-role operations, non-secret application/provider/connection metadata, expiring chart artifacts, and the generic work-batch router. Work batches resolve their permission from the selected feature and remain tenant scoped; a Deep Review batch is the authenticated chat-owned exception. Public health/version endpoints expose no tenant data.
 

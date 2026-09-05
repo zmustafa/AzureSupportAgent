@@ -13,9 +13,9 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings, ENTRA_NAV:privileged, ENT
 
 ## Prerequisites
 
-- Product permission `identity.read`.
+- Product permission `entra.read` to enter the Entra area and `identity.read` for these embedded panels, their refreshes, registration export and legacy ticket action. Chat requires `chat.use`; principal-dossier links need `investigate.read`.
 - A Microsoft Graph-capable connection with approved user, application, and role-management read permissions.
-- ARM discovery and Key Vault data-plane list/get access for vault expiry checks.
+- ARM discovery, enabled command execution and Key Vault certificate/secret metadata-list access for vault expiry checks. These checks do not need secret values.
 - Jira or ServiceNow only for ticket creation; an enabled AI/chat path for investigation handoff.
 
 ## Route
@@ -39,7 +39,7 @@ The old URLs still work and redirect, so existing bookmarks and links are not br
 
 That last row is the one to watch. A bookmark to a path the redirect table does not name specifically — `/identity/overview`, for instance — lands on Entra ID's posture tab rather than the view you wanted, and nothing on screen explains why. Navigate from the table above instead.
 
-The underlying API is unchanged, so the product permission is still `identity.read` even though you now arrive through an Entra tab.
+The underlying API still uses `identity.read`, including refresh and ticket creation; native Entra's `entra.admin` does not replace it. The Entra shell has its own `entra.read` entry permission.
 
 ![Entra ID findings inbox, the entry point for the identity hygiene review]({{ site.baseurl }}/assets/entra-findings.png)
 
@@ -63,9 +63,9 @@ The underlying API is unchanged, so the product permission is still `identity.re
 1. Open `/entra/privileged`, select the **JIT hygiene** sub-tab, and inspect the PIM snapshot age.
 
 2. Run **Refresh** when absent or stale.
-3. Review standing access, stale eligible, stale active, and recent activation records.
+3. Review the four groups with their source notes. The bundled live legacy collector currently fills standing candidates only; stale eligible, stale active and activation-review groups have no live schedule source in this pipeline. Demo rows are not live evidence.
 4. Check principal, role, assignment age, last activation, and justification.
-5. Validate the candidate in Entra PIM and with the business owner.
+5. Use native `/entra/privileged/assignments`, `/pim` and `/activations` under the `/entra/privileged` prefix for schedule/configuration evidence, then validate in Entra PIM with the business owner. A legacy active-role listing alone does not prove permanence.
 6. Move standing privilege to approved eligibility/JIT externally where appropriate.
 
 **Expected result:** A verified list of privileged-access review candidates.
@@ -78,8 +78,8 @@ The underlying API is unchanged, so the product permission is still `identity.re
 
 2. Follow background progress; navigating away does not cancel the job.
 3. Filter by owner, permission, audience, risk indicator, or credential state.
-4. Open a row to inspect secret/certificate expiry, owners, delegated/application permissions, and portal link.
-5. Export the filtered view to CSV or use the Excel workbook export where shown.
+4. Open a row to inspect credential expiry, owners, requested delegated/application permissions, enterprise-app state and portal link. Manifest permissions are not proof of granted consent; compare native Inventory's granted permissions.
+5. Export the filtered view to CSV, or choose **Excel (all sheets)** for the entire completed registration cache, regardless of filters. This is not the native Entra workbook.
 6. Verify the export count and protect it as sensitive governance metadata.
 
 **Expected result:** A bounded app inventory and review artifact without secret values.
@@ -88,13 +88,12 @@ The underlying API is unchanged, so the product permission is still `identity.re
 
 ## How to investigate or create a ticket
 
-1. From a validated overview finding, select **Investigate** for a contextual chat handoff or **Create Ticket** for a configured connector.
+1. Validate the finding and decide which metadata may leave the product before choosing a handoff.
+2. Select **Investigate** to prefill Chat with the finding and optional workload. Review/redact the composer and confirm its scope before sending; navigation alone does not send the message.
+3. For a ticket, select **Ticket** and then a configured Jira/ServiceNow connector. **Selecting the connector immediately submits the generated finding**; there is no intervening editable ticket-preview form. Use the destination's own form if redaction or extra fields are needed before creation.
+4. Confirm the returned success/reference before retrying, then add owner/deadline and any approved context in the destination. Avoid duplicate submissions after an uncertain response.
 
-2. Review and redact the generated context.
-3. Add impact, owner, due date, and source link without secrets or unnecessary personal data.
-4. Submit and record the returned ticket reference.
-
-**Expected result:** A traceable handoff; no credential, MFA, policy, or directory object is changed by the app.
+**Expected result:** A prefilled Chat composer or a real external ticket. The handoff itself does not change a directory object; any subsequent Chat execution is governed separately and is not guaranteed read-only by this page.
 
 **Verification:** Open the destination and confirm tenant, subject, severity, and link are correct.
 
@@ -104,7 +103,7 @@ Feature collection is read-only; ticket creation writes to an external system. E
 
 ### Freshness and partial results
 
-Overview, PIM, and app registrations use separate caches and refreshes. Partial collector failure can show last-known-good groups beside errors. App enumeration is capped, privileged MFA checks are sampled, Key Vault probes are best-effort, and Graph changes are eventually consistent.
+The three legacy panels use separate caches. Identity hygiene can carry forward a failed empty group as **showing last-known values**; JIT refresh does not have that same merge. Identity hygiene requests at most 400 credential/ownerless results and samples privileged MFA checks (default 50). App registrations defaults to 500 objects, configurable 50–5,000, or Full tenant with a 100,000 safety ceiling and resumable pages. Every blank/zero must be read with the specific panel's errors and source label.
 
 ## Troubleshooting
 

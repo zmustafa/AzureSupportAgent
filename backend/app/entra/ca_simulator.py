@@ -40,11 +40,6 @@ from app.entra.ca_engine import (
     CTRL_SIGNIN_FREQUENCY,
 )
 from app.entra.collectors.ca import (
-    APP_ADMIN_PORTALS,
-    APP_ALL,
-    APP_AZURE_MANAGEMENT,
-    APP_OFFICE365,
-    LEGACY_CLIENT_APPS,
     STATE_DISABLED,
     STATE_ENABLED,
     STATE_REPORT_ONLY,

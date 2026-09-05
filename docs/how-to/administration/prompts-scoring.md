@@ -28,6 +28,8 @@ feature_ids: [ADMIN_NAV:prompts, ADMIN_NAV:scoring]
 
 ## How to edit or reset a system prompt
 
+{% include screenshot.html file="admin-prompts-chat-agent-default.png" title="Inspect the shipped Chat Agent prompt before editing" caption="Use the built-in text and usage guidance as the comparison point for an approved override. No edit, save, reset, or AI invocation occurred in this local capture." %}
+
 1. Select the prompt by its displayed name and description.
 2. Compare the current value with the built-in seed where shown.
 3. Edit the smallest necessary instruction while preserving authorization, approval, data-boundary, and secret-handling rules.
@@ -40,6 +42,10 @@ feature_ids: [ADMIN_NAV:prompts, ADMIN_NAV:scoring]
 **Verification:** Check the new operation, not an in-flight one, and review `/admin/audit` for `ai_prompts.update` or `ai_prompts.reset`.
 
 ## How to tune assessment and architecture settings
+
+{% include screenshot.html file="admin-scoring-assessment-defaults.png" title="Record assessment weights and score bands before tuning" caption="The severity weights, recovery opt-in, and band thresholds establish the configuration baseline to record in step 1. The capture does not show a saved change or an assessment result." %}
+
+{% include screenshot.html file="admin-scoring-workload-health-weights.png" title="Distinguish workload-health weights from assessment weights" caption="The lower-page signal weights and nightly-refresh control are separate from assessment severity weights. No changes were saved; the current update contract does not accept these fields, so verify effective values independently rather than trusting a save banner." %}
 
 1. Record current severity weights, good/warning score bands, Workload Health Score weights, nightly-refresh state, and category colors that are visible.
 2. Change only the approved values. Use valid hex colors for known categories.

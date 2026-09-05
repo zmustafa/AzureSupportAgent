@@ -798,7 +798,7 @@ async def test_cancel_after_page_preserves_checkpoint_and_previous_snapshot(monk
         limit=500, mode="full",
     )
     await reached_page.wait()
-    task = appregs_job._tasks["t1|c1"]
+    task = appregs_job._tasks[("t1", "t1|c1")]
     assert await appregs_job.cancel_job("t1|c1") is True
     await task
     job = await appregs_job.get_job("t1|c1")
@@ -828,7 +828,7 @@ async def test_failed_job_preserves_previous_snapshot_and_exposes_resume(monkeyp
     job = await appregs_job.start_job(
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1", limit=500,
     )
-    task = appregs_job._tasks["t1|c1"]
+    task = appregs_job._tasks[("t1", "t1|c1")]
     await task
     job = await appregs_job.get_job("t1|c1")
     assert job is not None
@@ -862,7 +862,7 @@ async def test_restart_resume_uses_checkpoint_limit_even_if_setting_changed(monk
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
         limit=1000, mode="capped",
     )
-    await appregs_job._tasks["t1|c1"]
+    await appregs_job._tasks[("t1", "t1|c1")]
     job = await appregs_job.get_job("t1|c1")
     assert job is not None
     assert job["status"] == "done"
@@ -891,7 +891,7 @@ async def test_deliberate_mode_change_discards_checkpoint_with_visible_warning(m
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
         limit=500, mode="full",
     )
-    await appregs_job._tasks["t1|c1"]
+    await appregs_job._tasks[("t1", "t1|c1")]
     job = await appregs_job.get_job("t1|c1")
     assert job is not None
     assert job["status"] == "done"
@@ -928,7 +928,7 @@ async def test_start_does_not_spawn_a_second_task_while_running(monkeypatch):
     assert second["id"] == first["id"]
     assert executions == 1
     release.set()
-    await appregs_job._tasks["t1|c1"]
+    await appregs_job._tasks[("t1", "t1|c1")]
 
 
 @pytest.mark.parametrize(("requested", "expected"), [(10, 50), (500, 500), (9000, 5000)])

@@ -57,6 +57,8 @@ Open `/admin/tenants` and select **Add connection**.
 | Client (application) ID | Application (client) ID from step 1 |
 | Client secret | The secret **Value** from step 2 |
 
+{% include screenshot.html file="admin-tenant-service-principal-secret.png" title="Service-principal client-secret form — unsaved" caption="Selecting this method exposes the client ID and client-secret fields. The identifiers are test data and the secret is empty; nothing was saved, and neither Azure connectivity nor Graph consent was verified." %}
+
 Keep **Read only** enabled. Save, then run **Test**, **Discover**, and — if step 4 applies — **Validate EntraID**.
 
 The secret is encrypted at rest and write-only. On a later edit the field shows a placeholder; leave it blank to keep the stored secret, or paste a new value to replace it.

@@ -33,6 +33,8 @@ The valuable output is not the inventory. It is the derived `escalates_to` edge:
 
 Blast radius is a single screen: a scope bar, a canvas, and an inspector column on the right.
 
+The illustrated graphs below use predefined browser-fixture nodes and edges. They demonstrate navigation and interpretation, not backend validation of escalation paths, a live tenant assessment or observed activity.
+
 ### Scope kinds
 
 The scope list is read from the backend, so the picker always matches what the assembler can actually build.
@@ -49,7 +51,11 @@ The scope list is read from the backend, so the picker always matches what the a
 
 Service-principal takeover chains are deliberately kept out of the privileged overview and shown on the escalation map instead. On a real tenant that mesh is hundreds of edges and it buries the answer the overview exists to give.
 
+{% include screenshot.html file="identity-graph-privileged.png" title="Blast radius: group membership reaches a directory role" caption="Follow the example user-to-group membership and group-to-role assignment separately. The intermediate group explains the access path; the diagram does not show an observed elevation." %}
+
 The **federation** scope answers a question no other view can: if that external provider were compromised, whose privilege does the attacker inherit? Entra accepts the provider's tokens — including its multi-factor claim, unless the trust explicitly says otherwise — so every privileged principal on a federated domain is reachable from one external system. Only the tier-0 and tier-1 holders are drawn; every user on the domain would be thousands of identical nodes making a single point. A cloud-only tenant is told that no domain is federated, and a tenant whose domain list could not be read is told that instead of being shown an empty canvas.
+
+{% include screenshot.html file="identity-graph-federation.png" title="Blast radius: federation reaches a privileged user" caption="Trace the example authentication relationship from the federated provider to the privileged principal, then review the trust on Setup and coverage. This is a modeled dependency, not proof of provider compromise." %}
 
 ### Target picker
 
@@ -80,6 +86,10 @@ With nothing selected, the right column lists every escalation primitive with th
 | Can reset another account's credentials | medium |
 | Privileged Authentication Administrator can reset any admin | high |
 | Groups Administrator can write role-assignable membership | medium |
+
+{% include screenshot.html file="identity-graph-escalation.png" title="Blast radius: compare independent escalation paths" caption="Read the named primitive behind each example path before combining separate relationships into a conclusion. Fixture edges illustrate potential paths, not activity or a verified compromise." %}
+
+{% include screenshot.html file="identity-graph-primitive.png" title="Blast radius: isolate the application-administrator path" caption="Select the application-administrator primitive to focus the canvas. In this example, the unrelated nodes and their edge are removed rather than merely dimmed or relabeled." %}
 
 ### Inspector
 

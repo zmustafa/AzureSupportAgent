@@ -96,7 +96,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyyaml
+      - run: pip install pyyaml pillow
       # Regenerate the inventory from application source rather than trusting the committed
       # copy. If a nav registry moved, extraction fails loudly here instead of quietly
       # shrinking the inventory, which would make undocumented features look documented.
@@ -113,3 +113,9 @@ jobs:
       - name: internal links resolve
         working-directory: docs
         run: python _check_links.py
+      - name: screenshot assets are complete and referenced
+        working-directory: docs
+        run: python _validate_screenshots.py
+      - name: screenshot validation rejects broken artifacts
+        working-directory: docs
+        run: python _test_screenshots.py

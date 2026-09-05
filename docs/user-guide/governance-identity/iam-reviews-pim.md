@@ -26,8 +26,8 @@ Entra Access Reviews cover directory roles and group membership. They do not cov
 - Product permission `iam.read`; `iam.review` for every write on the Reviews tab.
 - A cached access snapshot. A campaign certifies a specific snapshot, so the answer to *who had this access, and who signed it off* stays available after the estate has moved on.
 - PIM eligibility requires the PIM collectors to have run for the cached scopes with a connection able to read the PIM schedules. Without that, eligibility is not merely empty — it is unmeasured, and the tab says so.
-- Ownership records improve reviewer routing under the owner strategy; manager routing depends on directory data.
-- The findings engine, the escalation graph and the usage collection supply the per-item context shown to a reviewer. Where usage was not measured, the item says so rather than presenting unmeasured usage as unused.
+- Ownership records can route an item to a scope owner. The manager lookup currently returns no manager; manager strategy falls back to ownership and then an API-supplied fallback, or leaves the item unassigned.
+- The create API supplies up to 500 findings for context but does not pass an escalation graph. Item usage is currently an unmeasured placeholder, even if a separate usage scan exists; inspect Least Privilege and Escalation independently.
 - Evidence packs are written to the evidence registry with an audit retention class.
 
 ## Tabs and actions
@@ -36,7 +36,9 @@ Entra Access Reviews cover directory roles and group membership. They do not cov
 
 The list view creates campaigns and shows their state; selecting one opens the detail view.
 
-**Creating a campaign.** A name, a selector, and a reviewer strategy. Four selectors are offered on screen — all privileged access; external access (guests, Lighthouse delegations and multi-tenant service principals); service principals; and everything the findings engine flagged. Three reviewer strategies are offered — reviewed by the scope owner, reviewed by the principal's manager, and self-attestation. The API additionally accepts a fixed-reviewer strategy, a fallback reviewer, a description, a baseline run id, a due date and reminder days; the create form on screen sets name, selector and strategy only. A campaign is capped at a maximum item count so one careless selector cannot create a review nobody will ever finish.
+**Creating a campaign.** The form offers a name, four selectors (privileged, external, service principals, findings-linked) and three reviewer strategies (owner, manager, self). The API also accepts scope/disabled selectors, fixed strategy, fallback reviewer, description, baseline run ID, due date and reminder days. Creation uses the **current** access rows, even if a baseline ID is supplied; it does not automatically pin that run. Preserve a baseline separately when required.
+
+Creation deduplicates equivalent review keys, retains at most **2,000 items**, and sets `stats.truncated` when it drops the rest; it does not reject an oversized selector. The list returns at most 50 campaigns and detail returns at most **500 items**, with no paging control on the tab. Keep campaigns within that reviewable size and compare returned items with `stats.total` before completion. The external selector's service-principal branch uses presence of an app ID, not verified multi-tenant status.
 
 **Self-attestation is labeled everywhere it appears** — on the card, in the detail header, and in the evidence pack. Principals reviewing their own access is not independent certification and must not be mistaken for it six months later.
 
@@ -48,7 +50,7 @@ The list view creates campaigns and shows their state; selecting one opens the d
 
 **Items carry the context a decision needs**, not just a row: whether the access is held directly or through a group and the group chain if so, whether it is standing privilege that nothing expires, how many escalation paths it reaches full control through, the open findings against it, and a usage note. The usage note exists so unmeasured usage is never presented as unused.
 
-**Re-check** (`POST /api/iam/campaigns/{id}/refresh`) re-evaluates every item against the current snapshot. Items whose access moved are **re-presented**: the row is highlighted, any earlier decision is cleared because it was made about a different grant, and a reason is expected with the new decision. The same pass auto-confirms revocations that are genuinely absent from the latest scan, and reports separately how many items were marked applied while the access is *still there* — a claimed remediation that did not happen is the failure mode a review process exists to catch.
+**Re-check** compares existing item keys with current cached access. It does not add newly matching identities, re-run the original selector, or replace frozen item snapshots. A missing key flags the item and can clear its prior decision; changes outside that key may not be detected. A reason is required when deciding a flagged item. The endpoint then attempts revocation confirmation, but a decision cleared by the first pass is no longer eligible for that confirmation. Verify cloud state independently rather than promising that every successful removal becomes `confirmed_applied`.
 
 **Remediation** (`POST /api/iam/campaigns/{id}/remediation`) generates an ordered script from the recorded revoke and reduce decisions, in `az`, `powershell`, `bicep` or `terraform`. Ordering is group-derived access first, then broadest scope first. **Every step has its rollback in the same file**, in a rollback section at the end — a revoke script without the matching create is not shippable. The script is generated on demand and never stored: a saved script goes stale against a moving estate, and the assignment id it references may already belong to something else. Generation aborts with an error rather than emitting anything that looks like a credential. The product generates the script; a human reads and runs it.
 
@@ -85,7 +87,7 @@ Both grids show only the first page and say `showing the first N — search to n
 ## Freshness and scope behavior
 
 - Both tabs read the cached snapshot; neither triggers a scan. Refresh from the page header — see [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/).
-- A campaign is pinned to the snapshot it was created from. **Re-check** is the control that compares it to the current one; without it, a campaign says nothing about what has changed since it opened.
+- Items freeze the selected rows at creation. A baseline ID is a reference, not automatic run retention; explicitly pin a retained run if the review needs it later.
 - PIM figures are only as current as the last collection, and eligibility specifically depends on the PIM collectors having succeeded for each scope. Check per-scope collector status on Diagnostics.
 - Neither tab honours the scope and workload filter rail.
 
@@ -96,10 +98,10 @@ Both grids show only the first page and say `showing the first N — search to n
 3. Check *All eligible assignments* for **JIT in name only** rows — permanent eligibility with no approval and no MFA is standing privilege wearing a different label.
 4. On **Reviews**, create a campaign with the narrowest selector that covers the decision, and pick a reviewer strategy that is not self-attestation unless self-attestation is genuinely what is wanted.
 5. Activate, then work the items. Record a reason on every non-approve decision.
-6. **Re-check** before completing, so anything that moved is re-presented rather than certified against a stale grant.
-7. Complete, generate the remediation script in the format your change process uses, and read the rollback section before running anything.
-8. Execute externally, refresh the affected scope and directory, then **Re-check** again to confirm the revocations are genuinely absent.
-9. Export evidence once the campaign is closed.
+6. **Re-check** while active and inspect flagged items and cleared decisions; this compares keys, not every property of a grant.
+7. Generate remediation and retain its rollback before approved external execution. Generation marks local remediation state as `generated`; it does not apply changes.
+8. Refresh affected scope/directory data after execution and verify assignments, memberships and remaining paths in Azure/Entra. Re-check while active if useful, but preserve independent verification: missing keys can clear revoke decisions.
+9. Complete only after checking total versus visible items, then **Export evidence**. The UI offers Re-check only while active; there is no completed-campaign reopen control.
 
 ## Interpretation of results
 
@@ -114,7 +116,7 @@ Both grids show only the first page and say `showing the first N — search to n
 
 ## Exports, history, scheduling, and integrations
 
-- Remediation bundles are generated on demand in four formats and are never stored. Download or copy what you generate; regenerating later produces a script against a newer snapshot.
+- Remediation bundles are generated on demand in four formats from the campaign's stored item snapshots, not freshly re-read Azure assignments. Rebuilding the script later does not by itself make those inputs current.
 - Evidence packs are hashed snapshots written to the evidence registry with an `audit` retention class and IAM access-review tags, and are returned with a SHA-256 digest.
 - Campaign creation, activation, each decision, completion and evidence export are all written to the audit log.
 - Due dates and reminder days are accepted by the create endpoint; there is no scheduler UI for them on the tab.
@@ -127,7 +129,7 @@ Both grids show only the first page and say `showing the first N — search to n
 - Completing a campaign does not approve anything that was left undecided, and the artifact says so.
 - The eligible and elevated lenses are server-side filters over collected rows. An uncollected scope contributes nothing to either, and its absence is not evidence that no eligibility exists there.
 - Activation requirements shown here are what was collected from the PIM schedules. Verify against the PIM policy before relying on them for a control statement.
-- A campaign is capped at a maximum item count; a selector that would exceed it is refused rather than silently truncated.
+- A campaign truncates above 2,000 deduplicated items. Its detail view returns only 500 at a time without UI paging. Narrow selectors before creation; a completed status does not certify omitted or undecided items.
 - Break-glass and emergency access should be excluded from revocation decisions by policy. Nothing on this tab prevents a reviewer from revoking one.
 
 ## Troubleshooting
@@ -143,7 +145,9 @@ Both grids show only the first page and say `showing the first N — search to n
 | Evidence export is refused | The campaign is still running. Complete it first; an evidence pack for an open review is a moving target. |
 | A completed campaign is labeled `INCOMPLETE` | Items were never decided. They were not approved. Reopen the review process for them rather than treating the campaign as closed. |
 | Items I already decided are undecided again | They were re-presented by **Re-check** because the underlying access changed. The previous decision was about a different grant and was cleared deliberately. |
-| **Re-check** reports reverted claims | An item was marked applied but the access is still present in the latest scan. Verify the change actually ran in Azure. |
+| **Re-check** clears a revoke decision | The old item key is absent, so the earlier decision is cleared before confirmation. Preserve external verification; absence can also result from lost collection coverage. |
+| Manager strategy leaves items unassigned | Manager lookup is not implemented. Use a known scope owner or an API-supplied fixed/fallback reviewer; inspect reviewer assignments before activating. |
+| Fewer items are visible than the campaign total | Detail returns at most 500 items; creation caps at 2,000. Do not complete based only on visible rows. Use smaller campaigns and inspect `stats.truncated`. |
 | Remediation returns a note instead of a script | No revoke or reduce decisions have been recorded yet. |
 | Remediation generation fails | Generation aborts rather than emitting anything that could be a credential. Report the campaign and format used. |
 | A decision or campaign action returns a permission error | Writes on this tab require `iam.review`; viewing requires only `iam.read`. |

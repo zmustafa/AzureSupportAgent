@@ -156,7 +156,7 @@ def test_seed_discovery_ignores_minimum_candidate_resources(monkeypatch):
         captured.update(kwargs)
         yield {"type": "done", "candidates": [], "meta": {"seed": True}}
 
-    monkeypatch.setattr(api, "resolve_connection", lambda _id: {"id": "conn"})
+    monkeypatch.setattr(api, "get_connection", lambda _id: {"id": "conn"})
     monkeypatch.setattr(api, "discover_from_seed", fake_seed)
 
     async def run():

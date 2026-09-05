@@ -132,14 +132,16 @@ def autofill_todos(todos: list[dict[str, Any]], known: dict[str, Any]) -> int:
         if group == "scope" and ("friendly" in blob or "sub" in blob and "name" in blob):
             names = list(subs.values())
             if len(names) == 1:
-                _fill(t, names[0]); filled += 1
+                _fill(t, names[0])
+                filled += 1
             elif names:
                 _offer(t, names)
             continue
         # Region → auto-fill single region, else suggest.
         if group == "scope" and "region" in blob:
             if len(regions) == 1:
-                _fill(t, regions[0]); filled += 1
+                _fill(t, regions[0])
+                filled += 1
             elif regions:
                 _offer(t, regions, multi=True)
             continue
@@ -147,7 +149,8 @@ def autofill_todos(todos: list[dict[str, Any]], known: dict[str, Any]) -> int:
         if group == "ownership" and owner:
             val = owner["email"] if (t.get("type") == "email" and owner.get("email")) else owner.get("display_name", "")
             if val:
-                _fill(t, val); filled += 1
+                _fill(t, val)
+                filled += 1
             continue
         # Escalation / on-call / customer contacts → suggest the owner (do NOT auto-fill;
         # the on-call group or customer contact is often distinct from the Azure owner).

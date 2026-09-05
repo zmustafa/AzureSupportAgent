@@ -34,6 +34,10 @@ The first two lines are the whole report:
 
 The second line is the denominator and it is never omitted. A count of disabled identities means nothing without how many principals were checkable — anyone the directory could not resolve is **absent from this report, not cleared by it**.
 
+The screenshots below use a separate illustrative browser fixture, not the numbers in the sample sentence above. They are not a computed tenant assessment, live Graph evidence or proof that remediation ran.
+
+{% include screenshot.html file="identity-leavers-exposure.png" title="Disabled Access: live versus restorable exposure" caption="Read the denominator before opening a tier: this fixture has three disabled identities among five principals holding access, with two account states not checked. Unchecked principals are not cleared by the report." %}
+
 ## The two tiers, and why there is no third
 
 | Tier | What is true of it |
@@ -43,9 +47,13 @@ The second line is the denominator and it is never omitted. A count of disabled 
 
 There is deliberately no *residual sessions* tier. Tokens issued before a disable stay valid until they expire — up to about an hour for an access token, and longer for a refresh token unless the resource supports Continuous Access Evaluation. That is real, but Microsoft Graph publishes no "disabled at" timestamp, so the bucket could never be populated. An empty tier would read as *we checked and there are none*, so it is stated under **What this report cannot tell you** instead.
 
+{% include screenshot.html file="identity-leavers-owned-application.png" title="Disabled Access: review the owned application's credentials" caption="Inspect the ownership path separately from the user's disabled state. Disabling an owner does not disable an application's independent credentials; this example is not evidence of an observed application sign-in." %}
+
 ## Two cases that need different handling
 
 **Access held only through a group.** The row shows a `via group` chip. The assignment belongs to the group and serves every other member, so the fix is to **remove the disabled member from the group** — never to delete the group's role assignment. This is the least visible case in the product: an assignment-centric view shows a perfectly healthy group holding a role and nobody opens it.
+
+{% include screenshot.html file="identity-leavers-group-access.png" title="Disabled Access: trace the granting group" caption="Use the via-group evidence to identify the membership path that needs review. Deleting the group's role assignment would affect other members; it is not a substitute for reviewing the disabled member's membership." %}
 
 **Accounts synced from on-premises AD.** The row shows an `on-prem` chip. Remove the Azure access as normal, but any account-state change must be made in Active Directory or the next sync cycle reverts it.
 
@@ -67,6 +75,8 @@ There is deliberately no *residual sessions* tier. Tokens issued before a disabl
 `Not measured` and `sync state unknown` are deliberately their own options rather than being folded into `never signed in` and `cloud-only`. Both conflations point an operator at the wrong conclusion, and one of them points them at the wrong directory.
 
 **Saved views** keep a whole filter set under a name, locally. One click for "on-prem leavers with privileged access, dormant over a year".
+
+{% include screenshot.html file="identity-leavers-recycle-bin.png" title="Disabled Access: recoverable identities retain grants" caption="Review the retained grants on a recoverable identity before treating it as an orphan. The long access-policy role illustrates the display only; neither recycle-bin state nor missing activity proves harmlessness or never-used access." %}
 
 ## What the expanded row tells you
 
@@ -152,6 +162,8 @@ It comes as **two separate blocks, each with its own Copy button**:
 They are separate because they are run at different times by different people. Take a copy of the rollback and attach it to the change record *before* you run the removal; whoever needs it will be looking for it in a hurry, and should not have to select the right half of a single long script by hand.
 
 The script is read-only output. Nothing in it is executed by the product; you read it, then run it yourself. Group-derived access is revoked before direct assignments (revoking a direct grant while the same access is still inherited through a group looks successful and changes nothing), and every step carries a dry run. Both blocks repeat the generator version and the "not run by the product" warning, so either one is still auditable after it has been pasted somewhere on its own.
+
+{% include screenshot.html file="identity-leavers-remediation-preview.png" title="Disabled Access: separate removal and rollback previews" caption="Check the selected identities and review the two blocks independently. Both blocks in this fixture contain comments only, not executable remediation; nothing was copied or run. The view illustrates the review layout, not generated-command correctness." %}
 
 ### Each step targets the API that actually governs the access
 

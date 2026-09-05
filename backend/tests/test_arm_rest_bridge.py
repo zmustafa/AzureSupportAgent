@@ -54,10 +54,10 @@ def test_arm_rest_mode_pasted_token_no_token_fails_closed(monkeypatch):
     assert mode == "error" and token is None and "expired" in err.lower()
 
 
-def test_arm_rest_mode_none_connection_falls_through_to_cli():
+def test_arm_rest_mode_none_connection_fails_closed():
     import asyncio
     mode, token, err = asyncio.run(cr._arm_rest_mode(None))
-    assert mode == "cli"
+    assert mode == "error" and token is None and "connection" in err.lower()
 
 
 # --------------------------------------------------------------------------- audience classifier

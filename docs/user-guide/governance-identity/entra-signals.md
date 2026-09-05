@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:signals]
 
 # Entra: risk and sign-ins
 
-**Product permission:** `entra.read` for every view on this tab. No action on this tab writes anything.
+**Product permissions:** `entra.read` for views; changing the lookback requires `settings.write`, and the subsequent recollection requires `entra.admin`. These actions change product configuration/cache, not directory objects.
 
 ## Purpose
 
@@ -41,7 +41,10 @@ Six sub-views, selected from the strip at the top of the tab.
 | Auth methods | `/signals/auth-methods` | Registration coverage for administrators and for all enabled users, method distribution, and the registration gap list |
 | Legacy auth | `/signals/legacy-auth` | Legacy protocol breakdown with attempts, successes, users, apps and last success; the Conditional Access policies that block legacy clients; and whether a gap remains |
 | Failures | `/signals/failures` | Failure clustering by Entra error code with a plain-English meaning, per-day trend, and the applications carrying the failures |
-| Risky users | `/signals/risky-users` | Identity Protection risky users filtered by level and state, detection type counts, and risky workload identities || Patterns | `/signals/patterns` | Deterministic sign-in patterns, each carrying the rule and thresholds that produced it |
+| Risky users | `/signals/risky-users` | Identity Protection risky users filtered by level and state, detection type counts, and risky workload identities |
+| Patterns | `/signals/patterns` | Deterministic sign-in patterns, each carrying the rule and thresholds that produced it |
+
+The Reads column names API suffixes under `/api/entra`, not app routes. App sub-tab IDs are `overview`, `auth-methods`, `legacy`, `failures`, `risky` and `patterns`, all under `/entra/signals/`.
 
 Controls are the sub-view strip, the risky-users filters (search, risk level, risk state, and a brushable last-updated window), and the lookback control on Overview.
 
@@ -49,7 +52,7 @@ Controls are the sub-view strip, the risky-users filters (search, risk level, ri
 
 The Overview sub-view carries a **lookback window** selector offering 1, 3, 7, 14, 30, 60 and 90 days, with **Apply and re-collect** beside it. It is the only lever against the row cap: on a busy tenant the cap is reached long before a 30-day window closes, and every count on the tab becomes a lower bound. A shorter window buys exact figures over a shorter period.
 
-The window is a collection setting, not a query filter. Sign-ins are folded into counters while the collection runs and the raw rows are never kept, so changing the window has no effect on the numbers already on screen. Applying a change saves the setting and immediately starts a collection of the sign-in domain alone, rather than making you wait for the whole directory to be re-read. The control states both facts side by side: the window the next collection will use, and the window the figures currently displayed actually cover.
+The window is an application setting, not a query filter or a per-reader preference. Applying it saves `entra_signin_lookback_days`, then requests the **risk** domain, which owns the sign-in aggregation. If saving succeeds but refresh is denied, the setting has changed while the displayed data has not. Check both the configured window and the measured window; a shorter request is not automatically complete if it still reaches a cap.
 
 Saving the setting requires the `settings.write` permission, because the window governs collection for every reader of the tenant. Without it the selector still reports the current window; the apply action reports that it needs the permission.
 
@@ -84,7 +87,7 @@ Patterns are counting rules, not predictions. Each result states its rule and ca
 
 ## Safety and limitations
 
-- Every read on this tab is read-only. Nothing here dismisses a risk, confirms a compromise, blocks a user, resets a credential, or edits a policy. Remediate in the Microsoft Entra admin center or through your change process.
+- Nothing here dismisses risk, confirms compromise, blocks users or edits directory policies. Lookback changes do persist local settings and trigger a read-only collection. Remediate directory findings externally.
 - Sign-in analysis is sampled and bounded. It cannot prove absence: "no legacy sign-in succeeded in this window" is a statement about the window, not about the tenant.
 - The window is also bounded by Microsoft's own sign-in log retention for the tenant's license. Events older than retention were never available to read.
 - Unbounded dimensions are truncated to a top slice before storage — applications, failure codes, IP addresses, and users by volume. Counts outside a top slice are not shown.

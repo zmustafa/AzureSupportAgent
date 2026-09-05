@@ -17,7 +17,7 @@ Use this section to turn workload inventory and telemetry into prioritized engin
 | Guide | Use it to |
 |---|---|
 | [Assessments]({{ site.baseurl }}/user-guide/assessment-performance/assessments/) | Run control catalogs, interpret scores, manage waivers, and export reports. |
-| [Performance Profiler]({{ site.baseurl }}/user-guide/assessment-performance/performance-profiler/) | Compare Azure Monitor metrics with baselines and rank bottlenecks. |
+| [Performance Profiler]({{ site.baseurl }}/user-guide/assessment-performance/performance-profiler/) | Compare Azure Monitor observations with AMBA-aligned thresholds and rank candidate bottlenecks. |
 | [FMEA]({{ site.baseurl }}/user-guide/assessment-performance/fmea/) | Score failure modes with severity, occurrence, detection, and RPN. |
 
 ## Recommended sequence
@@ -31,3 +31,5 @@ Use this section to turn workload inventory and telemetry into prioritized engin
 ## Shared safety model
 
 Results reflect the selected scope, available permissions, cached inventory, and source freshness. A passing control or healthy metric does not prove that a workload is risk-free. AI summaries and generated FMEA rows require human review. Exports may contain resource names and operational findings; handle them according to your organization's data-classification policy.
+
+The trust models differ: an assessment can finish **succeeded** with errored controls and provisional completeness, while profiler **partial/failed** attempts do not replace its latest complete-success posture. FMEA **Published** is a document lifecycle marker, not automated proof of reviewed controls. See the [assessment catalog and limits]({{ site.baseurl }}/user-guide/assessment-performance/assessments/#registered-controls-packs-and-targets) before comparing totals or scores across these features.

@@ -37,6 +37,8 @@ Use `/proactive`, `/monitor`, or `/stats`.
 
 ## How to inspect operational health
 
+{% include screenshot.html file="core-monitor-activity.png" title="Read the built-in Monitor overview" caption="Confirm the selected dashboard and freshness before interpreting activity counters. Empty live-operation and investigation panels are distinct from system-health results; this example uses synthetic fixture responses." %}
+
 1. Open `/monitor`.
 2. Select the built-in overview or a saved dashboard.
 3. Choose the live refresh cadence, pause/resume refresh, or select **Refresh now**.

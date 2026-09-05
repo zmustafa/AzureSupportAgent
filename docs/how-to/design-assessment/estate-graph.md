@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:graph, ROUTE:graph]
 
 # Explore the Estate Graph
 
-![Estate Graph visualization]({{ site.baseurl }}/assets/estate-graph.png)
+{% include screenshot.html file="core-estate-graph.png" title="Explore typed Estate Graph relationships" caption="Start with tenant, workload, architecture, and resource nodes, then inspect the owning records. This synthetic relationship map does not establish live traffic, current health, or causality, and no Azure scan was run for it." %}
 
 ## Prerequisites
 

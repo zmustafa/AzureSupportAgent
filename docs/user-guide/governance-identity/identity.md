@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:posture, ENTRA_NAV:con
 
 # Entra ID
 
-**Product permission:** `entra.read` for every read surface; `entra.admin` for refresh, finding state changes, break-glass confirmation, scanner runs, and Conditional Access simulation.
+**Product permissions:** `entra.read` for the Entra shell and native posture reads; `entra.admin` for refresh, permission rechecks, finding state, break-glass confirmation, scanner runs, application sign-in backfill and Conditional Access simulation. Embedded Identity hygiene, JIT hygiene and Application Registrations use `identity.read`. Investigate uses `investigate.read` and separately `investigate.activity` for behavioral history.
 
 The standalone Identity screen was absorbed by Entra ID. Its three tabs now live here: identity hygiene under **Findings & scanners**, JIT hygiene under **Privileged Access**, and registrations under **Applications**.
 
@@ -23,13 +23,13 @@ Every tab and sub-tab is addressable, so a reload, a bookmark, a shared link or 
 
 Entra ID is a read-only tenant posture surface over Microsoft Graph. One background collection builds a point-in-time snapshot of the directory; every tab then reads that snapshot rather than calling Graph per click. It answers three questions: how healthy is the tenant, who can do what, and what breaks if you change it.
 
-Nothing in this feature writes to the directory. It does not rotate credentials, change Conditional Access, activate a role, or resolve a risky user. The only writes are local: finding workflow state, break-glass confirmations, and saved Conditional Access simulations.
+The native posture endpoints do not write to the directory: they do not rotate credentials, change Conditional Access, activate roles or resolve risky users. Collection, scanner baselines, workflow state, audit records and saved simulations write product-local data. Embedded Identity hygiene can create an external Jira/ServiceNow ticket. Its Chat handoff enters a separate feature with its own execution policy; do not generalize posture's read-only boundary to Chat.
 
 ## Prerequisites and data sources
 
 - A connection that can obtain a Microsoft Graph application token for the tenant.
 - Admin-consented, read-only Graph application permissions. Consent is organized into three tiers; the tenant is usable at tier 1 and complete at tier 3. See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/).
-- Entra ID P1 for Conditional Access, sign-in logs, and PIM schedules. Entra ID P2 for Identity Protection risk, PIM depth, access reviews, entitlement management, and lifecycle workflows.
+- Entra ID P1 for Conditional Access and relevant sign-in data; appropriate P2/ID Governance licensing for PIM and governance. Lifecycle workflows require ID Governance; workload-identity risk has its own premium requirement. Read each collector's license result rather than assuming one tier enables everything.
 - Optional: an Azure ARM connection for the cross-plane and blast-radius views, and a Jira or ServiceNow connector for ticket handoff.
 
 Missing permission or license produces an honestly labeled blind spot, never a silent zero. A pillar that could not be measured is excluded from the score instead of scoring 0.
@@ -59,7 +59,7 @@ The tab bar scrolls horizontally when the window is too narrow for ten labels; t
 
 ### Sorting a grid
 
-Every grid in this feature sorts by column. Click a header to sort by it, click again to reverse. The choice is remembered per grid, so a reload or a tab round-trip returns you to the ordering you chose.
+Where a grid offers sortable headers, click once to sort and again to reverse. Sort preferences are remembered per grid. Cards, Exposure rows and legacy hygiene panels do not all offer sortable columns.
 
 Four rules apply everywhere, because the alternative is a column header that misleads:
 
@@ -74,7 +74,9 @@ The grids that page or cap server-side — findings, the inbox, applications and
 
 Collection is explicit. Opening a tab reads the cached snapshot; it never triggers a slow Graph aggregation on its own. Refresh when the badge shows `never loaded`, when the snapshot predates a directory change you care about, or before producing an evidence artifact.
 
-One snapshot per tenant serves every tab, so a single refresh updates posture, Conditional Access, privileged access, applications, signals, governance, and blast radius together. A per-tenant lock prevents duplicate collections. Individual collectors fail independently: a throttled or unlicensed domain is reported as partial while the rest of the snapshot stays valid.
+The native tabs share per-tenant domain caches, not one atomic collection transaction. A full refresh visits nine domains; a targeted refresh replaces only those requested. Each completed domain is written separately, including blind/error payloads. An interruption can therefore leave mixed generations, and token failure can replace requested domains with blind results. The headline age is the newest domain timestamp: inspect per-domain times/statuses and **Last full collection** before calling the whole tenant current. The three embedded legacy panels retain separate refreshes.
+
+Ordinary posture navigation is cache-backed, but there are live-read exceptions: permission recheck, application sign-in **Read now**, activation **what they did**, and Investigate activity/membership reads. Investigate automatically requests applicable non-Azure activity on arrival; only its Azure Activity Log is strictly opt-in.
 
 Collection duration scales with directory size and Graph throttling. Sign-in log analysis is sampled over a bounded window rather than exhaustive.
 
@@ -115,7 +117,7 @@ Compare scores over time within one tenant. Do not compare a score across tenant
 ## Safety and limitations
 
 - Every collector is read-only. No directory object, credential, policy, or role assignment is modified.
-- No secret or certificate value is ever retrieved or displayed — only identifiers, types, and expiry.
+- Credential secret values and private keys are not displayed. Federation collection can read public signing certificates to derive certificate metadata; do not confuse those public certificates with private credential material.
 - Finding state, break-glass confirmations, and saved simulations are stored locally and never written back to Entra.
 - Conditional Access simulation is an offline model of the snapshot, not a Microsoft what-if evaluation. Treat it as evidence for a change review, never as proof.
 - Sign-in and audit analysis is sampled and bounded by the Graph retention window for the license.

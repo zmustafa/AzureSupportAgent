@@ -23,6 +23,7 @@ AI-driven Azure operations, investigation, governance, and proactive support—d
 
 | Goal | Guide |
 | --- | --- |
+| Preview critical workflows in screenshots | [Visual tour: 137 captured states, grouped by workflow]({{ site.baseurl }}/reference/visual-tour/) |
 | Deploy in about ten minutes | [One-click installation]({{ site.baseurl }}/getting-started/one-click-install/) |
 | Complete first-run configuration | [First-run setup]({{ site.baseurl }}/getting-started/first-run/) |
 | Ask questions and investigate incidents | [Chat and Deep Investigation]({{ site.baseurl }}/user-guide/core/chat-deep-investigation/) |

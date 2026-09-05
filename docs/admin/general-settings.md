@@ -44,6 +44,8 @@ Select **Save settings**, then reload the page to confirm the effective values r
 
 With `settings.read` but not `settings.write`, the page displays a read-only banner and disables the settings fieldset. A direct PUT still requires `settings.write` at the backend.
 
+{% include screenshot.html file="admin-general-instructions-draft.png" title="Instructions, response style, and behavior — unsaved draft" caption="Synthetic instructions appear only in the unsaved textarea beside the response and behavior controls. No application setting was changed and no chat was sent; the text is not evidence of saved policy or provider behavior." %}
+
 ### Performance Profiler capacity
 
 | Visible control | Saved key | Default | Accepted range | Runtime behavior |

@@ -130,7 +130,7 @@ def test_run_kql_collect_rest_passes_through_total(monkeypatch):
 
     monkeypatch.setattr("app.azure.credentials.get_arm_token", _fake_token)
     monkeypatch.setattr("app.azure.arm.query_resource_graph_paged", _fake_paged)
-    res = asyncio.run(command_runner.run_kql_collect("Resources | take 1", None))
+    res = asyncio.run(command_runner.run_kql_collect("Resources | take 1", {"id": "test", "auth_method": "az_cli_token"}))
     assert res.ok is True
     assert res.total == 99
     assert res.complete is False
@@ -146,7 +146,7 @@ def test_run_kql_collect_rest_error_is_fail_closed(monkeypatch):
 
     monkeypatch.setattr("app.azure.credentials.get_arm_token", _fake_token)
     monkeypatch.setattr("app.azure.arm.query_resource_graph_paged", _fake_paged)
-    res = asyncio.run(command_runner.run_kql_collect("Resources | take 1", None))
+    res = asyncio.run(command_runner.run_kql_collect("Resources | take 1", {"id": "test", "auth_method": "az_cli_token"}))
     assert res.ok is False  # never a silent empty pass
     assert "429" in res.error
 

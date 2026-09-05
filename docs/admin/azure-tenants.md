@@ -72,6 +72,10 @@ Every method shares these fields; only the credential fields differ.
 - **Default subscription** and **Log Analytics workspace ID** — set only when workflows need them.
 - **Read only**, **Automatic writes**, **Default**, **Disabled** — per-connection governance that overrides global settings.
 
+{% include screenshot.html file="admin-tenant-host-identity.png" title="Shared connection fields with host identity selected" caption="The unsaved test-data form shows the tenant label, cloud, authentication method, and read-only control. It is not a configured connection: no Azure connectivity or live subscription discovery was verified." %}
+
+The authentication-method pages above show the corresponding secret, certificate, host-identity, and token forms. All captured forms are unsaved examples, not successful connection tests.
+
 ## Freshness and scope behavior
 
 A connection's status reflects its last test, not continuous health. Pasted-token connections expire in about an hour and then fail until a new token is pasted; every other method acquires tokens on demand. A workload is bound to the connection that owns it, so selecting a workload switches the active connection rather than reinterpreting its resources in the current one.

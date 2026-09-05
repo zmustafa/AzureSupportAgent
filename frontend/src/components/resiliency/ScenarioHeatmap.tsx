@@ -24,12 +24,12 @@ import { useGroupedCollapse, type GroupDimension } from "../../utils/useGroupedC
 export type CellState = "met" | "breached" | "no_path" | "unknown" | "not_applicable";
 
 const CELL: Record<CellState, { glyph: string; cls: string; label: string }> = {
-  met: { glyph: "●", cls: "text-emerald-600", label: "Meets the objective" },
-  breached: { glyph: "▲", cls: "text-amber-600", label: "Breaches the objective" },
+  met: { glyph: "●", cls: "text-emerald-700", label: "Meets the objective" },
+  breached: { glyph: "▲", cls: "text-amber-700", label: "Breaches the objective" },
   // Deliberately the heaviest treatment on the page.
   no_path: { glyph: "✖", cls: "text-rose-700 font-bold", label: "No recovery path exists" },
-  unknown: { glyph: "?", cls: "text-gray-400", label: "Unknown — a source could not be read" },
-  not_applicable: { glyph: "·", cls: "text-gray-200", label: "Does not apply to this resource" },
+  unknown: { glyph: "?", cls: "text-gray-600", label: "Unknown — a source could not be read" },
+  not_applicable: { glyph: "·", cls: "text-gray-500", label: "Does not apply to this resource" },
 };
 
 export function cellState(verdict: ResiliencyVerdict | undefined): CellState {
@@ -176,7 +176,11 @@ function worstOf(row: HeatRow, scenarios: { id: ResiliencyScenario }[]): number 
   const rank: Record<CellState, number> = {
     no_path: 0, breached: 1, unknown: 2, met: 3, not_applicable: 4,
   };
-  return Math.min(...scenarios.map((s) => rank[cellState(row.verdicts[s.id])]));
+  // Saved rows can arrive before scenario metadata. No scenarios is unknown, not a
+  // pass (or Infinity, which cannot index the group's CELL presentation).
+  return scenarios.length
+    ? Math.min(...scenarios.map((s) => rank[cellState(row.verdicts[s.id])]))
+    : rank.unknown;
 }
 
 function ResourceCell({ row, portalHost }: { row: HeatRow; portalHost?: string }) {
@@ -226,6 +230,12 @@ export function ScenarioHeatmap({
 
   return (
     <div data-testid="resiliency-heatmap">
+      {!scenarios.length && (
+        <p role="status" className="mb-2 text-xs text-gray-600">
+          Scenario definitions are unavailable. Resources are listed, but recovery verdicts
+          cannot be displayed yet.
+        </p>
+      )}
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
         <label className="inline-flex items-center gap-1">
           <span>Group by</span>
@@ -246,7 +256,7 @@ export function ScenarioHeatmap({
             <button onClick={grouped.expandAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
               Expand all
             </button>
-            <span className="text-gray-400">{sections.length} groups · {ordered.length} resources</span>
+            <span className="text-gray-600">{sections.length} groups · {ordered.length} resources</span>
           </>
         )}
       </div>
@@ -268,18 +278,19 @@ export function ScenarioHeatmap({
               const collapsed = grouped.isCollapsed(section.key);
               // Worst class in the group, so a collapsed header still carries the finding.
               const worst = Math.min(...section.items.map((r) => worstOf(r, scenarios)));
-              const worstState = (["no_path", "breached", "unknown", "met", "not_applicable"] as CellState[])[worst];
+              const worstState = (["no_path", "breached", "unknown", "met", "not_applicable"] as CellState[])[worst] ?? "unknown";
               return (
                 <tbody key={section.key} data-testid="heatmap-group">
                   <tr className="border-t bg-gray-50">
                     <th colSpan={scenarios.length + 1} className="px-2 py-1 text-left font-medium">
                       <button onClick={() => grouped.toggle(section.key)}
                               data-testid="heatmap-group-header"
+                              aria-expanded={!collapsed}
                               className="flex w-full items-center gap-1.5 text-left text-gray-700">
                         <span aria-hidden="true" className="text-gray-400">{collapsed ? "▸" : "▾"}</span>
                         <AzureIcon kind="resource" type={section.key} className="h-3.5 w-3.5" />
                         <span>{section.label}</span>
-                        <span className="text-gray-400">({section.total})</span>
+                        <span className="text-gray-600">({section.total})</span>
                         {/* The group's worst cell, so collapsing never hides the finding. */}
                         <span className={CELL[worstState].cls} title={CELL[worstState].label}
                               aria-label={`Worst in group: ${CELL[worstState].label}`}>
@@ -309,7 +320,7 @@ export function ScenarioHeatmap({
           )}
         </table>
         {!ordered.length && (
-          <div className="p-6 text-center text-sm text-gray-400">No resources in scope.</div>
+          <div className="p-6 text-center text-sm text-gray-600">No resources in scope.</div>
         )}
       </div>
     </div>

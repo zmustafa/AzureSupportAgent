@@ -314,7 +314,7 @@ async def test_old_completion_does_not_cancel_reused_key_heartbeat(
         tenant_id="tenant-a", key="same", metadata={}, runner=second_runner
     )
     assert second.acquired
-    second_heartbeat = executor._heartbeats["same"]  # noqa: SLF001 - lifecycle assertion
+    second_heartbeat = executor._heartbeats[("tenant-a", "same")]  # noqa: SLF001 - lifecycle assertion
     release_finalize.set()
     await asyncio.sleep(0)
     assert not second_heartbeat.done()

@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from app.entra import guests, model
-from app.entra.collectors.roles import privileged_principal_ids
 from app.entra.collectors.tenant import (
     GUEST_ROLE_SAME_AS_MEMBER,
     guest_access_label,

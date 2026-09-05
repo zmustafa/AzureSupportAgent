@@ -158,16 +158,24 @@ export function BypassTab() {
       <div className="border-b bg-white px-4 py-3">
         {/* The headline. Denominator is mandatory, and "nothing assessed" is not 0%. */}
         <div className="flex items-baseline gap-3">
-          {s && s.rbac_only_pct === null ? (
+          {!s ? (
+            <span data-testid="bypass-headline" role="status" className="text-sm text-gray-600">
+              {q.isPending ? "Loading shadow-access coverage…" : "Shadow-access coverage is unavailable — no ratio can be reported."}
+            </span>
+          ) : s.assessed === 0 ? (
             <span data-testid="bypass-headline" className="text-sm font-semibold text-amber-800">
               No resources assessed — RBAC-only coverage is unknown, not 100%.
             </span>
+          ) : s.rbac_only_pct == null ? (
+            <span data-testid="bypass-headline" className="text-sm font-semibold text-amber-800">
+              RBAC-only coverage is unknown for {s.assessed} assessed resources.
+            </span>
           ) : (
             <span data-testid="bypass-headline" className="text-sm text-gray-800">
-              <b className="text-lg text-gray-900">{s?.rbac_only_pct ?? "—"}%</b> of{" "}
-              <b>{s?.assessed ?? 0}</b> assessed resources have RBAC as the only door
+              <b className="text-lg text-gray-900">{s.rbac_only_pct}%</b> of{" "}
+              <b>{s.assessed}</b> assessed resources have RBAC as the only door
               <span className="text-gray-500">
-                {" "}· {s?.bypassed ?? 0} have another way in
+                {" "}· {s.bypassed} have another way in
               </span>
             </span>
           )}
@@ -241,7 +249,7 @@ export function BypassTab() {
               The bypass sweep has not run for this tenant yet. Nothing here is an all-clear.
             </div>
           )}
-          {d && !d.never_loaded && d.rows.length === 0 && (
+          {d && !d.never_loaded && s && s.assessed > 0 && d.rows.length === 0 && (
             <div className="rounded border bg-white p-3 text-xs text-gray-600">
               No non-RBAC door was found in what was assessed. Check the coverage above and the
               service statuses on the left before reading that as an all-clear.

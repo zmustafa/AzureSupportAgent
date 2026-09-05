@@ -33,6 +33,8 @@ feature_ids: [ADMIN_NAV:access, ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:g
 
 ## How to create or update a user
 
+{% include screenshot.html file="admin-access-default-users.png" title="Inspect users before changing access" caption="Use the local test-data list to locate effective roles, auth source, and account status. This is an inspection example, not the result of creating a user or testing SSO; no account changes were made." %}
+
 1. Select **New user** and enter the visible username, email, and display-name fields.
 2. For a local account, enter an initial password and keep first-sign-in password change enabled when offered. Leave the password absent for an SSO-only account.
 3. Assign only approved direct roles and groups, then create the user.
@@ -46,6 +48,8 @@ feature_ids: [ADMIN_NAV:access, ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:g
 **Verification:** Test with a separate browser session. Confirm permitted actions work and prohibited actions remain hidden or return forbidden. Review the corresponding `access.*` Audit Log entry.
 
 ## How to create a least-privilege custom role
+
+{% include screenshot.html file="admin-access-built-in-roles.png" title="Compare built-in roles before choosing custom permissions" caption="The shipped role definitions provide a baseline for selecting exact capabilities. No role was created, edited, or assigned in this capture; verify the resulting permissions separately after your approved change." %}
 
 1. Select **New role** and enter a clear name and description.
 2. Select only capabilities required by the task; do not infer wildcard behavior.

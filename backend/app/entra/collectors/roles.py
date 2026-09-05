@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.entra import model
-from app.entra.collectors import CollectContext, as_dict, as_list, guarded
+from app.entra.collectors import CollectContext, as_dict, guarded
 from app.entra.collectors.people import expand_groups
 from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError
 

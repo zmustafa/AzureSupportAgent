@@ -116,7 +116,7 @@ _REVIEWED_CALL_SITES = {
     "policy.py": 1,
     "reservations.py": 2,
     "tagintel.py": 2,
-    "workloads.py": 16,
+    "workloads.py": 1,
 }
 
 

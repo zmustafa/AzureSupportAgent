@@ -167,7 +167,6 @@ def build_profile(
     wid = workload.get("id", "")
     health_m, fresh, extras = _signals(tenant_id, wid)
     score = health.composite_score(health_m, settings)
-    owners = workload.get("owners") or []
     # Recent composite-score history (cheap read of the trend file) so cards/detail can render
     # a sparkline + delta arrow without an extra request.
     score_trend = _score_trend(tenant_id, wid)

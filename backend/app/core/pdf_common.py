@@ -199,7 +199,6 @@ def donut_svg(slices: list[tuple[str, float]], *, center: str, accent: str) -> s
     radius = 56
     circumference = 2 * math.pi * radius
     accent_safe = svg_color(accent, fallback="#2563eb")
-    center_safe = svg_attr(center)
     if total <= 0:
         return f"""
         <svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}' viewBox='0 0 {size} {size}'>

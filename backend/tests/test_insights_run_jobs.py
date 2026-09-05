@@ -39,7 +39,7 @@ async def test_job_lifecycle_progress_finish_snapshot():
         return {"id": "r1", "verdict": "notable"}
 
     job = await jobs.start("t1", execute, pack_name="Pack", scope_label="wl-a")
-    await jobs.manager._executor.tasks[job["id"]]
+    await jobs.manager._executor.tasks[("t1", job["id"])]
     current = await jobs.get("t1", job["id"])
     assert current is not None
     snap = jobs.snapshot(current)
@@ -58,7 +58,7 @@ async def test_job_fail_records_error():
         raise RuntimeError("boom")
 
     job = await jobs.start("t1", execute)
-    await jobs.manager._executor.tasks[job["id"]]
+    await jobs.manager._executor.tasks[("t1", job["id"])]
     current = await jobs.get("t1", job["id"])
     assert current is not None
     snap = jobs.snapshot(current)
@@ -73,7 +73,7 @@ async def test_job_get_is_tenant_scoped():
         return {"ok": True}
 
     job = await jobs.start("tenant-a", execute)
-    await jobs.manager._executor.tasks[job["id"]]
+    await jobs.manager._executor.tasks[("tenant-a", job["id"])]
     assert await jobs.get("tenant-a", job["id"]) is not None
     assert await jobs.get("tenant-b", job["id"]) is None
     assert await jobs.get("tenant-a", "nope") is None
@@ -87,7 +87,7 @@ async def test_job_pct_is_clamped():
         return {"ok": True}
 
     job = await jobs.start("t1", execute)
-    await jobs.manager._executor.tasks[job["id"]]
+    await jobs.manager._executor.tasks[("t1", job["id"])]
     current = await jobs.get("t1", job["id"])
     assert current is not None
     assert next(step for step in current["steps"] if step["label"] == "high")["pct"] == 100

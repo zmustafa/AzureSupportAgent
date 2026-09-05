@@ -39,7 +39,7 @@ Three modes across the top; each names what it answers.
 | --- | --- | --- |
 | **Can this principal…** | One principal, one action, one scope — a verdict and the assignment that decided it | `GET /api/iam/effective` |
 | **Who can…** | Everyone who can perform this action here | `GET /api/iam/resource-access` |
-| **What can they reach** | Every role this principal holds at or above a scope, split by plane | `GET /api/iam/principal/{principal_id}/access` |
+| **What can they reach** | Role-level grants above or below the selected scope, split by plane | `GET /api/iam/principal/{principal_id}/access` |
 
 **Controls.** A principal field backed by the cached directory, a scope selector built from `GET /api/iam/scope-tree` with a free-text field beneath it for a resource id, and an action picker with common actions. The mode, principal, scope and action are all read from the URL query string on load, so a deep link from the access grid's why-panel lands on the question the reader was already looking at.
 
@@ -47,13 +47,13 @@ Three modes across the top; each names what it answers.
 
 **The scope tree's synthetic root is not offered.** The tree's top node is an "all scopes" sentinel used by the access grid's filter, and its id is the empty string. Offering it here would pose a question Azure cannot answer — *who can delete a virtual machine at all scopes* — and selecting it would leave the query disabled, rendering no verdict, no error and no prompt. It is dropped and its children are lifted to the top level. When no scope is selected, the results panel says so rather than sitting empty, because an empty results panel is not an answer.
 
-**Verdicts.** The evaluator returns one of `allowed`, `denied`, `not_granted` or `indeterminate`. The last is returned whenever an unevaluated ABAC condition or an unresolved role definition sits in the path: a confident yes that turns out to be conditional is worse than admitting the uncertainty.
+**Verdicts.** The evaluator returns `allowed`, `denied`, `not_granted` or `indeterminate`. When no unconditional known grant resolves the question, an unevaluated ABAC condition or missing role definition produces `indeterminate`. An independent unconditional grant can still produce `allowed`, with competing conditions/unknown roles listed. PIM eligibility is excluded from the action-level allow decision.
 
 **Indeterminate is kept separate from allow and from deny, everywhere.** In **Who can…** it is a second box below the allowed list with its own heading and count, never merged into it, and the headline counts it separately: *`A` of `C` principals with any grant at or above this scope can perform this action · `I` could not be determined*. A reader scanning a list of names will not notice a per-row qualifier, so the qualifier is the box.
 
 **Who can… re-evaluates every candidate.** It is not a "who holds a matching role" query. Each candidate goes back through the same evaluator, so a principal blocked by a deny assignment does not appear in the allowed list. `candidates` is the number of principals holding any grant at or above the scope that were considered; the response is bounded, and the allowed and indeterminate lists together stop at that bound. When `candidates` is zero the tab states that no principal holds any grant at or above this scope *in the cached scan*, and that this is not the same as nobody being able to do it.
 
-**What can they reach** answers *at or above this scope*, at role level rather than expanding to actions — a tenant-wide action expansion is tens of thousands of strings nobody reads, and the per-action question is what the first mode is for. It splits control plane from data plane, lists deny assignments in their own section, and names any role definition that was not collected so its permissions are explicitly unknown.
+**What can they reach** includes both covering ancestor assignments and descendant assignments under the selected scope, despite the current UI's narrower *at or above* caption. It is a role inventory, not a per-action verdict; inspect assignment state because eligible rows can appear here. It separates control/data planes, denies and unresolved role definitions. **Who can…** returns at most 200 allowed/indeterminate entries by default (API maximum 500 combined); its candidate total is not the number fully evaluated once that cap is reached.
 
 ### Escalation
 
@@ -138,6 +138,7 @@ Filters: service family (left rail) and severity. Rows are sorted worst severity
 
 - Every tab here is read-only. Nothing writes to Azure, and the escalation rebuild writes only this product's derived cache.
 - The evaluator is an evidence-backed model of a known access path, not a full authorization-engine simulation. Deny assignments, ABAC conditions, service-native authorization and resource-level controls can all change the real outcome.
+- Deny rows conservatively block any modeled action at their covering scope because normalized rows lack per-action deny lists. Key Vault access-policy fallback treats a vault policy as a data-plane grant without checking each permission in its label. Verify the requested operation in the authoritative service; neither fallback is exact authorization proof.
 - Escalation is capped in three ways — per-source fan-out, total nodes, and dropped edges whose endpoints are absent. All three are counted and published; none is silent.
 - The graph reflects capability, not intent or exploitability. A detected path is a route that exists, not evidence that anyone has used it.
 - Shadow Access assesses only the fourteen families listed, only the resources the sweep could read, and only the doors in the check table. Absence from this tab is not evidence of absence in Azure.
@@ -154,7 +155,7 @@ Filters: service family (left rail) and severity. Rows are sorted worst severity
 | The graph shows fewer nodes than the footer's total | **Paths only** is on, which is the default. Untick it to draw every detected capability. |
 | An evaluation returns `indeterminate` | An unevaluated ABAC condition or an uncollected role definition is in the path. The response names which. Re-collect role definitions with a full rescan if a role is unknown. |
 | *Who can…* returns nobody and `candidates` is 0 | No principal holds any grant at or above that scope in the cached scan. The tab says so explicitly. Run an access scan before concluding nobody can perform the action. |
-| A `plane` value is rejected | The evaluator accepts only `control` or `data`. Anything else is a 400. |
+| A `plane` value is rejected | The single-action `/api/iam/effective` endpoint accepts only `control` or `data` when explicitly supplied. Use the correct plane rather than inferring it from a role name. |
 | The scope list is empty | No management group or subscription is in the cached scan. Type a resource id into the field beneath the selector, or run an access scan. |
 | Shadow Access headline says coverage is unknown | Nothing was assessed. Check the family statuses in the left rail and Diagnostics — this is deliberately not rendered as 100%. |
 | A service family shows `Unauthorized` instead of counts | The sweep could not read it. Its resources are excluded from both the findings and the denominator; fix the permission and re-collect. |

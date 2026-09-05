@@ -40,7 +40,7 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 
 1. Stay on `/entra/setup` and read the last collection's Microsoft Graph statistics: requests, batches, throttle events, retries, pages, items, forbidden responses, and elapsed time.
 
-2. Use forbidden responses to confirm a consent problem. A domain that is blind with forbidden responses recorded is genuinely denied, not merely unattempted.
+2. Read the actual forbidden-response classification. A 403 can also carry a license marker; do not diagnose missing consent from the aggregate forbidden count alone.
 3. Use throttle events and retries to explain a slow or partial collection. High retries against a large item count is normal for a big directory; high throttling with few items is not.
 4. Compare batches against requests. The collectors batch reads deliberately, so a request count far above the batch count usually means paging over a large collection.
 5. Cross-read the collector errors listed with the coverage table for anything in the `error` state, then re-read the progress log for that run.
@@ -57,11 +57,11 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 3. If you reloaded the page or navigated away, return to `/entra`. The panel re-attaches to an in-flight collection and resumes streaming its progress rather than losing the run.
 4. Wait. Collection duration scales with directory size and with Graph throttling, and the collectors already back off and retry.
 5. If a run genuinely failed, read which collectors reported errors. Individual collectors fail independently: a throttled or unlicensed domain is reported as partial while the rest of the snapshot stays valid.
-6. Start a fresh collection once the tenant is quiet. A failed run leaves the previous snapshot in place, so you are never left with nothing while you wait.
+6. Start a fresh collection after resolving the cause. Native domains are persisted independently; completed writes are not rolled back when a later collector fails, and blind/error results can replace earlier data. Do not assume the previous full snapshot survived unchanged.
 
 **Expected result:** A completed collection, or a clear statement of which domains failed and why, with the previous snapshot still readable.
 
-**Verification:** The freshness badge shows a recent age without a partial marker, and the coverage table no longer lists the affected domains as `error` or `stale`.
+**Verification:** Check the affected domain's collection time, status, notes and item count. A recent header is only the newest domain age; absence of its partial marker does not establish that every domain was complete.
 
 ## How to confirm a new scope took effect and explain a score move
 
@@ -71,7 +71,7 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 3. If the scope is granted but the domain is still not measured, run a collection. A re-check deliberately never marks a domain as measured, because holding a permission and having collected the data are different facts.
 4. Confirm the permission was added to the correct app registration, as an **Application** permission. An app-only token never carries delegated scopes, so a delegated grant on the right app looks exactly like no grant at all.
 5. When a score moves without any directory change, compare coverage first. A pillar that could not be measured is excluded from the weighted average rather than scored zero, so gaining or losing a scope changes which pillars are counted and moves the score on its own.
-6. Then compare the measured pillars and the finding diff against the previous run. Check whether findings were suppressed or snoozed in between: suppressed findings are excluded from the score, so a bulk suppression raises it without changing the tenant.
+6. Compare measured pillars and finding evidence. Suppressed findings are excluded from the score, while snoozing alone is not exclusion. Full-domain runs can append history with partial inputs; the history `days` argument selects entries, not elapsed calendar days.
 7. Only compare scores over time within one tenant. Two tenants with different licenses have different measurable surfaces, so the numbers are not comparable.
 
 **Expected result:** Either a domain that moves to measured after the next collection, or a documented explanation for a score change that names coverage, suppression or a real finding as the cause.

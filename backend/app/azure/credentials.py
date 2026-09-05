@@ -280,11 +280,15 @@ async def _managed_identity_token(
         return None, f"Managed identity token error: {e}"
 
 
-async def get_arm_token(conn: dict[str, Any]) -> tuple[str | None, str | None]:
+async def get_arm_token(conn: dict[str, Any] | None) -> tuple[str | None, str | None]:
     """Acquire an ARM (management.azure.com) access token for this connection.
 
     Returns (token, error). Used for cross-tenant discovery, scoping, and health tests.
+    None means no selected connection, NOT permission to use the host identity. An
+    explicit default_chain connection retains the managed-identity/local-CLI behavior.
     """
+    if conn is None:
+        return None, "No Azure connection is configured for this scope. Select an Azure connection first."
     method = conn.get("auth_method", "")
     tenant = conn.get("tenant_id", "")
     if method == "service_principal":

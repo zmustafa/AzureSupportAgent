@@ -103,6 +103,8 @@ Each rule is a single IP address or a CIDR range, IPv4 or IPv6, with a required 
 - A rule permitting every address (`0.0.0.0/0` or `::/0`) is rejected in Enforce mode, because
   it would silently turn enforcement into a no-op while the screen still read "Enforcing".
 
+{% include screenshot.html file="admin-network-allowed-source-draft.png" title="Allowed-source form and address-count preview — unsaved" caption="The documentation-only TEST-NET-1 range 192.0.2.0/24 previews 256 addresses. Add was not clicked, no rule was staged or saved, and the firewall remains Off; this is not a validated office range or enforcement test." %}
+
 ### Bulk import
 
 Select **Import list** to paste a list or choose a UTF-8 `.txt`/`.csv` file. Import is always a

@@ -522,9 +522,9 @@ export function MonitoringCoveragePanel() {
             </p>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
               <span>Resources: <b>{data?.kpis.total_resources_in_baseline ?? 0}</b></span>
-              <span className="text-green-600">✓ {data?.kpis.alerts_present ?? 0}</span>
-              <span className="text-red-500">✗ {data?.kpis.alerts_missing ?? 0}</span>
-              <span className="text-amber-500">⚠ {data?.kpis.alerts_misconfigured ?? 0}</span>
+              <span className="text-green-700">✓ {data?.kpis.alerts_present ?? 0}</span>
+              <span className="text-red-700">✗ {data?.kpis.alerts_missing ?? 0}</span>
+              <span className="text-amber-700">⚠ {data?.kpis.alerts_misconfigured ?? 0}</span>
               {data?.kpis.alerts_suppressed ? (
                 <span className="text-fuchsia-600" title="Muted by an alert processing rule">
                   🔇 {data.kpis.alerts_suppressed}
@@ -632,7 +632,7 @@ export function MonitoringCoveragePanel() {
         {/* Source provenance + filters */}
         {tab === "coverage" && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-gray-400">
+          <span className="text-gray-500">
             Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Azure Resource Graph"}
           </span>
           <span className="text-gray-300">·</span>
@@ -642,20 +642,20 @@ export function MonitoringCoveragePanel() {
             placeholder="Search resources…"
             className="w-44 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400"
           />
-          <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+          <select aria-label="Monitoring category" value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
             <option value="all">All categories</option>
             <option value="availability">Availability</option>
             <option value="performance">Performance</option>
             <option value="security">Security</option>
           </select>
-          <select value={sevFilter} onChange={(e) => setSevFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+          <select aria-label="Monitoring severity" value={sevFilter} onChange={(e) => setSevFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
             <option value="all">All severities</option>
             <option value="critical">Critical</option>
             <option value="error">Error</option>
             <option value="warning">Warning</option>
             <option value="info">Info</option>
           </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+          <select aria-label="Monitoring coverage status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
             <option value="all">All statuses</option>
             <option value="present">✓ Present</option>
             <option value="missing">✗ Missing</option>
@@ -782,7 +782,7 @@ export function MonitoringCoveragePanel() {
           />
         )}
         {!enabled ? (
-          <div className="py-16 text-center text-sm text-gray-400">
+          <div className="py-16 text-center text-sm text-gray-500">
             {scopeReady
               ? <>Pick a workload, then click <b>Load coverage</b> to audit its monitoring baseline coverage.</>
               : "Pick a workload or enter a subscription to begin."}

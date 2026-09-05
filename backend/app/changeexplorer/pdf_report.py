@@ -51,8 +51,8 @@ def build_change_report_pdf(run: dict[str, Any]) -> bytes:
         tds = "".join(
             f'<td style="text-align:center;padding:6px;border:1px solid #e5e7eb;">'
             f'<div style="font-size:18px;font-weight:bold;color:{c};">{v}</div>'
-            f'<div style="font-size:9px;color:#6b7280;text-transform:uppercase;">{esc(l)}</div></td>'
-            for l, v, c in cells)
+            f'<div style="font-size:9px;color:#6b7280;text-transform:uppercase;">{esc(label)}</div></td>'
+            for label, v, c in cells)
         return f'<table style="width:100%;border-collapse:collapse;margin:8px 0;"><tr>{tds}</tr></table>'
 
     def suspicious_html() -> str:

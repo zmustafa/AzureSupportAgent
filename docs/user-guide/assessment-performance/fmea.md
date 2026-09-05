@@ -47,10 +47,10 @@ Actions include:
 - add or remove tables;
 - regenerate one table or the complete document;
 - export CSV or Excel;
-- review and restore revisions;
+- retain revisions through the API (the current editor has no History/preview control);
 - soft-delete, restore, or permanently purge a document.
 
-Edits auto-save after a short debounce. Wait for save completion before navigating away or exporting.
+Edits auto-save after 1.2 seconds of idle time; **Save** is also available. Wait for **Saved** before navigating away, generating, or exporting. The worksheet has action-results and completion-date fields, not a separate per-row open/in-progress/completed status selector. Document lifecycle is independent of those row values.
 
 ## RPN and risk bands
 
@@ -89,6 +89,7 @@ Factor-cell color also helps identify high individual values. RPN is a prioritiz
 - **Edited** means the document is human-authored/changed.
 - **Hybrid** means generated and human-edited content are combined.
 - **Draft**, **In review**, **Published**, and **Archived** communicate lifecycle, not technical validation.
+- **Archived** is not an immutable evidence lock: some editor controls are disabled, but the API still accepts authorized edits. Keep a reviewed export when a fixed record is required.
 - A high RPN prioritizes review; it does not prescribe the remediation.
 - Post-mitigation scores should represent verified controls, not planned work.
 
@@ -96,7 +97,7 @@ Factor-cell color also helps identify high individual values. RPN is a prioritiz
 
 - **CSV** provides portable tabular data.
 - **Excel** includes worksheet formatting and live RPN formulas/conditional formatting for supported fields. Confirm formulas after opening in the target spreadsheet application.
-- Revision history retains a bounded set of snapshots. Restoring an older revision creates a new current state rather than erasing later history.
+- The API retains up to 50 revision snapshots and exposes revision listing and restore. The current editor does not expose a revision drawer or preview endpoint; do not look for a History button. An authorized revision restore changes the application document, not Azure resources.
 - FMEA is grounded in [Architectures]({{ site.baseurl }}/user-guide/design-ownership/architectures/) and [Know-Me]({{ site.baseurl }}/user-guide/design-ownership/know-me/).
 - Mission Control can generate or update the latest workload FMEA as one system in a broader analysis and link back to the document.
 
@@ -105,6 +106,7 @@ Factor-cell color also helps identify high individual values. RPN is a prioritiz
 - AI may omit failure modes, invent controls, or score inconsistently. Human facilitation is mandatory.
 - RPN multiplication can under-rank high-severity/low-occurrence events and common-cause failures.
 - Regeneration can replace table content; review the scope and preserve important manual work through revisions/exports.
+- **Regenerate all** replaces all tables. Per-table regeneration replaces that table's rows with the first generated table's rows, retaining its name/scope and the other tables. Both run as detached jobs: closing or cancelling the browser stream does not guarantee server cancellation. Reopen the saved document before retrying.
 - A deleted workload does not delete its FMEA; review orphaned records and relink or archive deliberately.
 - Owner and due-date values must be entered and validated by people.
 - Exports can contain sensitive architecture and risk information.
@@ -117,7 +119,7 @@ Factor-cell color also helps identify high individual values. RPN is a prioritiz
 | Generation fails or is partial | Check AI provider health and architecture memory; a fallback draft may be returned for review. |
 | RPN is blank | Enter valid non-zero S, O, and D values from 1 to 10. |
 | Scores change after save | The server normalizes factor values; inspect entries outside the allowed range. |
-| Recent edits are missing | Wait for auto-save, avoid simultaneous tabs, and inspect revision history. |
+| Recent edits are missing | Wait for **Saved**, avoid simultaneous edits/regeneration, and compare the persisted document with a retained export. Revision recovery is available through the API, not an editor History button. |
 | Document shows workload deleted | Decide whether to relink through the supported workflow, archive, export, or remove it. |
 | Excel differs from UI | Recalculate workbook formulas and verify that the spreadsheet application supports the generated formatting. |
 

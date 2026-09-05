@@ -390,11 +390,13 @@ async def _shutdown() -> None:
     from app.agent.turn_runner import registry as turn_registry
     from app.core.durable_jobs import shutdown_executors
     from app.core.genjob import shutdown_registries
+    from app.api.telemetry import shutdown_refresh_tasks
 
     await asyncio.gather(
         turn_registry.stop(),
         shutdown_registries(),
         shutdown_executors(),
+        shutdown_refresh_tasks(),
         return_exceptions=True,
     )
 

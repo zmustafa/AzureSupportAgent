@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.leases import HEARTBEAT_SECONDS, LEASE_SECONDS, lease_token, worker_id
 from app.models import WorkBatch, WorkBatchItem
@@ -237,18 +239,49 @@ async def create_batch(
     clean_key = (idempotency_key or "").strip()
     if not clean_key or len(clean_key) > 128:
         raise ValueError("idempotency_key must contain 1-128 characters.")
+    tenant_id = tenant_id or "default"
 
     async with SessionLocal() as db:
-        existing = (
+        dialect = db.bind.dialect.name if db.bind is not None else ""
+        if dialect == "postgresql":
+            insert = pg_insert
+        elif dialect == "sqlite":
+            insert = sqlite_insert
+        else:  # pragma: no cover - supported deployments are PostgreSQL and SQLite
+            raise RuntimeError(f"Unsupported work-batch database dialect: {dialect}")
+
+        # Claim the idempotency key before reading it. A competing INSERT waits for
+        # this transaction (including all children and the final total) to commit.
+        # Only this unique constraint is replayable; unrelated integrity errors
+        # must propagate and roll back the complete submission.
+        batch_id = str(uuid.uuid4())
+        inserted = (
             await db.execute(
-                select(WorkBatch).where(
-                    WorkBatch.tenant_id == tenant_id,
-                    WorkBatch.feature == feature,
-                    WorkBatch.idempotency_key == clean_key,
-                )
+                insert(WorkBatch).values(
+                    id=batch_id,
+                    tenant_id=tenant_id,
+                    feature=feature,
+                    idempotency_key=clean_key,
+                    status="queued",
+                    config_json=dict(config or {}),
+                    total=0,
+                    triggered_by=actor,
+                    trigger=trigger,
+                ).on_conflict_do_nothing(
+                    index_elements=["tenant_id", "feature", "idempotency_key"]
+                ).returning(WorkBatch.id)
             )
         ).scalar_one_or_none()
-        if existing is not None:
+        if inserted is None:
+            existing = (
+                await db.execute(
+                    select(WorkBatch).where(
+                        WorkBatch.tenant_id == tenant_id,
+                        WorkBatch.feature == feature,
+                        WorkBatch.idempotency_key == clean_key,
+                    )
+                )
+            ).scalar_one()
             rows = list(
                 (
                     await db.execute(
@@ -260,21 +293,13 @@ async def create_batch(
             )
             return batch_public(existing, rows), False
 
-        batch = WorkBatch(
-            id=str(uuid.uuid4()),
-            tenant_id=tenant_id or "default",
-            feature=feature,
-            idempotency_key=clean_key,
-            status="queued",
-            config_json=dict(config or {}),
-            total=len(items),
-            triggered_by=actor,
-            trigger=trigger,
-        )
-        db.add(batch)
+        batch = await db.get(WorkBatch, batch_id)
+        assert batch is not None
         seen: set[str] = set()
         for descriptor in items:
-            item_key = str(descriptor.get("item_key") or descriptor.get("workload_id") or "").strip()
+            # Deduplicate the stored key, not an unbounded precursor that can
+            # collide only after truncation to the SQL column's length.
+            item_key = str(descriptor.get("item_key") or descriptor.get("workload_id") or "").strip()[:256]
             if not item_key or item_key in seen:
                 continue
             seen.add(item_key)
@@ -283,7 +308,7 @@ async def create_batch(
                     id=str(uuid.uuid4()),
                     batch_id=batch.id,
                     tenant_id=batch.tenant_id,
-                    item_key=item_key[:256],
+                    item_key=item_key,
                     workload_id=str(descriptor.get("workload_id") or "")[:128] or None,
                     workload_name=str(descriptor.get("workload_name") or descriptor.get("name") or item_key)[:256],
                     connection_id=str(descriptor.get("connection_id") or "")[:128] or None,
@@ -292,6 +317,9 @@ async def create_batch(
                     result_json=dict(descriptor.get("result") or {}),
                 )
             )
+        if not seen:
+            raise ValueError("A work batch needs at least one unique item.")
+        batch.total = len(seen)
         await db.commit()
         await db.refresh(batch)
         rows = list(
@@ -303,12 +331,6 @@ async def create_batch(
                 )
             ).scalars().all()
         )
-        if not rows:
-            await db.delete(batch)
-            await db.commit()
-            raise ValueError("A work batch needs at least one unique item.")
-        batch.total = len(rows)
-        await db.commit()
         response = batch_public(batch, rows)
     if start_worker:
         await worker.ensure_running()

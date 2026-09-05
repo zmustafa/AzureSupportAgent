@@ -19,7 +19,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:governance]
 
 This tab is not an inventory of governance campaigns — the Microsoft Entra admin center already lists those. Its job is to compute what is *not* governed. A tenant with forty immaculate access reviews and a set of privileged roles nobody has ever reviewed has a governance problem the portal cannot show, because the portal only draws what exists.
 
-That is why the coverage table is the centerpiece and why it is computed from the inventory domains rather than from the governance data. On a tenant with no governance license at all, every row still renders — framed as never reviewed rather than review overdue — so an unlicensed tenant still learns which object classes are governed by nothing.
+Coverage combines inventory object classes with the collected review/package evidence. It can render when governance data is unavailable, but then **unreviewed** means no review was established by this snapshot—not proof that the organization never reviewed those objects elsewhere.
 
 ## Prerequisites and data sources
 
@@ -58,13 +58,13 @@ Expiring assignments use a configurable window; the app requests the default of 
 
 One snapshot per tenant serves every tab in Entra ID. This tab reads the same collection as Posture, Conditional Access, Privileged Access, Applications, Risk & sign-ins, and Blast radius, so a single refresh updates all of them together. Refresh from the freshness badge in the Entra ID header. Tabs never collect on their own; opening this one reads the cached snapshot.
 
-Days overdue and days remaining are computed against the snapshot, not against the clock in your browser. A snapshot taken a week ago reports the overdue figures as they stood a week ago.
+Days overdue and days remaining are computed at request time from cached dates. Their ages can advance without a fresh collection, while review status and assignments remain stale. Record both source collection time and report time.
 
-The governance collector degrades in three independent pieces. Access reviews, entitlement management, and lifecycle workflows each succeed or fail on their own, so a tenant licensed for P2 but not for Governance gets reviews and packages and an unavailable notice on lifecycle. Enumeration is capped: review definitions, access packages, assignments, and workflows each have a ceiling, and instances and runs are read only for a bounded number of definitions and workflows. A cap that was hit is reported as a note on the snapshot.
+The governance collector degrades independently across reviews, entitlement and lifecycle. It caps review definitions and packages at 2,000 each, assignments at 20,000 and workflows at 500. It reads up to 12 instances for only the first 200 active review definitions and up to 20 runs for only the first 100 workflows. Coverage drill-downs show at most 200 object labels per class. Not every secondary cap/failure is exposed as a separate note; a zero overdue/failure count is not proof that all histories were inspected.
 
 ## Interpretation of results
 
-The gap column is the point of the coverage table. It is the count of objects in a class that neither an access review nor an access package is pointed at. When access reviews could not be read at all, every object counts as unreviewed — which is the correct assumption when no review data exists, and the banner says so explicitly rather than presenting the result as measured.
+The gap column is a coarse coverage estimate: `count - max(reviewed, governed)`, floored at zero. It does not calculate the exact union of reviewed and package-governed objects. Scope matching parses selected query shapes; tenant-wide delegated consent currently has no recognized review match. When review data is unreadable, verify actual reviews externally rather than reporting every object as definitively never reviewed.
 
 Coverage counts two distinct paths to being reviewed. A review scoped directly at a role, group, guest population, or application counts. So does entitlement management: where a review targets an access package, the principals holding assignments through that package are counted as reviewed. Counting only directly-scoped reviews under-reports tenants that certify through packages.
 
@@ -72,7 +72,7 @@ A campaign that exists is not a campaign that works. A one-off review is accurat
 
 Lifecycle workflows are read for their categories and their outcomes. The missing-categories notice names which of joiner, mover, and leaver has no *enabled* workflow — a disabled leaver workflow counts as missing, because offboarding that does not run is offboarding that depends on somebody remembering every system. Failure rate is failed runs over total runs within the bounded run window.
 
-Zero and unlicensed mean different things everywhere on this tab. Zero access packages means the tenant has none. An unlicensed notice means the question could not be asked. Read the notice before concluding anything.
+Zero and unlicensed mean different things. Zero packages supports an absence claim only if that collection was complete and readable. A workflow with zero loaded runs has no measured failure rate, even if its computed percentage is 0%. Read capability flags and collector notes before concluding anything.
 
 ## Safety and limitations
 

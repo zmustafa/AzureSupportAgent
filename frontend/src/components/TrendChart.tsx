@@ -64,11 +64,11 @@ export function TrendChart({ points, current, previous, delta, unit = "%", loadi
   const lineColor = tone(last);
 
   if (loading) {
-    return <div className="h-10 w-[150px] animate-pulse rounded bg-gray-100" />;
+    return <div className="h-10 w-[150px] min-w-0 max-w-full animate-pulse rounded bg-gray-100" />;
   }
   if (!geom || geom.xy.length < 2) {
     return (
-      <div className="flex h-10 w-[150px] items-center justify-center rounded border border-dashed border-gray-200 text-[10px] text-gray-400">
+      <div className="flex min-h-10 w-[150px] min-w-0 max-w-full items-center justify-center rounded border border-dashed border-gray-200 px-1 text-center text-[10px] text-gray-600">
         Run again to chart trend
       </div>
     );
@@ -81,11 +81,12 @@ export function TrendChart({ points, current, previous, delta, unit = "%", loadi
   const gid = `tg-${lineColor.replace("#", "")}`;
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1" data-testid="trend-chart">
+      <div className="relative w-[150px] min-w-0 max-w-full">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="h-10 w-[150px]"
+          preserveAspectRatio="none"
+          className="block h-10 w-full"
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const x = ((e.clientX - rect.left) / rect.width) * W;
@@ -114,8 +115,7 @@ export function TrendChart({ points, current, previous, delta, unit = "%", loadi
         </svg>
         {hp && (
           <div
-            className="pointer-events-none absolute -top-7 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-1.5 py-0.5 text-[10px] text-white shadow"
-            style={{ left: `${(hp.x / W) * 100}%` }}
+            className="pointer-events-none absolute bottom-full left-0 z-10 mb-1 w-max max-w-full break-words rounded bg-gray-900 px-1.5 py-0.5 text-[10px] text-white shadow"
           >
             {hp.pct}{unit} · {fmtDate(hp.at)}
           </div>
@@ -123,14 +123,15 @@ export function TrendChart({ points, current, previous, delta, unit = "%", loadi
       </div>
       {typeof delta === "number" && delta !== 0 ? (
         <span
-          className={`whitespace-nowrap text-[11px] font-medium ${delta > 0 ? "text-green-600" : "text-red-600"}`}
+          data-testid="trend-caption"
+          className={`min-w-0 max-w-full break-words text-[11px] font-medium ${delta > 0 ? "text-green-700" : "text-red-700"}`}
           title={typeof previous === "number" ? `Previous scan: ${previous}${unit}` : undefined}
         >
-          {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}{unit}
-          <span className="ml-0.5 font-normal text-gray-400">{deltaLabel}</span>
+          <span className="whitespace-nowrap">{delta > 0 ? "▲" : "▼"} {Math.abs(delta)}{unit}</span>{" "}
+          <span className="font-normal text-gray-600">{deltaLabel}</span>
         </span>
       ) : (
-        <span className="whitespace-nowrap text-[11px] text-gray-400">{points.length} scan{points.length === 1 ? "" : "s"}</span>
+        <span data-testid="trend-caption" className="min-w-0 max-w-full text-[11px] text-gray-600">{points.length} scan{points.length === 1 ? "" : "s"}</span>
       )}
     </div>
   );

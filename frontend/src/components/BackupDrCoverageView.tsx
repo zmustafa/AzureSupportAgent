@@ -461,9 +461,9 @@ export function BackupDrCoveragePanel() {
             </p>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
               <span>Resources: <b>{statusTotals.green + statusTotals.amber + statusTotals.red}</b></span>
-              <span className="text-green-600">✓ {statusTotals.green}</span>
-              <span className="text-amber-500">⚠ {statusTotals.amber}</span>
-              <span className="text-red-500">✗ {statusTotals.red}</span>
+              <span className="text-green-700">✓ {statusTotals.green}</span>
+              <span className="text-amber-700">⚠ {statusTotals.amber}</span>
+              <span className="text-red-700">✗ {statusTotals.red}</span>
             </div>
           </div>
           {enabled && (
@@ -514,9 +514,9 @@ export function BackupDrCoveragePanel() {
 
         {/* Scorecard */}
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          <Stat label="Protected" value={`${sc?.pct_protected ?? 0}%`} tone={(sc?.pct_protected ?? 0) >= 80 ? "text-green-600" : "text-amber-600"} />
-          <Stat label="Offsite / geo" value={`${sc?.pct_offsite ?? 0}%`} tone={(sc?.pct_offsite ?? 0) >= 80 ? "text-green-600" : "text-amber-600"} />
-          <Stat label="Job ✓ in SLA" value={`${sc?.pct_recent_job ?? 0}%`} tone={(sc?.pct_recent_job ?? 0) >= 80 ? "text-green-600" : "text-amber-600"} />
+          <Stat label="Protected" value={`${sc?.pct_protected ?? 0}%`} tone={(sc?.pct_protected ?? 0) >= 80 ? "text-green-700" : "text-amber-700"} />
+          <Stat label="Offsite / geo" value={`${sc?.pct_offsite ?? 0}%`} tone={(sc?.pct_offsite ?? 0) >= 80 ? "text-green-700" : "text-amber-700"} />
+          <Stat label="Job ✓ in SLA" value={`${sc?.pct_recent_job ?? 0}%`} tone={(sc?.pct_recent_job ?? 0) >= 80 ? "text-green-700" : "text-amber-700"} />
           <Stat label="DR pairs" value={`${sc?.dr_pairs ?? 0}`} />
           <Stat label="Stale drills" value={`${sc?.dr_pairs_stale ?? 0}`} tone={(sc?.dr_pairs_stale ?? 0) > 0 ? "text-red-600" : "text-green-600"} />
           <Stat label="Last drill" value={sc?.last_drill_days != null ? `${sc.last_drill_days}d` : "—"} />
@@ -536,10 +536,10 @@ export function BackupDrCoveragePanel() {
         {tab === "backup" && (
           <>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-gray-400">Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Resource Graph"}</span>
+              <span className="text-gray-500">Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Resource Graph"}</span>
               <span className="text-gray-300">·</span>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search resources…" className="w-44 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400" />
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+              <select aria-label="Backup coverage status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
                 <option value="all">All statuses</option>
                 <option value="red">🔴 Critical</option>
                 <option value="amber">🟠 At risk</option>
@@ -567,11 +567,11 @@ export function BackupDrCoveragePanel() {
               <button onClick={() => void registerFindings()} disabled={busy === "findings"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Create Reliability findings</button>
               <button onClick={() => void sendApproval("bicep")} disabled={busy === "approval"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Send to Approval Inbox</button>
               {/* BU5 — matrix glyph legend. */}
-              <span className="ml-auto flex items-center gap-2 text-[11px] text-gray-400">
-                <span className="text-green-600">●</span> protected
-                <span className="text-amber-500">▲</span> at risk
-                <span className="text-red-500">✗</span> missing
-                <span className="text-gray-300">–</span> n/a
+              <span className="ml-auto flex items-center gap-2 text-[11px] text-gray-500">
+                <span className="text-green-700">●</span> protected
+                <span className="text-amber-700">▲</span> at risk
+                <span className="text-red-700">✗</span> missing
+                <span className="text-gray-500">–</span> n/a
               </span>
             </div>
           </>
@@ -599,7 +599,7 @@ export function BackupDrCoveragePanel() {
           />
         )}
         {!enabled ? (
-          <div className="py-16 text-center text-sm text-gray-400">
+          <div className="py-16 text-center text-sm text-gray-500">
             {scopeReady
               ? <>Pick a workload, then click <b>Load coverage</b> to scan its backup &amp; DR posture.</>
               : "Pick a workload or enter a subscription to begin."}

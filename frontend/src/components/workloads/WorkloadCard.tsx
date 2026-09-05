@@ -177,7 +177,7 @@ export function WorkloadCard({
               <div className="text-[11px] text-gray-400">No resources yet</div>
             )}
             {(comp?.by_type.length ?? 0) > 5 && (
-              <div className="text-[10px] text-gray-400">+{(comp!.by_type.length - 5)} more types</div>
+              <div className="text-[10px] text-gray-500">+{(comp!.by_type.length - 5)} more types</div>
             )}
           </div>
           {health && <HealthRadar health={health} size={104} />}
@@ -218,7 +218,7 @@ export function WorkloadCard({
 
       {/* Actions */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button onClick={onOpen} className="rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10">
+        <button onClick={onOpen} className="rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand-dark hover:bg-brand/10">
           Open ▸
         </button>
         <button onClick={onRefresh} disabled={refreshing} className="flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-60">

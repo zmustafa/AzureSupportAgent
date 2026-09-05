@@ -107,7 +107,9 @@ The middle column is why the tab exists. Removing somebody from a group frequent
 
 **A failed simulation is never a green tick.** An unknown change kind or a malformed change is rejected as a 400 and a change whose referent has since been deleted is a 409; both are surfaced with their message and the explicit statement that nothing was simulated and this is not a result showing no impact. An ignored change would produce a reassuring "nothing happens" from a typo, which is the worst possible output because it looks like an answer.
 
-**Sampling is stated, seeded, and never drops the cohorts you came for.** Below the sampling threshold every row is modeled and the footer says `showing all N`. Above it the footer states the sample size, the population, the fixed seed and how many always-kept rows were retained. The seed is deliberately fixed: an answer that moves between identical runs cannot support a decision, and "run it again" becomes the first thing anybody does when they dislike the result. Privileged and other named cohorts are never sampled away, because a sample that drops the break-glass account is answering a different question from the one that was asked.
+**Sampling applies to the Lost output, not the input estate.** Changes are applied to all cached rows. If truly lost rows exceed 5,000, that output keeps every privileged lost row and a seeded sample of the remainder (`20260801`). Retained and Gained are not sampled by this function. The footer's population is therefore lost rows—not all scanned grants or distinct people. No separate guest or break-glass sampling rule is implemented here.
+
+**Model boundary.** Retained access is matched by principal, role name, active state and covering scope, not full permission equivalence between different roles. `disable_bypass` leaves access rows unchanged and reports a limitation; it does not simulate shared-key revocation. `assume_principal` also leaves rows unchanged and does not produce a separate compromise-reach report. Neither kind's empty columns establish no impact. Orphan detection checks owner-level rows at each exact assignment scope, so inherited owners need an independent check.
 
 The footer also reports principals affected, grants unchanged, and standing privilege before and after. A limitations panel names what the model did not evaluate.
 
@@ -142,7 +144,7 @@ The footer also reports principals affected, grants unchanged, and standing priv
 
 - `GET /api/iam/runs` and `GET /api/iam/run/{run_id}` list and read the retained run history. Neither has a screen today.
 - `POST /api/iam/run/{run_id}/pin` (permission `iam.review`) retains a run's full rows indefinitely so it can serve as a campaign baseline or as evidence. There is no pin control in the UI.
-- `GET /api/iam/principal/{principal_id}/timeline` returns one principal's access events across every retained run, and publishes its own limitation: runs recorded before classified diffing existed contribute nothing, so a gap means the history was not captured rather than that nothing happened. It has no API client and no screen.
+- `GET /api/iam/principal/{principal_id}/timeline` considers at most 30 retained runs. It has a client method but no dedicated IAM tab. Runs recorded before classified diffing contribute nothing; gaps do not prove inactivity.
 - `GET /api/iam/simulate/kinds` publishes the accepted change kinds and the sampling seed. The tab renders its own kind list rather than reading this.
 - Compare and Simulator have no export of their own. The Excel workbook from the Overview tab is the export surface for the access data they operate on.
 - Refresh runs are recorded in the audit log; pinning a run is recorded with its reason.
@@ -169,7 +171,7 @@ The footer also reports principals affected, grants unchanged, and standing priv
 | A group membership change produced no diff rows | Confirm the directory was refreshed. Group expansion is what turns a membership change into effective-access changes. |
 | The Simulator returns an error instead of a result | An unknown or malformed change is a 400 and a deleted referent is a 409. The message names which. Nothing was simulated — this is not a "no impact" result. |
 | The Simulator's **Lost** column is empty but I expected a revocation | Read **Retained anyway**. The principal almost certainly holds the same role by another route, which is the outcome this tab exists to surface. |
-| The Simulator footer says results were sampled | The population exceeded the sampling threshold. The seed is fixed so the answer is reproducible, and privileged cohorts are never sampled away. Narrow the basket for a full answer. |
+| The Simulator footer says results were sampled | More than 5,000 truly lost rows were produced. Privileged lost rows are retained; the remainder is sampled. Reduce the change set and inspect each result without treating its count as the estate population. |
 | The Simulator tab returns a permission error | Simulation requires `iam.simulate`, which is separate from `iam.read`. |
 
 ## Related pages

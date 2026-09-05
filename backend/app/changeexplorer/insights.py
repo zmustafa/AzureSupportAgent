@@ -18,7 +18,7 @@ def _top(counter: dict[str, int]) -> tuple[str, int]:
 
 def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Headline counts + 'most X' rollups used by the Summary tab."""
-    by_label = {l: 0 for l in RISK_LABELS}
+    by_label = {risk_label: 0 for risk_label in RISK_LABELS}
     actors: dict[str, int] = defaultdict(int)
     types: dict[str, int] = defaultdict(int)
     cat_max: dict[str, int] = defaultdict(int)
@@ -111,7 +111,7 @@ def build_insights(run_id: str, events: list[dict[str, Any]]) -> list[dict[str, 
 
 def facets(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Distinct filter values for the UI (risk, category, actor, resource type)."""
-    risks = sorted({e.get("riskLabel", "") for e in events if e.get("riskLabel")}, key=lambda l: -_LABEL_RANK.get(l, 0))
+    risks = sorted({e.get("riskLabel", "") for e in events if e.get("riskLabel")}, key=lambda risk_label: -_LABEL_RANK.get(risk_label, 0))
     cats = sorted({e.get("category", "") for e in events if e.get("category")})
     actors = sorted({e.get("actor", "") for e in events if e.get("actor")})
     rtypes = sorted({e.get("resourceType", "") for e in events if e.get("resourceType")})

@@ -13,5 +13,6 @@ has_children: true
 - [Glossary]({{ site.baseurl }}/reference/glossary/) — canonical concepts pointer.
 - [Troubleshooting index]({{ site.baseurl }}/reference/troubleshooting/) — symptom-to-guide map.
 - [Keyboard shortcuts]({{ site.baseurl }}/reference/keyboard-shortcuts/) — global navigation keys.
+- [Visual tour]({{ site.baseurl }}/reference/visual-tour/) — nine screenshot highlights and twenty workflow groups linking into the 137-capture collection.
 
 The live role editor and in-app Help menu reflect the running build and are authoritative when they differ from a static release page.

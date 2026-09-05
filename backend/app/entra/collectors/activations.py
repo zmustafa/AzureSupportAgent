@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.entra import model
-from app.entra.collectors import CollectContext, as_dict, as_list, clip, guarded
+from app.entra.collectors import CollectContext, as_dict, clip, guarded
 from app.entra.collectors.pim import parse_duration_hours
 from app.entra.collectors.roles import tier_of
 from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError

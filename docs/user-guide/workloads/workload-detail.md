@@ -15,7 +15,6 @@ permalink: /user-guide/workloads/workload-detail/
 ## Purpose
 
 Workload detail is the command center for one application boundary. It combines registry metadata and resources with cached composition, health, risk, and activity signals, then links to the tools that produced those signals.
-![Workload command center with health, coverage, risk, and next actions]({{ site.baseurl }}/assets/workload-detail.png)
 
 ### When to use it
 
@@ -28,8 +27,8 @@ Workload detail is the command center for one application boundary. It combines 
 
 ### Prerequisites and permissions
 
-- `workloads.read` to view, analyze, and refresh.
-- `workloads.write` to edit membership or metadata.
+- `workloads.read` to view the workload; Analyze also requires the permissions of each underlying feature.
+- `workloads.write` to refresh membership or edit membership or metadata.
 - A usable connection for refresh and live feature scans.
 - Feature-specific permissions for linked analysis pages.
 
@@ -39,7 +38,18 @@ Workload detail is the command center for one application boundary. It combines 
 
 ## Freshness and scope behavior
 
+Membership **Refresh** is separate from **Analyze**. Refresh reads Azure and saves the reconciled
+workload definition; it does not modify Azure resources. It scans resource groups identified by
+the workload's existing explicit resource nodes, not every resource implied by a broader scope.
 
+Enumeration must complete before membership is saved. The refresh collector retains at most
+1,000 resources across the requested groups; a truncated, failed, or malformed response cancels
+the refresh with HTTP 502. Failure to resolve scope exclusions also cancels it. In these cases,
+membership and `last_refreshed` remain unchanged; an unreadable group is not treated as empty.
+
+The workload's saved connection ID is authoritative: a missing connection returns HTTP 404 and
+a disabled connection returns HTTP 400, rather than falling back to another connection. Default
+connection resolution is used only when the workload has no saved connection ID.
 
 ## Workflow overview
 
@@ -52,7 +62,7 @@ Workload detail is the command center for one application boundary. It combines 
 5. Inspect each health component and its freshness. Do not rely on the aggregate alone.
 6. Review retirement, critical-finding, and assessment-gap counts.
 7. If signals are missing or stale, select **Analyze**. The action requests relevant monitoring, telemetry, backup/DR, radar, ownership, and other refreshes available to the user.
-8. For Autopilot-origin workloads, use **Refresh** to reconcile children of tracked resource groups and inspect what was added or removed.
+8. To reconcile membership, return to the workload card on `/workloads` and select **Refresh** with `workloads.write`. Review the added/removed counts, then reopen **Resources**.
 9. Follow next-action links to assessments, architectures, Chat, or Mission Control.
 
 ## Interpretation of results
@@ -90,9 +100,24 @@ No dedicated export, history, scheduling, or integration controls are documented
 | **Not analyzed** remains after Analyze | Check each feature call, connection access, and application permissions; some signals may be unavailable |
 | Aggregate looks better than expected | Inspect which components are absent; scoring renormalizes over present signals |
 | Resources are missing after refresh | Verify origin and tracked resource groups; manually edit scopes that refresh does not reconcile |
+| Refresh returns HTTP 403 | Membership refresh writes the workload definition. Request `workloads.write`; `workloads.read` alone is insufficient. |
+| Refresh reports that resources were left unchanged | Azure enumeration was unreadable, incomplete, malformed, or scope exclusions could not be resolved. Check connection access and throttling; a scope exceeding the 1,000-resource limit needs a reviewed smaller workload boundary, not repeated retries of the same oversized query. |
+| Refresh reports a missing or disabled connection | Correct the workload's saved connection or ask a connection administrator to restore it. An explicit invalid connection is not replaced by the default. |
 | Deleted Azure resource remains | Run Refresh for an eligible workload or remove the explicit node manually |
 | Analyze produces authorization errors | Verify both feature permission and Azure data access |
 | Detail cannot open | Workload may be in Trash or purged; return to fleet/Trash and verify the ID |
+
+## Screenshot walkthrough
+
+These synthetic browser fixtures illustrate the Overview and Resources review for one workload. They do not verify live membership, health, or analysis results.
+
+### 1. Review composition and health context
+
+{% include screenshot.html file="estate-workload-overview.png" title="Workload composition, health, and prioritized review" caption="Inspect composition and individual health signals before following a next action. Missing or stale components can make an aggregate score unsuitable for the decision at hand." %}
+
+### 2. Confirm resource membership
+
+{% include screenshot.html file="estate-workload-resources.png" title="Workload resources and category filters" caption="Use the Resources tab and category filters to inspect the intended application boundary before starting downstream analysis; an incorrect member set changes what those tools assess." %}
 
 ## Related pages
 

@@ -13,7 +13,7 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:drift]
 
 ## Prerequisites
 
-- Product permission `policy.read`; `policy.write` to update the locally stored IaC source.
+- Product permission `policy.read` for analysis and `policy.write` for the UI workflow: **Detect drift** saves the editor content before requesting analysis, just as **Save source** does.
 - A fresh policy inventory and the approved, secret-free policy source from version control.
 - Repository review, deployment, and rollback processes outside the app.
 
@@ -25,7 +25,7 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:drift]
 
 1. Open `/policy/drift` and select the same connection and workload used for inventory.
 
-2. Inspect the currently stored source-of-truth material and its age.
+2. Inspect the currently stored source-of-truth material. It is shared by the application tenant, not isolated by the Azure connection/workload picker; confirm it belongs to the intended scope.
 3. If authorized, replace it with reviewed, sanitized IaC content; never include credentials or deployment secrets.
 4. Run drift analysis against the current observed inventory.
 5. Classify differences as expected environment variation, missing deployment, portal change, scope mismatch, or stale/partial collection.
@@ -55,7 +55,7 @@ The drift tab does not synchronize or deploy Azure. Updating IaC source changes 
 
 ### Freshness and partial results
 
-Observed state inherits inventory cache age, workload scope, Resource Graph truncation, and permission gaps. Stored source can itself be stale or incomplete. Generated reconciliation is advisory and may not preserve every template construct or organizational convention.
+Observed state inherits inventory cache age, workload scope, Resource Graph truncation, and permission gaps. Storage keeps up to 200,000 source characters, but the AI comparison receives only the first 20,000 and at most 120 summarized assignments (name, scope label, definition name, effect and enforcement). It is not a structural IaC diff of all parameters, exclusions or identities. **In sync** cannot certify material outside that input. Verify full records in the authoritative repository and Azure.
 
 ## Troubleshooting
 

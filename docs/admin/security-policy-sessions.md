@@ -63,6 +63,8 @@ Visible settings are:
 
 The implementation does not expose local-account MFA controls in this screen. Complexity is not a substitute for SSO/MFA at the identity provider. Keep JIT's default role at `noaccess` or another explicitly reviewed least-privilege role.
 
+{% include screenshot.html file="admin-security-policy-defaults.png" title="Security Policy sign-in, password, and lockout defaults" caption="Review the local policy controls before changing authentication behavior. No policy was saved and no lockout, session-revocation, or external SSO test was performed; visible defaults do not verify an identity-provider configuration." %}
+
 ## Troubleshooting
 
 

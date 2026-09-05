@@ -11,7 +11,7 @@ feature_ids: [SHELL_NAV:chat, ROUTE:dashboard, ROUTE:chat, ROUTE:c]
 
 # Use Dashboard, Chat, and Deep Investigation
 
-![Deep Investigation hypothesis tree]({{ site.baseurl }}/assets/deep-investigation.png)
+{% include screenshot.html file="core-dashboard.png" title="Start a workload-scoped review from Dashboard" caption="Select the workload and review readiness and source coverage before following a signal. The values are synthetic examples, not a live scan or verified operational evidence." %}
 
 ## Prerequisites
 
@@ -51,6 +51,8 @@ Dashboard: `/dashboard` (also `/`). Chat: `/chat`, `/chat?deep=1`, or an existin
 
 **Verification:** Open cited resources or source modules and independently confirm the important observations.
 
+{% include screenshot.html file="core-investigation-conversation.png" title="Review the question and evidence in a Deep Investigation conversation" caption="This completed-conversation example shows the question, evidence context, and answer for review. It is a synthetic browser fixture, not a submitted live question, executed LLM investigation, or persistence test." %}
+
 ## How to run a Deep Investigation War Room
 
 1. Enable **Deep investigation** in the composer or open `/chat?deep=1`.
@@ -66,12 +68,15 @@ Dashboard: `/dashboard` (also `/`). Chat: `/chat`, `/chat?deep=1`, or an existin
 
 **Verification:** Reproduce the decisive check in the owning Azure/source feature and confirm the time window and workload boundary.
 
+{% include screenshot.html file="core-investigation-result.png" title="Inspect hypotheses, evidence, and proposed investigation actions" caption="Use the result layout to locate the decisive evidence and review each recommendation. Hypotheses and conclusions here are illustrative; they do not prove root cause, and no proposed action was executed." %}
+
 ## How to manage chat lifecycle
 
 1. Reopen `/c/{chatId}` to continue a durable conversation or reconnect after a stream interruption.
-2. Archive completed chats when they should leave recents.
-3. Restore from Trash if archived accidentally.
-4. Purge or empty Trash only after retention and transcript-review requirements are met.
+2. Inspect saved messages and active-turn state before resending a question. Navigation or a disconnected stream does not cancel the turn; use **Stop** to request cancellation, then reopen the chat to verify the partial output saved by its best-effort checkpoint.
+3. Archive completed chats when they should leave recents.
+4. Restore from Trash if archived accidentally.
+5. Purge or empty Trash only after retention and transcript-review requirements are met.
 
 **Expected result:** Active and retained conversations remain intentional.
 
@@ -82,7 +87,7 @@ Dashboard: `/dashboard` (also `/`). Chat: `/chat`, `/chat?deep=1`, or an existin
 - Never paste credentials, tokens, private keys, connection strings, or unnecessary personal data.
 - Tool success proves execution, not completeness. Model confidence is not evidence quality.
 - Deep Investigation is read-oriented by default, but proposed commands and linked workflows may mutate systems; review them separately.
-- Stopping or navigating away may not cancel server-side work. Reopen the chat to inspect state.
+- Navigation and stream disconnects do not cancel server-side turns. **Stop** requests cancellation and attempts to save partial output; it does not undo tool work already performed. Reopen the chat to verify its state and saved messages.
 - Archive is reversible; purge is not. Review transcripts before external ticket/PDF handoff.
 
 ## Troubleshooting

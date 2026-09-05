@@ -54,7 +54,7 @@ export function FleetCockpit({
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
       {/* Health distribution */}
       <div className="rounded-xl border bg-white p-4">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Fleet health</div>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Fleet health</div>
         <div className="flex items-center gap-3">
           <div className="text-3xl font-bold tabular-nums" style={{ color: avg == null ? "#94a3b8" : bandColor(avg >= 80 ? "good" : avg >= 50 ? "warn" : "poor") }}>
             {avg ?? "—"}
@@ -69,13 +69,13 @@ export function FleetCockpit({
             ))}
           </div>
         </div>
-        <div className="mt-2 text-[10px] text-gray-400">{analyzed}/{profiles.length} analyzed</div>
+        <div className="mt-2 text-[10px] text-gray-600">{analyzed}/{profiles.length} analyzed</div>
       </div>
 
       {/* Composition treemap */}
       <div className="rounded-xl border bg-white p-4 lg:col-span-2">
         <div className="mb-2 flex items-center justify-between">
-          <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Estate composition</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">Estate composition</div>
           <div className="text-[11px] text-gray-500"><b className="text-gray-700">{totalResources.toLocaleString()}</b> resources</div>
         </div>
         <Treemap data={treeData} width={460} height={96} onClick={(label) => onFilter(activeFilter === `cat:${label}` ? "" : `cat:${label}`)} />
@@ -83,11 +83,11 @@ export function FleetCockpit({
 
       {/* Env × criticality matrix + risk ticker */}
       <div className="rounded-xl border bg-white p-4">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Triage</div>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Triage</div>
         <div className="overflow-x-auto">
-          <table className="w-full text-[10px]">
+          <table className="w-full text-[10px]" data-testid="workload-triage" aria-label="Workloads by environment and criticality">
             <thead>
-              <tr className="text-gray-400">
+              <tr className="text-gray-600">
                 <th className="text-left font-normal"></th>
                 {CRITS.map((c) => <th key={c} className="px-1 font-normal capitalize">{c.slice(0, 4)}</th>)}
               </tr>
@@ -103,9 +103,11 @@ export function FleetCockpit({
                       <td key={c} className="p-0.5">
                         <button
                           disabled={!on}
+                          aria-label={`${e}, ${c} criticality: ${n} workload${n === 1 ? "" : "s"}`}
+                          aria-pressed={on ? activeFilter === `env:${e}` : undefined}
                           onClick={() => onFilter(activeFilter === `env:${e}` ? "" : `env:${e}`)}
                           className={`flex h-6 w-full items-center justify-center rounded tabular-nums ${on ? "font-semibold text-white" : "text-gray-300"}`}
-                          style={{ backgroundColor: on ? (c === "critical" ? "#dc2626" : c === "high" ? "#ea580c" : c === "medium" ? "#d97706" : "#94a3b8") : "#f8fafc" }}
+                          style={{ backgroundColor: on ? (c === "critical" ? "#dc2626" : c === "high" ? "#c2410c" : c === "medium" ? "#b45309" : "#475569") : "#f8fafc" }}
                         >
                           {on ? n : ""}
                         </button>

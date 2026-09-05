@@ -19,7 +19,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:governance]
 
 The Microsoft Entra admin center lists guests. This sub-tab answers a different question: *which external access do we still want, and who do we ask to end it?* Guest lifecycle is treated as governance for the same reason access reviews are — an invitation nobody accepted and a partner nobody reviews are the same class of problem as a review campaign that never runs.
 
-Four determinations on this screen are computed rather than read straight from a field, and each one exists because the obvious reading of the directory produces a confident, wrong answer. They are described under [Interpretation of results](#interpretation-of-results); read them before acting on the grid.
+Lifecycle, partner classification and activity interpretation are derived from collected evidence. Read [Interpretation of results](#interpretation-of-results) before using them to propose access removal.
 
 ## Prerequisites and data sources
 
@@ -48,16 +48,16 @@ The sub-tab opens on a tile row, a lifecycle funnel, and a domain-class breakdow
 
 | Control | What it does |
 | --- | --- |
-| Tile row | Guests, pending invite, never used, dormant, active, not measured, and partner domains. Each tile carries the rule behind it as a tooltip |
+| Tile row | Guests, pending invite, never used, dormant, active, disabled, not measured, and partner domains |
 | Guest lifecycle funnel | Invited → accepted → used it → still active, naming the loss at each step |
 | Where guests come from | Guest count per domain class, with an explicit line when any guest is on a consumer mailbox |
 | **People** / **Partner organizations** | Switches between the per-guest grid and the per-organization rollup |
 | Search | Matches display name, sign-in address, mail, and domain |
-| Lifecycle filter | Restricts the grid to one of the five states |
+| Lifecycle filter | Restricts the grid to one of six states, including Disabled |
 | Domain-class filter | Corporate, consumer email, government, education, or unresolved |
 | **Enabled only** | Hides disabled guest objects |
 | Domain chip | Set by clicking an organization in either grid; clears from the chip itself |
-| **⬇ Export to Excel** | The full Entra workbook, including the two guest sheets |
+| Workbook handoff | Return to Posture and use **Export everything to Excel**; the current Guests toolbar has no export button |
 | 🔍 Investigate | Opens `/entra/investigate` for that guest |
 
 Every column header in both grids sorts.
@@ -66,13 +66,13 @@ The **People** grid columns are: guest (name and sign-in address), organization 
 
 The **Partner organizations** grid columns are: organization (partner display name where it resolved, otherwise the domain), guests with a disabled count, pending, dormant, oldest invite, and cross-tenant policy verdict. The verdict's reason is the cell's tooltip. Selecting an organization switches to the People grid filtered to it.
 
-The People grid renders the first 1,000 matching rows and says so when there are more. Narrow with the filters or export for the complete set — the export is never capped.
+The People grid renders the first 1,000 matching rows. The native Entra workbook writes all **collected** guests, ignoring local grid filters; it cannot recover users omitted by collection caps or permission failures.
 
 ## Freshness and scope behavior
 
 One snapshot per tenant serves every tab in Entra ID. This sub-tab reads the same collection as Posture, Conditional Access, Privileged Access, Applications, Risk & sign-ins, Governance, and Blast radius, so a single refresh updates all of them together. Refresh from the freshness badge in the Entra ID header. Opening this sub-tab reads the cached snapshot and nothing else.
 
-Every "days ago" figure is computed against the snapshot, not against the clock in your browser. A snapshot taken a week ago reports the ages as they stood a week ago.
+Ages/lifecycle are computed from cached timestamps at report time; the browser also formats some calendar ages. They can advance while the underlying account and sign-in evidence remains unchanged. Check source collection age separately.
 
 The dormancy bar is the `entra_guest_stale_days` setting — 90 days by default, clamped to 1–730. It is deliberately separate from `entra_stale_days`, which governs members, so external access can be held to a stricter standard than employee accounts. See [General settings]({{ site.baseurl }}/admin/general-settings/).
 
@@ -90,15 +90,20 @@ The coverage banner above the tiles reports what the people domain could and cou
 
 ## Interpretation of results
 
-### The five lifecycle states are mutually exclusive
+### The six lifecycle states are mutually exclusive
 
 | State | Shown as | Means |
 | --- | --- | --- |
+| `disabled` | Disabled | Account disabled; takes precedence over sign-in-based lifecycle states, but does not remove assignments |
 | `pending` | Invitation pending | Invited and never accepted. A directory object nobody needs |
 | `accepted_never_used` | Accepted, never used | The identity is live and carries whatever it was granted, and nobody has ever used it |
 | `active` | Active | Signed in inside the dormancy window |
 | `dormant` | Dormant | Used at least once, not since the dormancy window |
 | `unknown` | Not measured | Sign-in activity was not collected for this guest |
+
+The following browser-fixture views illustrate lifecycle and partner review; they are not live directory reads or evidence that a tenant's guest controls were assessed.
+
+{% include screenshot.html file="identity-guests-lifecycle.png" title="Guest access: keep six lifecycle states distinct" caption="Compare active, dormant, not measured, invitation pending, accepted-unused and disabled examples. In particular, missing sign-in measurement is a separate state, not evidence of dormancy." %}
 
 ### Rule 1 — the invitation date is destroyed on acceptance
 
@@ -108,7 +113,7 @@ The coverage banner above the tiles reports what the people domain could and cou
 
 ### Rule 2 — the guest's organization is not the UPN suffix
 
-A guest UPN looks like `ada_contoso.com#EXT#@yourtenant.onmicrosoft.com`. The suffix is always the **host** tenant, so keying the organization on it reports every guest in the directory as belonging to your own company — and the partner rollup collapses to a single meaningless row.
+A fictional guest UPN can encode `ada@example.com` as `ada_example.com#EXT#@<host-tenant>.onmicrosoft.com`. Its suffix is the **host** tenant, not the partner organization. The partner is derived from mail or the encoded external address.
 
 **Organization** comes from the guest's `mail` address, because that is where the invitation was actually sent. When mail is absent it falls back to the segment after the last underscore of the `#EXT#` prefix. A plain address in the UPN is used last, and the host tenant's own `onmicrosoft.com` domain is never reported as a partner.
 
@@ -118,10 +123,10 @@ A guest UPN looks like `ada_contoso.com#EXT#@yourtenant.onmicrosoft.com`. The su
 
 The grid reports both, in separate columns, and they are not interchangeable:
 
-- **Last human sign-in** is interactive only. It answers *is this person still working with us*.
-- **Last any activity** includes non-interactive refresh. It answers *is this identity still live*.
+- **Last human sign-in** uses the interactive timestamp unless it is provably a refused attempt. It is evidence to investigate, not proof that the person is still employed or engaged.
+- **Last any activity** prefers the last successful sign-in across interactive/non-interactive activity. Older attempt-only records can remain as limited evidence because successful-sign-in history was not backfilled.
 
-A row with recent activity and no human sign-in is a live token with nobody behind it.
+A provably rejected attempt is shown as **refused**, not successful use. Recent non-interactive activity without recent interactive evidence is a reason to inspect sessions and ownership, not proof that a token is currently valid or that no person is involved.
 
 ### Rule 4 — "Not measured" is never "not used"
 
@@ -143,6 +148,8 @@ The cross-tenant verdict is the join no Entra blade offers: the partner list is 
 
 `unknown` does not mean ungoverned. When the cross-tenant partner list cannot be read, the grid says so in a banner above it and every row reports `unknown` — rendering hundreds of partners as ungoverned because a read failed would be the loudest false claim this screen could make. Each verdict carries its reason as a tooltip.
 
+{% include screenshot.html file="identity-guests-partner-organizations.png" title="Guest access: partner rollup and policy visibility" caption="Review the population by external mail domain rather than the host tenant's UPN suffix. Cross-tenant policy visibility remains unknown in this example; the rollup does not establish that a partner is ungoverned." %}
+
 ### Domain classes
 
 | Class | Why it is a separate class |
@@ -159,14 +166,14 @@ Invited, accepted, used it, and still active each have a different denominator. 
 
 ## Exports, history, scheduling, and integrations
 
-The **⬇ Export to Excel** control produces the full Entra workbook. Two sheets come from this sub-tab, under the Governance section — a review campaign is a governance act, and these two sheets are its working document:
+Posture's **Export everything to Excel** produces the native Entra workbook. Two Governance sheets support this review:
 
 | Sheet | Contents |
 | --- | --- |
 | **Guests** | One row per guest: name, sign-in address, organization, domain class, lifecycle, account state, invited, invited days, accepted, last human sign-in and its age, last any activity and its age, whether sign-in was measured, sponsors, company, and license count |
 | **Guest partner orgs** | One row per organization: partner name, domain, partner tenant, domain class, guest count, enabled, disabled, pending, never used, dormant, active, not measured, oldest invite in days, the cross-tenant verdict, and the reason for it |
 
-Both sheets are written in full rather than capped, because a review is exported and worked offline. `never` and `not measured` stay textually distinct in the export for the same reason they are distinct on screen — a reviewer sorting that column would otherwise revoke access nobody ever looked at.
+Both sheets use the collected population rather than the 1,000-row display subset. Date cells remain dates or blanks: distinguish **Lifecycle**, **Sign-in measured** and **Last refused sign-in** before interpreting a blank. The workbook does not put the literal words `never` and `not measured` into every date cell.
 
 If the people domain could not be read, both sheets are replaced by a sheet stating the reason instead of appearing empty.
 

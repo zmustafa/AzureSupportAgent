@@ -42,9 +42,9 @@ Posture is a single scrolling page, not a set of sub-tabs.
 - **Trend** draws the tenant score across every recorded refresh on a fixed 0–100 frame, with a chip per pillar to overlay that pillar's own series. Until a second full collection has been recorded the card says so instead of drawing a single point.
 - **Inventory counts** summarize the people, apps, roles and Conditional Access domains of the snapshot.
 
-Supporting reads are exposed by the API: the pillar drill-down at `/api/entra/posture/pillar/{pillar}`, the history at `/api/entra/posture/history` with a `days` parameter between 1 and 365 that defaults to 90, the diff at `/api/entra/posture/diff`, and the signal registry itself at `/api/entra/signals`.
+Supporting reads are exposed by the API: pillar detail at `/api/entra/posture/pillar/{pillar}`, history at `/api/entra/posture/history`, diff at `/api/entra/posture/diff`, and the registry at `/api/entra/signals`. Despite its name, the history `days` parameter (1–365, default 90) slices the latest **entries**, not a calendar-day interval. **View findings** navigates to the inbox; it does not open the API pillar dossier or prefilter that inbox.
 
-History is append-only and written by a successful **full** refresh only, so a partial or failed collection cannot move the line. Each point records the tenant score, the coverage, the per-pillar scores, the finding counts by severity and the registry version; the last 365 are kept and the posture screen reads the most recent 90. Because the score is a weighted average of only the pillars that could be measured, a change of coverage moves the line without any directory change — read the pillar series before attributing a movement to remediation.
+History is appended when a **full-domain** refresh reaches the history step. A targeted subset refresh does not append, but a full run with degraded collectors can still append; full does not mean every domain succeeded. Each point records score, coverage, pillar scores, severity counts and registry version. Storage keeps 365 points and Posture shows the latest 90. Coverage changes can move the line without remediation.
 
 The pillar drill-down returns the pillar row, every signal in that pillar with its finding count and its measured flag, the reason for each signal that was not measured, and the pillar's findings capped at 500. An unknown pillar key is rejected rather than returned empty.
 
@@ -107,11 +107,13 @@ Findings themselves are produced by evaluating the registry against the snapshot
 
 ## Safety and limitations
 
-- Everything on this page is read-only. Nothing in the directory is modified, and no secret or certificate value is ever retrieved.
+**Export everything to Excel** on Posture downloads the native Entra snapshot, raw directory and derived sheets. It does not include the separate legacy Application Registrations snapshot, a live Investigate activity response or saved simulation inputs/results. Browser page caps are lifted, but collector and per-signal limits remain. Use **Coverage & blind spots** and sheet notes rather than assuming every sheet is complete or identical to the UI.
+
+- Everything on this page is read-only against the directory. Exports contain identity and public certificate metadata, not credential secret values or private keys.
 - The score is a model of what this product measures, not an absolute measure of tenant security, and it is not a Microsoft Secure Score.
 - A score is only comparable within one tenant over time. Different licenses and different consent tiers produce different measurable surfaces.
 - Finding counts per signal are capped, so a very large tenant may see a truncated list while the score still reflects the cap honestly.
-- Suppressed findings are excluded from the working queue but the score model is driven by the evaluated signals; check the pillar drill-down before concluding that a suppression moved the number.
+- Suppressed fingerprints are removed before scoring and can raise the score without fixing the tenant. They are also absent from ordinary findings/inbox results, so a state filter is not a complete suppression register. Preserve the fingerprint and reason when suppressing; use the state API to reopen when necessary.
 - Directory changes are eventually consistent. A change made minutes ago will not appear until the next collection.
 
 ## Troubleshooting

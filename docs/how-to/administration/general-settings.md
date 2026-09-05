@@ -25,6 +25,8 @@ feature_ids: [ADMIN_NAV:settings]
 
 ## How to change an application setting
 
+{% include screenshot.html file="admin-general-instructions-draft.png" title="Review instruction changes before saving settings" caption="The test-data instructions are an unsaved browser draft, not an applied policy. Response style and behavior controls provide context; no setting was saved and no provider or chat operation was exercised." %}
+
 1. Find the setting by its visible label. Configure only controls present in the current build.
 2. Record the current value and the affected workflows.
 3. Change the smallest related set. High-impact controls on this page include MCP read-only mode, automatic writes, command execution, deep parallelism, Resource Graph pacing, profiler concurrency, retries, and timeouts.

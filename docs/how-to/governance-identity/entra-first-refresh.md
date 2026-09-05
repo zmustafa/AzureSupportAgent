@@ -17,7 +17,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 - A connection holding service-principal credentials (tenant, client, and a client secret or certificate) that can obtain a Microsoft Graph application token for the tenant.
 - A directory role in the Microsoft Entra admin center that can add API permissions and grant admin consent. This app cannot grant consent for you.
 - Tier 1 consent for a usable tenant; tier 2 adds dormancy, MFA truth, consent posture and sign-in analysis; tier 3 adds PIM depth, Identity Protection risk, access reviews, entitlement management and lifecycle workflows.
-- Entra ID P1 for Conditional Access, sign-in logs and PIM schedules; Entra ID P2 for risk, PIM depth and governance data.
+- Entra ID P1 for Conditional Access/relevant sign-in data; appropriate P2 or ID Governance licensing for PIM, risk and governance. Lifecycle and workload-identity risk have separate licensing requirements; read the collector-specific result.
 
 ## Route
 
@@ -53,7 +53,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 1. Check the freshness badge in the Entra header. Before any collection it reads `not loaded`.
 
-2. Select **Refresh**. This is the only path in the feature that calls Microsoft Graph; opening a tab never triggers a collection.
+2. Select **Refresh** to start the full collection. Ordinary posture tabs read caches; permission recheck, application sign-in backfill, activation action detail and Investigate have separate live-read paths.
 3. Watch the progress strip that appears under the tab bar. It streams collector-level messages over server-sent events while the job runs.
 4. Expand **log** to read the full transcript, including any collector that failed or was throttled.
 5. Leave the page or reload it if you need to. The panel re-attaches to a job that is still running rather than starting a second one; a per-tenant lock prevents duplicate collections.
@@ -80,7 +80,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 1. Open `/entra/posture` only after the freshness badge shows a completed collection.
 2. Read the coverage percentage beside the score before comparing it with an earlier run; a score over a different measured set is not a like-for-like trend.
-3. Open each pillar and trace material deductions to its source finding and evidence.
+3. Use each pillar's **View findings** handoff, then find the relevant signal in the inbox. It opens the inbox without a pillar filter; API pillar detail is a separate read capability.
 4. Treat blind, partial, unlicensed, and stale domains as limitations, not passing controls.
 5. Validate any AI or derived explanation against the source policy, principal, credential, or finding evidence before using it in a decision.
 
@@ -92,7 +92,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 Every collector in this feature is read-only. No directory object, credential, Conditional Access policy or role assignment is modified, and no secret or certificate value is ever retrieved. The only writes are local to the product: finding workflow state, break-glass confirmations and saved simulations.
 
-Granting consent is a change to your tenant, not to this app, and it is reversible only in the Microsoft Entra admin center. Remove a permission there if you decide a tier is too broad, then re-check permissions so the coverage table stops claiming it. Refresh starts a background job; there is no partial rollback for a collection, but a failed or throttled run leaves the previous snapshot in place rather than replacing it with an empty one.
+Granting consent changes the tenant and must be reversed there. Recheck and recollect after any approved removal. Native collection writes domains independently; a failed run can leave mixed generations, and token failure can replace requested domains with blind results. It is not an atomic last-known-good snapshot rollback. Inspect each domain's timestamp/status rather than relying on the newest header age. A completed full-domain run can record score history even with partial collectors.
 
 ## Troubleshooting
 

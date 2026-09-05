@@ -446,9 +446,10 @@ async def enumerate_resources_paged(
     Unlike ``resources_in_subscriptions`` (single ``take 1000`` page), this pages through
     ``$skipToken`` via ``run_kql_collect`` so whole-estate discovery isn't silently capped
     at 1000. Returns ``(resources, truncated)`` — truncated is True when more exist beyond
-    the cap."""
+    the cap or enumeration could not be completed (including fallback reads)."""
     if not subscription_ids:
         return [], False
+    cap = max(1, cap)
     from app.exec.command_runner import run_kql_collect
 
     joined = ", ".join(f"'{_esc(s)}'" for s in subscription_ids)
@@ -461,11 +462,25 @@ async def enumerate_resources_paged(
     res = await run_kql_collect(kql, connection, max_rows=cap, page_size=1000)
     if not res.ok:
         logger.warning("Paged resource enumeration failed: %r", (res.error or "")[:300])
-        # Fall back to the single-page helper so discovery still returns something.
-        rows = await resources_in_subscriptions(connection, subscription_ids, cap=min(cap, 1000))
-        return rows, False
+        # Keep evidence from successful pages even when the fallback fails or is empty.
+        # A single capped read cannot establish completeness after a paging failure.
+        resources = [_norm_resource(r) for r in res.rows]
+        try:
+            fallback = await resources_in_subscriptions(
+                connection, subscription_ids, cap=min(cap, 1000)
+            )
+        except Exception:  # noqa: BLE001 - advisory fallback must not discard known rows
+            logger.warning("Single-page resource fallback failed", exc_info=True)
+            fallback = []
+        seen = {str(r.get("id") or "").lower() for r in resources}
+        for resource in fallback:
+            rid = str(resource.get("id") or "").lower()
+            if rid and rid not in seen:
+                resources.append(resource)
+                seen.add(rid)
+        return resources[:cap], True
     resources = [_norm_resource(r) for r in res.rows]
-    truncated = not res.complete
+    truncated = not res.complete or (res.total is not None and res.total > len(res.rows))
     return resources, truncated
 
 
@@ -560,11 +575,19 @@ async def resources_in_resource_groups(
         "| order by name asc"
     )
     res = await run_kql_collect(kql, connection, max_rows=max(cap, 1), page_size=1000)
-    if not res.ok:
+    if not res.ok or not res.complete or (res.total is not None and res.total > len(res.rows)):
         logger.warning(
-            "Resource-group membership query FAILED (%d pair(s)): %r",
-            len(clauses), (res.error or "")[:300],
+            "Resource-group membership query FAILED or INCOMPLETE (%d pair(s)): %r",
+            len(clauses), (res.error or "Enumeration was incomplete.")[:300],
         )
+        return None
+    # The generic collector also serves aggregate queries, so row identifiers must be
+    # validated here before this particular result can establish resource deletions.
+    if any(
+        not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"].strip()
+        for row in res.rows
+    ):
+        logger.warning("Resource-group membership query returned a row without a resource ID.")
         return None
     return [_norm_resource(r) for r in res.rows]
 

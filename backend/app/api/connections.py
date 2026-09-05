@@ -67,15 +67,18 @@ class ConnectionUpsert(BaseModel):
 def _parse_token_json(raw: str) -> dict[str, str]:
     """Parse the JSON emitted by `az account get-access-token` into our fields."""
     import json
+    from datetime import datetime, timezone
 
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         raise HTTPException(status_code=400, detail="Pasted token is not valid JSON.")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Pasted token JSON must be an object.")
     token = data.get("accessToken") or data.get("access_token")
-    if not token:
+    if not isinstance(token, str) or not token.strip() or any(c.isspace() for c in token.strip()):
         raise HTTPException(
-            status_code=400, detail="Pasted JSON has no 'accessToken' field."
+            status_code=400, detail="Pasted JSON must contain a non-empty 'accessToken' string."
         )
     # Prefer the UTC epoch (`expires_on`) over the human-readable `expiresOn`, which is
     # LOCAL time and would be mis-compared against the server's UTC clock (a container
@@ -83,11 +86,27 @@ def _parse_token_json(raw: str) -> dict[str, str]:
     expires = data.get("expires_on")
     if expires in (None, ""):
         expires = data.get("expiresOn", "")
+    if expires is None:
+        expires = ""
+    if isinstance(expires, bool) or not isinstance(expires, (str, int)):
+        raise HTTPException(status_code=400, detail="Token expiry must be a timestamp or epoch seconds.")
+    expiry = str(expires).strip()
+    if expiry:
+        try:
+            if expiry.isdigit():
+                datetime.fromtimestamp(int(expiry), tz=timezone.utc)
+            else:
+                datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        except (ValueError, OverflowError, OSError):
+            raise HTTPException(status_code=400, detail="Token expiry is not a valid timestamp.")
+    for field in ("subscription", "tenant"):
+        if data.get(field) is not None and not isinstance(data[field], str):
+            raise HTTPException(status_code=400, detail=f"Token '{field}' must be a string.")
     return {
-        "access_token": token,
-        "token_expires_on": str(expires),
-        "default_subscription": data.get("subscription", ""),
-        "tenant_id": data.get("tenant", ""),
+        "access_token": token.strip(),
+        "token_expires_on": expiry,
+        "default_subscription": data.get("subscription") or "",
+        "tenant_id": data.get("tenant") or "",
     }
 
 
@@ -208,8 +227,22 @@ async def discover_endpoint(
     token, err = await get_arm_token(conn)
     if err or not token:
         return {"ok": False, "detail": err or "No token", "subscriptions": [], "management_groups": []}
-    subs, _se = await list_subscriptions(token)
-    mgs, _me = await list_management_groups(token)
+    subs, sub_error = await list_subscriptions(token)
+    mgs, mg_error = await list_management_groups(token)
+    errors = {
+        source: error for source, error in (
+            ("subscriptions", sub_error), ("management_groups", mg_error)
+        ) if error
+    }
+    if errors:
+        return {
+            "ok": False,
+            "partial": bool(not sub_error or not mg_error or subs or mgs),
+            "errors": errors,
+            "detail": "; ".join(f"{source}: {error}" for source, error in errors.items()),
+            "subscriptions": subs,
+            "management_groups": mgs,
+        }
     return {
         "ok": True,
         "subscriptions": subs,

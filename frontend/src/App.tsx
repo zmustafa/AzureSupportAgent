@@ -118,8 +118,8 @@ export default function App() {
               >
                 <span>🧠</span>
                 <span className="font-medium text-white/90">{aiProviderLabel}</span>
-                {aiModel && <span className="text-white/50">· {aiModel}</span>}
-                <span className="text-white/60">⚙︎</span>
+                {aiModel && <span className="text-white/80">· {aiModel}</span>}
+                <span className="text-white/80">⚙︎</span>
               </Link>
             ) : (
               <span
@@ -128,7 +128,7 @@ export default function App() {
               >
                 <span>🧠</span>
                 <span className="font-medium text-white/90">{aiProviderLabel}</span>
-                {aiModel && <span className="text-white/50">· {aiModel}</span>}
+                {aiModel && <span className="text-white/80">· {aiModel}</span>}
               </span>
             )
           ) : null}

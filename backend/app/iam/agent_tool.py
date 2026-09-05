@@ -238,7 +238,7 @@ def _make_escalation_paths(tenant_id: str):
                 # An escalation map that could not see managed identities reporting no paths is
                 # the most dangerous false negative in the product.
                 body += "\n\nThis is NOT an all-clear — the analysis could not see:\n" + "\n".join(
-                    f"- {l}" for l in limits[:6]
+                    f"- {limitation}" for limitation in limits[:6]
                 )
             return ok(body)
         lines = [f"{len(paths)} escalation path(s):", ""]
@@ -248,7 +248,7 @@ def _make_escalation_paths(tenant_id: str):
                 f"[confidence: {p.get('confidence')}]"
             )
         if limits:
-            lines += ["", "Not visible to this analysis:"] + [f"- {l}" for l in limits[:6]]
+            lines += ["", "Not visible to this analysis:"] + [f"- {limitation}" for limitation in limits[:6]]
         return ok("\n".join(lines))
 
     return _handler
@@ -293,8 +293,8 @@ def _make_unused_permissions(tenant_id: str):
                 f"- {r.get('principalName')}: {', '.join(r.get('currentRoles', []))} "
                 f"[{r.get('confidence')} confidence]{narrower}"
             )
-        for l in (analysis.get("limitations") or [])[:4]:
-            lines.append(f"! {l}")
+        for limitation in (analysis.get("limitations") or [])[:4]:
+            lines.append(f"! {limitation}")
         return ok("\n".join(lines))
 
     return _handler
@@ -338,8 +338,8 @@ def _make_simulate_revoke(tenant_id: str):
                 "- NOTE: this changes NOTHING — the same access is still granted by another "
                 "assignment or path."
             )
-        for l in (result.get("limitations") or [])[:5]:
-            lines.append(f"! {l}")
+        for limitation in (result.get("limitations") or [])[:5]:
+            lines.append(f"! {limitation}")
         return ok("\n".join(lines))
 
     return _handler
@@ -417,8 +417,8 @@ def _make_who_can_reach_resource(tenant_id: str):
         elif bypass.get("openDoors"):
             lines += ["", "RBAC is not the only door into this resource:"]
             lines += [f"- {d['title']}" for d in bypass["openDoors"]]
-        for l in out.get("limitations", [])[:4]:
-            lines.append(f"! {l}")
+        for limitation in out.get("limitations", [])[:4]:
+            lines.append(f"! {limitation}")
         return ok("\n".join(lines))
 
     return _handler

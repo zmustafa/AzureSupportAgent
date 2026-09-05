@@ -25,6 +25,12 @@ feature_ids: [ADMIN_NAV:providers]
 
 ## How to configure and verify an AI provider
 
+The following local test-data examples show the fields for steps 1–2 only. Both forms are **unsaved**: no actual OAuth sign-in, provider request, or Azure connectivity was verified. Complete the save and verification steps with your own approved configuration.
+
+{% include screenshot.html file="admin-provider-openai-draft.png" title="Choose an OpenAI model before saving" caption="The synthetic model entry shows where to select a model; the API-key field remains empty. Neither the Default label nor this unsaved form proves the provider works." %}
+
+{% include screenshot.html file="admin-provider-azure-openai-draft.png" title="Enter Azure OpenAI endpoint and deployment details" caption="Review endpoint, API version, and deployment name together. The displayed endpoint is deliberately nonfunctional, the API key is empty, and Save changes and Test connection were not used." %}
+
 1. Select a provider card. The live catalog is authoritative; it includes key-based, OAuth, Azure OpenAI, routing, and local OpenAI-compatible providers supported by the build.
 2. Enter only fields displayed for that provider: model, credential or OAuth sign-in, and an endpoint or API version when shown.
 3. Save the provider. A blank saved secret field preserves the existing write-only value; entering a value replaces it.

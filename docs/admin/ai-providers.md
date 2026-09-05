@@ -41,6 +41,14 @@ With `settings.read` alone, the section is rendered read-only and mutation contr
 
 Credentials are masked and not returned to the browser. Leaving a saved secret field blank preserves the existing value. Local providers such as Ollama or LM Studio still need network reachability from the application container.
 
+### Unsaved configuration examples
+
+These local test-data forms illustrate the fields before save. No actual OAuth sign-in, provider request, or Azure connectivity was verified during capture; a default label or model name is not proof of a working provider.
+
+{% include screenshot.html file="admin-provider-openai-draft.png" title="OpenAI API-key and model fields — unsaved" caption="The model is a synthetic draft and the API-key field is empty. Save changes and Test connection were not used; the Default label does not establish authentication or model entitlement." %}
+
+{% include screenshot.html file="admin-provider-azure-openai-draft.png" title="Azure OpenAI endpoint and deployment fields — unsaved" caption="Azure OpenAI adds endpoint and API-version fields, with the deployment name used as the model. The example endpoint is nonfunctional, the key is empty, and no configuration was saved or tested." %}
+
 ## Interpretation of results
 
 

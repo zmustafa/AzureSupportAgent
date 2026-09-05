@@ -15,7 +15,6 @@ Read-only: no endpoint here writes to the directory, and no Graph write scope is
 """
 from __future__ import annotations
 
-import asyncio
 import csv
 import datetime as _dt
 import io

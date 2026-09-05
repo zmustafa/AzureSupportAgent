@@ -15,7 +15,6 @@ permalink: /user-guide/workloads/fleet/
 ## Purpose
 
 The fleet cockpit provides a portfolio view of active workloads. Use it to identify unknown or low-health workloads, see estate composition, compare environment and criticality, and open a workload for deeper analysis.
-![Workload fleet cockpit showing health and resource composition]({{ site.baseurl }}/assets/workloads-fleet.png)
 
 ### When to use it
 
@@ -29,7 +28,7 @@ The fleet cockpit provides a portfolio view of active workloads. Use it to ident
 ### Prerequisites and permissions
 
 - `workloads.read` to view the fleet and profiles.
-- `workloads.write` to create, edit, merge, delete, or group workloads.
+- `workloads.write` to create, refresh membership, edit, merge, delete, or group workloads.
 - Existing workloads, or a readable Azure connection for discovery.
 - Prior feature scans for meaningful health and risk values.
 
@@ -139,7 +138,7 @@ No dedicated export, history, scheduling, or integration controls are documented
 | Fleet is empty | Run Autopilot or create a workload; verify `workloads.read` |
 | Workload says **Not analyzed** | Open it and run Analyze |
 | Score changed sharply | Compare component freshness and determine which newly available signal changed normalization |
-| Resource count is stale | Refresh an Autopilot-origin workload or edit its nodes |
+| Resource count is stale | With `workloads.write`, refresh resource-group children from the workload card or edit its nodes. Incomplete enumeration leaves membership unchanged; follow the [membership-refresh procedure]({{ site.baseurl }}/how-to/core-workloads/workload-detail-groups/#how-to-refresh-workload-membership-safely). |
 | A deleted workload vanished from the active group view | Restore it; active views exclude Trash, but the saved group association returns with it |
 | Bulk Trash action is disabled | Select 1–500 active workloads; more than 500 must be split into multiple reviewed batches |
 | Merge result is unexpected | Inspect the merged workload and source entries in Trash before any permanent purge |
@@ -148,6 +147,12 @@ No dedicated export, history, scheduling, or integration controls are documented
 | A card says **Visualization unavailable** | The shared cached-profile request failed. Reload to retry; the workload definition and its actions remain available. |
 | Selected count is larger than the visible result | Selection persists when layouts or filters change. Use **Clear** or **Deselect all** and review the selected count before Trash. |
 | Bulk Trash moved fewer definitions than selected | Some IDs were already trashed or disappeared concurrently. Read the result banner and reopen Trash before retrying. |
+
+## Screenshot walkthrough
+
+This fleet example uses synthetic browser fixtures to illustrate portfolio triage, not a live Azure scan or verification of workload health.
+
+{% include screenshot.html file="estate-workloads-fleet.png" title="Workload fleet grouped into a service family" caption="Review related workloads together to choose which environment needs attention first, then open its detail to check the component signals behind the aggregate health score." %}
 
 ## Related pages
 

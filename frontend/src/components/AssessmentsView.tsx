@@ -1400,13 +1400,13 @@ function RunFlow({ onQueued, preselectWorkloadId = "" }: { onQueued: () => void;
                 {pk.icon} {pk.short}
               </button>
             ))}
-            <span className="self-center text-xs text-gray-400">{activePack ? PACK_PRESETS.find((p) => p.id === activePack)?.label : "Custom selection"}</span>
+            <span className="self-center text-xs text-gray-500">{activePack ? PACK_PRESETS.find((p) => p.id === activePack)?.label : "Custom selection"}</span>
           </div>
           <span className="mb-1 block text-xs font-medium text-gray-600">Pillars {pillars.length > 0 && <span className="text-brand">({pillars.length})</span>}</span>
           <div className="flex flex-wrap gap-2">
             {ALL_PILLARS.map((p) => (
               <button key={p} onClick={() => togglePillar(p)} disabled={busy}
-                className={`rounded-lg border px-3 py-1.5 text-sm transition ${pillars.includes(p) ? "border-brand bg-brand/10 font-medium text-brand" : "text-gray-600 hover:bg-gray-50"}`}>{PILLAR_META[p].icon} {PILLAR_META[p].label}</button>
+                className={`rounded-lg border px-3 py-1.5 text-sm transition ${pillars.includes(p) ? "border-brand bg-brand/10 font-medium text-brand-dark" : "text-gray-600 hover:bg-gray-50"}`}>{PILLAR_META[p].icon} {PILLAR_META[p].label}</button>
             ))}
           </div>
           <button onClick={() => { const all = pillars.length === ALL_PILLARS.length; setActivePack(all ? "" : "waf"); setPillars(all ? [] : [...ALL_PILLARS]); }} disabled={busy} className="mt-2 text-xs text-brand hover:underline disabled:opacity-50">{pillars.length === ALL_PILLARS.length ? "Clear all" : "Select all types"}</button>
@@ -1972,7 +1972,7 @@ export function AssessmentsPanel() {
         {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         <div className="flex gap-1 border-b">
           {([["run", "Run & history"], ["portfolio", "Portfolio"], ["custom", "Custom controls"], ["trash", "Trash"]] as [Tab, string][]).map(([t, label]) => (
-            <button key={t} onClick={() => setTab(t)} className={`px-3 py-1.5 text-sm ${tab === t ? "border-b-2 border-brand font-medium text-brand" : "text-gray-500 hover:text-gray-700"}`}>{label}</button>
+            <button key={t} onClick={() => setTab(t)} className={`px-3 py-1.5 text-sm ${tab === t ? "border-b-2 border-brand font-medium text-brand-dark" : "text-gray-500 hover:text-gray-700"}`}>{label}</button>
           ))}
         </div>
         {tab === "run" && (

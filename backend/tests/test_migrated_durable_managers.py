@@ -433,7 +433,7 @@ async def test_non_resumable_insight_job_becomes_failed_after_lease_expiry(
     assert interrupted is not None
     assert interrupted["status"] == "failed"
     assert "interrupted" in interrupted["error"].lower()
-    task = owner._executor.tasks.get(started["id"])
+    task = owner._executor.tasks.get(("tenant-a", started["id"]))
     if task is not None:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

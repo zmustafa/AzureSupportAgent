@@ -53,6 +53,8 @@ Open `/admin/tenants` and select **Add connection**.
 | Paste `az account get-access-token` JSON | The full JSON from step 1 |
 | Paste Microsoft Graph token JSON | Optional, the full JSON from step 2 |
 
+{% include screenshot.html file="admin-tenant-pasted-token-guidance.png" title="Separate ARM and optional Graph token fields — unsaved" caption="Both token strings are deliberately nonfunctional test data. The form distinguishes the ARM token from the optional Graph name-resolution token; no token was acquired or validated, no connection was saved, and Azure connectivity was not verified." %}
+
 Save, then **Test** and **Discover**. Both tokens are encrypted at rest and write-only.
 
 ## Capabilities and limits

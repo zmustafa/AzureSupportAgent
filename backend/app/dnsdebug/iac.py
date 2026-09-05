@@ -52,7 +52,6 @@ def generate_iac(*, zone: str, vnet_id: str = "", record_name: str = "", record_
 
 def generate_for_run(run: dict[str, Any]) -> str:
     z = run.get("zone_facts", {}) or {}
-    primary = next((s for s in run.get("sources", []) if s.get("classification") == "public"), None) or (run.get("sources") or [{}])[0]
     return generate_iac(
         zone=z.get("expected_zone", ""),
         vnet_id=run.get("source_vnet_id", ""),

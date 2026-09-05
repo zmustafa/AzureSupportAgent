@@ -785,9 +785,9 @@ def _revoke_other_plane(row: dict[str, Any], fmt: str, plane: str) -> dict[str, 
         dry = f"{comment} az rest --method GET --url 'https://management.azure.com{scope}/providers/Microsoft.Authorization/denyAssignments?api-version=2022-04-01'"
         cmd = _manual(
             "Deny assignments are read-only — they are created by Azure, not by users.",
-            f"This row DENIES access; it is not a grant and must not be 'revoked'.\n"
-            f"It comes from a Blueprint or a Managed Application. Remove the owning resource\n"
-            f"if the denial is genuinely unwanted.",
+            "This row DENIES access; it is not a grant and must not be 'revoked'.\n"
+            "It comes from a Blueprint or a Managed Application. Remove the owning resource\n"
+            "if the denial is genuinely unwanted.",
             comment,
         )
         back = _manual("Nothing to undo.", "No action was taken.", comment)

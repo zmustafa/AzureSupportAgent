@@ -53,7 +53,6 @@ def _bicep_block(gap: dict[str, Any]) -> str:
 def _runbook_for(gap: dict[str, Any]) -> str:
     rtype = gap.get("resource_type", "")
     name = gap.get("resource_name", "<name>")
-    rg = gap.get("resource_group", "<rg>")
     lines = [f"# ---- {name} ({rtype}) — failed: {', '.join(gap.get('failed_checks', []))} ----"]
     if rtype == "microsoft.compute/virtualmachines":
         lines += [

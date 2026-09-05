@@ -43,9 +43,6 @@ from app.core.pdf_common import (
     fmt_duration as _fmt_duration,
     score_color as _score_color,
     stacked_bar as _stacked_bar,
-    svg_attr as _svg_attr,
-    svg_color as _svg_color,
-    svg_data_uri as _svg_data_uri,
     viz_card as _viz_card,
 )
 
@@ -115,7 +112,10 @@ def _visual_summary(payload: dict) -> str:
         "error": int(totals.get("error", 0)),
     })
     outcome_total = max(sum(outcome_counts.values()), 1)
-    pct = lambda n: f"{n * 100 // outcome_total}%"
+
+    def pct(n):
+        return f"{n * 100 // outcome_total}%"
+
     outcome_svg = _donut_svg(
         [
             ("#16a34a", outcome_counts["pass"]),
@@ -646,7 +646,7 @@ def _appendix_resources(payload: dict) -> str:
 def _appendix_inventory(payload: dict) -> str:
     resources = payload.get("resources") or []
     blocks = ['<div class="pagebreak"></div>', '<a name="appendix-inventory"></a>',
-              f"<h1>Appendix C — Scanned resource inventory</h1>",
+              "<h1>Appendix C — Scanned resource inventory</h1>",
               f'<div class="muted">All {len(resources)} resources in the assessed scope.</div>']
     if not resources:
         blocks.append('<div class="muted">No resource inventory captured for this run.</div>')

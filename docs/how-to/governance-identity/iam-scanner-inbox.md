@@ -56,11 +56,11 @@ Reading the tab never records a run — the cards are computed without persistin
 4. Open the critical section and work it. A section header count is a server tally over the whole filtered set; a `showing N` marker beside it means the page could not carry the whole group.
 5. Expand a finding for why it matters, what to do, its framework references and its raw evidence. Follow the investigate affordance where the affected object is a resolvable principal.
 6. Verify the claim against Azure or Entra before acting on it.
-7. Record a state on anything you have decided about: `in_progress` while work is under way, `accepted` for a risk somebody owns, `suppressed` for a finding that is wrong or irrelevant. Both of the last two need a reason.
+7. Record a state: `in_progress` while work is underway, `accepted` for owned risk, or `suppressed` for an irrelevant finding. The current UI has no reason field and submits an empty reason. Preserve the rationale externally or through the API's optional `reason` field; neither acceptance nor suppression changes the raw scanner result or IAM score.
 
 **Expected result:** A triaged list where every finding you have looked at carries a state, and where the unmeasured checks are known rather than assumed to be passes.
 
-**Verification:** Re-run the relevant scanner. Findings you remediated appear in `resolved` on the next run because their fingerprint stopped appearing — resolution is computed, never clicked. Findings you suppressed keep their state, because state is stored against the fingerprint and a collection run never clears it.
+**Verification:** Re-collect affected access before rerunning the scanner. A disappeared fingerprint is a computed resolution, not proof of cloud revocation: confirm that its input collectors still succeeded. Suppressed findings keep local state while the detector may continue reporting them.
 
 ## How to find the checks that were never measured
 

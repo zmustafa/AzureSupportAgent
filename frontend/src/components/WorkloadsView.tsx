@@ -1057,7 +1057,7 @@ export function WorkloadsPanel() {
           <div className="flex shrink-0 gap-2">
             <button
               onClick={() => setAutopilot(true)}
-              className="rounded-lg border border-brand/40 px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/5"
+              className="rounded-lg border border-brand/40 px-3 py-1.5 text-sm font-medium text-brand-dark hover:bg-brand/5"
             >
               ✨ Autopilot
             </button>
@@ -1342,7 +1342,7 @@ export function WorkloadsPanel() {
               </span>
             ))}
             <button onClick={saveCurrentView} className="rounded-full border border-dashed px-2.5 py-1 text-xs text-gray-500 hover:border-brand hover:text-brand" title="Save the current layout + filter as a view">+ Save view</button>
-            <span className="ml-auto text-xs text-gray-400">
+            <span className="ml-auto text-xs text-gray-600">
               {visibleWorkloads.length} of {workloads.length}
               {profilesQ.isFetching && " · refreshing profiles…"}
             </span>
@@ -1354,7 +1354,7 @@ export function WorkloadsPanel() {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             {CLASS_FACETS.map(({ facet, label, values }) => (
               <div key={facet} className="flex flex-wrap items-center gap-1">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{label}</span>
                 {values.map((v) => {
                   const token = `${facet}:${v}`;
                   const on = classFilters.has(token);
@@ -1363,7 +1363,7 @@ export function WorkloadsPanel() {
                       key={token}
                       onClick={() => toggleClassFilter(token)}
                       className={`rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize transition ${
-                        on ? "border-brand bg-brand/10 text-brand" : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                        on ? "border-brand bg-brand/10 text-brand-dark" : "border-gray-200 text-gray-500 hover:bg-gray-50"
                       }`}
                     >
                       {v}

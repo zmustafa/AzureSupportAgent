@@ -38,6 +38,8 @@ feature_ids: [ADMIN_NAV:amba, ADMIN_NAV:ambachanges, ADMIN_NAV:telemetry, ADMIN_
 
 ## How to update the AMBA Reference Set
 
+{% include screenshot.html file="admin-reference-amba-vm-baseline.png" title="Review VM alert recommendations before changing AMBA" caption="Compare categories, severity, and thresholds for the selected resource type before editing the reference. This local inspection saved no revision and deployed no Azure alerts; coverage still requires a separate scoped scan." %}
+
 1. Review the current reference version and the resource types/rules affected.
 2. Edit only fields shown by the editor, such as recommended alert signal/metric, operator, threshold/unit, aggregation/window, severity, or classification.
 3. Check for duplicate or conflicting recommendations and regional/API support.
@@ -63,6 +65,8 @@ feature_ids: [ADMIN_NAV:amba, ADMIN_NAV:ambachanges, ADMIN_NAV:telemetry, ADMIN_
 
 ## How to update the Telemetry Reference Set
 
+{% include screenshot.html file="admin-reference-telemetry-key-vault-audit.png" title="Inspect Key Vault AuditEvent coverage semantics" caption="Opening the existing category exposes the category key, log kind, audit group, and recommended flag for review. No field was changed or version saved, and no live workspace discovery was performed; this is not proof that diagnostic settings exist in Azure." %}
+
 1. Review the current version and affected resource types.
 2. Edit only visible log/metric category and destination expectations.
 3. Check category support and the approved Log Analytics workspace list exposed by the Telemetry workflow.
@@ -87,6 +91,8 @@ feature_ids: [ADMIN_NAV:amba, ADMIN_NAV:ambachanges, ADMIN_NAV:telemetry, ADMIN_
 **Verification:** Check Audit Log, external deployment records, and a post-change coverage scan.
 
 ## How to update the BackupDR Reference Set
+
+{% include screenshot.html file="admin-reference-backupdr-vm-checks.png" title="Review applicable VM protection checks before editing" caption="The reference lists resilience expectations to compare with service support and recovery objectives. No revision was saved and no protection or recovery operation occurred; independently verify Azure evidence after any approved change." %}
 
 1. Review the current version and affected resource types.
 2. Edit only visible protection checks and semantics.

@@ -7,12 +7,11 @@ directory data joined to the Azure RBAC cache another feature already maintains.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from app.entra import model
 from app.entra.collectors.apps import TIER_CRITICAL
-from app.entra.collectors.pim import last_activation, policy_for_role, privileged_policies
+from app.entra.collectors.pim import last_activation, privileged_policies
 from app.entra.collectors.roles import (
     effective_role_names,
     principal_names,
@@ -20,14 +19,12 @@ from app.entra.collectors.roles import (
 )
 from app.entra.signals import (
     IMPACT_BINARY,
-    IMPACT_RATIO,
     IMPACT_SATURATING,
     SignalContext,
     SignalSpec,
     SignalUnavailable,
     domain,
     principal_label,
-    user_index,
 )
 
 PIM_DOC = "https://learn.microsoft.com/entra/id-governance/privileged-identity-management/pim-configure"

@@ -47,7 +47,6 @@ def explain(event: dict[str, Any]) -> dict[str, Any]:
     rname = event.get("resourceName", "the resource")
     rtype = event.get("resourceType", "")
     actor = event.get("actor", "an actor")
-    actor_type = event.get("actorType", "Unknown")
     label = event.get("riskLabel", "Low")
     role = event.get("dependencyRole") or deps.role_for(rtype, rname)
     kind = op_kind(event.get("operation", ""))

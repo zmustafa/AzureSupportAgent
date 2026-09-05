@@ -929,14 +929,14 @@ async def apply_action_group_change(connection: dict[str, Any], change: Any) -> 
     token = await _token(connection)
     desired = decrypted_json(change.desired_encrypted)
     payload = desired.get("payload") if isinstance(desired.get("payload"), dict) else {}
-    before = decrypted_json(change.before_encrypted)
+    # Preserve decryption and its error behavior even though the snapshot is unused.
+    decrypted_json(change.before_encrypted)
     if change.operation != "create":
         live, status, error = await get_arm_resource(connection, change.target_id)
         if error or not live:
             return None, status, error or "The action group no longer exists."
         if canonical_hash(_resource_body(live)) != change.expected_state_hash:
             return None, 409, "Azure state changed after this request was reviewed. Refresh and create a new change."
-        before = live
     elif change.operation == "create":
         live, status, _error = await get_arm_resource(connection, change.target_id)
         if live:

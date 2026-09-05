@@ -222,7 +222,7 @@ function SettingsOverview() {
         ) : (
           visibleGroups.map((g) => (
             <div key={g.name}>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                 {g.name}
               </div>
               <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">

@@ -6,7 +6,6 @@ a deployment that fails at 2am with an opaque error.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
 
 from app.iam import schema
 from app.iam.signals import Finding, SignalContext, SignalSpec

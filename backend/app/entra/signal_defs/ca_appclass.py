@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.entra import ca_engine, ca_taxonomy, model
-from app.entra.ca_coverage import CELL_COVERED, CELL_NA, CELL_PARTIAL, CELL_REPORT_ONLY
+from app.entra.ca_coverage import CELL_COVERED, CELL_NA, CELL_PARTIAL
 from app.entra.ca_engine import SESSION_CONTENT_CONTROLS, CTRL_BLOCK
 from app.entra.signals import (
     IMPACT_BINARY,

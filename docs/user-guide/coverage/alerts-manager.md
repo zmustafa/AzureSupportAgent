@@ -13,14 +13,18 @@ feature_ids: [PROACTIVE_NAV:alerts-manager, ROUTE:alerts-manager, ALERTS_MANAGER
 
 **Product permissions:** `alerts_manager.read`; mutations and privileged previews use `alerts_manager.alert_state_write`, `alerts_manager.action_group_write`, `alerts_manager.rule_write`, `alerts_manager.advanced_rule_write`, `alerts_manager.bulk_write`, `alerts_manager.amba_blueprint_write`, `alerts_manager.query_preview`, `alerts_manager.test_notifications`, `alerts_manager.delete`, and `alerts_manager.approve` according to the action.
 
+The embedded analysis additionally requires `alert_analysis.read` for reports, refresh, trend, exports, and analysis Evidence. **Accept overlap**, **Keep**, and **Exempt** require `alert_analysis.manage`. Those decisions annotate application findings; they do not approve or modify Azure rules.
+
 ## Purpose
 
 **App routes:** `/alerts-manager` and `/alerts-manager/:tab`
 Alerts Manager combines current alert operations with rule authoring and governed changes. Unlike the read-only coverage score, some actions can mutate Azure. Availability depends on both the user's permission and the connection's read-only/write policy.
 
-## Prerequisites and data sources
+> **Screenshot context:** These native application views use isolated synthetic demo data, not live Azure evidence. Demo Azure writes are disabled. No notification test or managed Azure apply is demonstrated; displayed costs are reference estimates, not actual billing.
 
-### Prerequisites
+{% include screenshot.html file="ops-alerts-rationalization-overview.png" title="Alerts Manager rationalization overview" caption="Use gaps, overlaps and ineffective-rule counts to prioritize review, then inspect the underlying rule and routing facts. A quiet or incomplete source is not evidence of no alerts or no risk." %}
+
+## Prerequisites and data sources
 
 - An Azure connection with access to Alert Management, Azure Monitor rules, and action groups in the selected scope.
 - `alerts_manager.alert_state_write` to acknowledge or close alert instances.
@@ -31,11 +35,9 @@ Alerts Manager combines current alert operations with rule authoring and governe
 
 ## Tabs and actions
 
-### Tabs
-
 - **Overview** summarizes gaps, overlaps, ineffective/clean rules, activity-log coverage, and reference cost estimates.
 - **Overview** also hosts **Essential Activity Log coverage** and its five-step setup wizard: Categories, Subscriptions, Conditions & naming, Routing, and Review.
-- **Alert instances** lists fired alerts and state history; permitted users can acknowledge or close an instance.
+- **Alert instances** lists fired alerts; permitted users can acknowledge, close, or reopen an instance. The current table has no instance-detail/history drawer; history is available through the dedicated API or Azure.
 - **Visualize** runs the notification-path simulator and renders resources/rules through action groups to receivers so duplicate and missing routes can be inspected. Activity rules can be narrowed by category; Service Health rules can also be narrowed by Azure event type.
 - **Overlaps** shows rules monitoring the same signal/target and their notification impact.
 - **Gaps** shows missing, disabled, or ineffective baseline coverage and can create reviewed rules or deployment plans for supported gaps.
@@ -47,13 +49,29 @@ Alerts Manager combines current alert operations with rule authoring and governe
 
 Tab visibility can be permission- or capability-dependent. A read-only connection disables write controls even when the signed-in user has a write permission.
 
+### Reading overlaps and rule analysis
+
+Read structural overlap separately from firing frequency. A shared signal or receiver can be intentional escalation rather than a rule to delete. Use the rule's targets, conditions and destinations to establish what would change before proposing consolidation.
+
+{% include screenshot.html file="ops-alerts-overlapping-notifications.png" title="Overlapping rules and shared notification destinations" caption="Review shared signal and receiver paths before accepting a consolidation recommendation. Similar rules can be intentional layers; overlap alone does not prove duplicate incident delivery." %}
+
+{% include screenshot.html file="ops-alerts-rule-analysis.png" title="Rule analysis with targets, firing history and estimated cost" caption="Inspect the signal, target and routing alongside recommendations. Cost is a reference estimate, and the displayed 30-day column does not establish complete 30-day history when the analysis collector reads seven days." %}
+
+### Approval and connection policy
+
+Managed requests are approval-gated independently of autonomous chat. They are stored with `auto_apply=false`; approval and explicit apply remain separate even when the connection permits chat to auto-execute writes. The current apply helpers enforce `read_only=false`, but do not check that `auto_execute_writes` is false. Use an approval-gated connection as an operational safeguard, not as a claim that the API enforces that setting.
+
+Alerts Manager's decision endpoints do not enforce a different requester and approver or a second approver for high/critical risk. Arrange independent review through your operating procedure; do not infer Backup Manager's dual-approval behavior from an Alerts Manager risk label. Alert-state transitions and confirmed notification tests are immediate Azure actions with their own permissions, not pending managed changes.
+
+Permissions also differ between UI and endpoint: Delete buttons use `alerts_manager.delete`, but direct Action Group deletion proposals require `alerts_manager.action_group_write`, rule deletion proposals require `alerts_manager.rule_write` (plus advanced permission for advanced families), and bulk rule deletion requires `alerts_manager.bulk_write`. Preparing a rollback uses `alerts_manager.delete`. An unavailable UI button is not a complete statement of API authorization.
+
 ## Freshness and scope behavior
 
-### Freshness and interpretation
+The Inbox, rules, and action groups use live-inventory reads with caching. Managed mutations invalidate affected server inventories; use the available Refresh control or reload the view to reconcile out-of-band Portal or IaC changes. Activity-log coverage runs separately from the stored analysis.
 
-The Inbox is queried from Azure when fetched. Rules and action groups may be cached and are invalidated after mutations; use Refresh to reconcile out-of-band Portal or IaC changes. Activity-log coverage runs separately and can report progress for a longer collection.
+The live Alerts Manager inventory cache lasts 120 seconds, is bounded to 128 entries, and is keyed by application tenant, Azure tenant, connection, scope, and query dimensions. Browser queries also retain Inbox results for two minutes and rule/Action Group results for five minutes. Action Group and rule collectors cap Resource Graph results at 10,000 rows; fired-alert collection caps them at 5,000. Incomplete collection reports `partial` and `truncated`. The setup wizard does not select metadata-only or unlisted subscriptions automatically.
 
-The live Alerts Manager inventory cache lasts 20 seconds, is bounded to 128 entries, and is keyed by application tenant, Azure tenant, connection, scope, and query dimensions. Action Group and rule collectors cap Resource Graph results at 10,000 rows; fired-alert collection caps them at 5,000. A collector that reaches its source limit reports `partial` and `truncated`. The setup wizard does not select metadata-only or unlisted subscriptions automatically.
+The separate analysis becomes stale after its configured TTL (six hours by default) but does not automatically recollect live scopes. Its current firing collector reads seven days even though Rule analysis displays both 7d and 30d columns; that 30d value is not a complete 30-day history. The live Inbox and notification fidelity simulator request a separate 30-day inventory, still subject to source retention and row caps.
 
 - An **overlap** means multiple rules monitor similar signals/targets or duplicate a notification path; it is a review signal, not automatically an error.
 - An **AMBA gap** means the configured baseline expects a rule that was not matched.
@@ -129,17 +147,23 @@ Managed-change selection is dependency-aware across server-side pages. Selecting
 
 Bulk approval and rejection use `POST /api/alerts-manager/changes/bulk-decision` and require `alerts_manager.approve`. Approving with prerequisites included changes every pending row in the resolved closure and retains prerequisites already approved or applied. Rejection can cancel pending or approved-but-unapplied rows, walks the dependency closure in reverse topological order, and does not reject a prerequisite that is shared by an unselected active dependent. The row-level **Reject** control uses `POST /api/alerts-manager/changes/{change_id}/decision` and can likewise reject one pending or approved-but-unapplied row. Decisions are application-state and audit writes only; they do not call Azure.
 
-Bulk apply uses `POST /api/alerts-manager/changes/bulk-apply`. The server recomputes the transitive closure and executes its topological order, with resource groups ordered before Action Groups and dependent rules (for the wizard path, RG → Action Group → rule). A failed prerequisite skips only its descendants; independent branches continue. Results report `applied`, `already_applied`, `skipped`, and `failed` counts plus grouped prerequisite errors and affected descendant IDs. Skipped descendants retain their approved state. Consequently, after correcting or retrying an eligible failed prerequisite, selecting the descendant or failed root and applying again recomputes the closure, treats already-applied ancestors as satisfied, and can continue the previously skipped approved descendants.
+Bulk apply uses `POST /api/alerts-manager/changes/bulk-apply`. The server recomputes the transitive closure and executes its topological order, with resource groups ordered before Action Groups and dependent rules (for the wizard path, RG → Action Group → rule). A failed prerequisite skips only its descendants; independent branches continue. Results report `applied`, `already_applied`, `skipped`, and `failed` counts plus grouped prerequisite errors and affected descendant IDs. Skipped descendants retain their approved state. After an eligible individual clone retry has applied the original prerequisite, selecting an approved descendant recomputes the closure and treats already-applied ancestors as satisfied. Bulk apply does not itself retry a failed root, and a replacement proposal does not automatically repair old dependency links.
 
 Approval and apply remain separate. `alerts_manager.rule_write` builds, previews, validates, submits, and saves destination defaults; `alerts_manager.approve` approves, rejects/cancels pending or approved-but-unapplied changes, applies, and retries an eligible failed clone; `alerts_manager.delete` prepares supported rollbacks. Rejection is not a rollback and is unavailable after application. Apply creates evidence and invalidates affected inventories. Optimistic concurrency marks an out-of-date rule update `stale`. Resource-group prerequisite creation has no automatic rollback because deleting a group could delete unrelated resources. A wizard-created clone can produce a rollback request only while it has no rule dependencies; dependency discovery blocks deletion both when requested and again at apply time.
 
-### Operational workflows
+### Subscription Activity Log diagnostic settings
+
+From the setup wizard's **Conditions & naming** step, **Configure diagnostic settings** opens a separate three-step workflow: Inventory, Destination, Preview & submit. It enables **Administrative**, **Alert**, **Policy**, and **Security** exports to one Log Analytics workspace, Storage account, or Event Hub namespace authorization rule plus hub name. This is log ingestion, not Action Group notification routing, and downstream storage/ingestion charges may apply.
+
+Only inspectable subscriptions can be selected. Preview classifies each operation as create, update, equivalent, or blocked; validation and submission rebuild the plan and compare its token, including prior-setting hashes. A named setting is preferred, then one matching the destination. An update preserves other properties/categories but replaces that setting's destination fields with the selected destination: review any existing additional destinations before submitting. Submission requires `alerts_manager.rule_write` and a writable connection; apply requires `alerts_manager.approve` and checks live concurrency again.
+
+The diagnostic-setting executor supports create and update, not delete. A generic **Prepare rollback** control can therefore prepare an inverse for a create that cannot be applied by this executor. Review an update's supported inverse separately; removal of a created setting needs an independently reviewed Azure operation.
 
 ### Triage an alert
 
-1. Select the intended connection and scope, then refresh the Inbox.
-2. Filter by severity, state, resource, or time.
-3. Open an alert and inspect fired time, monitor condition, target, and history.
+1. Select the intended connection and scope, then load the Inbox.
+2. Page through the current 30-day request and inspect severity and state. The API additionally accepts a state filter and a 1–90-day window; these are not current table controls.
+3. Inspect fired time, monitor condition, and target; use Azure or the history API for the instance's transition history.
 4. Acknowledge only when ownership is clear; close only after resolution or accepted disposition.
 5. Use Rule analysis and firing history for recurrence; use Visualize separately to trace its notification route and detect duplicate deliveries.
 
@@ -151,7 +175,7 @@ State changes affect the Azure alert instance; they do not fix the monitored con
 2. Select an existing object or start a supported authoring flow.
 3. Validate metric names, dimensions, query syntax, scopes, thresholds, receivers, and estimated behavior.
 4. Preview the before/after deployment plan.
-5. Submit the change. In approval-gated mode it remains pending.
+5. Submit the change. It remains pending regardless of chat auto-execution settings.
 6. An approver reviews the diff and approves or rejects it.
 7. Confirm applied/failed status and re-query Azure. A failed request retains error details for correction.
 
@@ -167,11 +191,15 @@ Treat overlap, gap, cost, and simulator output as decision support. An overlap m
 
 ## Exports, history, scheduling, and integrations
 
-### IaC, approval, and export
-
 Gap and deployment-plan flows produce reviewable change plans for supported rules; rule/action-group editors submit managed changes rather than silently editing Azure. Generated payloads and previews must be checked for scopes, receiver secrets, region support, naming, and cost. Sensitive receiver values must be supplied through the organization's secret-management process, never embedded in documentation or source control.
 
 Analysis exports support CSV, XLSX, and JSON. Essential Activity Log coverage exports support CSV, JSON, and XLSX at the API; the current wizard exposes CSV and JSON controls. Export is read-only and audited. Managed apply creates an Evidence Locker snapshot; the destination-default record is local application configuration rather than an Azure artifact.
+
+Analysis exports can contain full email and phone destinations. They are not anonymous or guaranteed free of operational identifiers. Visualize's client-side CSV/JSON exports use the local rule filters; graph-only display filters and the routes-table search are not an export scope filter.
+
+Refresh records full analysis runs and compact trend points. Run-history and decision APIs remain available without dedicated history/decision tabs. Run/trend history is keyed by tenant and scope; decisions and the current snapshot also include connection. Legacy `/api/alert-analysis/plans` are non-executing review artifacts and are distinct from the executable managed-change ledger. AMBA blueprint/version/assignment APIs also exist, but the current Deployment plans tab renders plan review, not the standalone blueprint editor. Mission Control can refresh alert analysis; there is no schedule editor on these tabs.
+
+Current limits include 50 targets per bulk rule proposal, 5,000 requested change IDs for dependency operations, 100 rows per managed-change page, and 200 rows per analysis-section API page. Rules accept at most five Action Groups. KQL/PromQL are limited to 8,000 characters; metric previews return up to 200 points and log previews up to 100 rows. Pricing uses the versioned public-USD reference catalog, not actual spend: unknown prices and unbounded maxima must not be read as zero.
 
 ## Safety and limitations
 
@@ -191,9 +219,12 @@ Analysis exports support CSV, XLSX, and JSON. Essential Activity Log coverage ex
 
 ## Troubleshooting
 
-
-| Symptom | Resolution |
+| Symptom | Cause and resolution |
 | --- | --- |
+| Analysis fails with a permission error although manager inventory is allowed | The analysis uses `alert_analysis.read`, not `alerts_manager.read`. Grant the missing read capability; `alert_analysis.manage` is separately needed for acceptance decisions. |
+| A wizard optional condition is refused by name | The guided wizard and server allowlist differ for some fields: impacted Service Health services/regions and the wizard resource-group filter are not accepted in that planner contract. Clear the named optional field and rebuild the preview, or use the separately reviewed Rule management editor; do not bypass validation. |
+| Retry clone leaves a failed row unchanged | The current UI routes Retry clone through bulk apply, which accepts approved/applied rows and rejects failed rows. The individual apply API supports eligible failed-clone retry. Have an authorized operator review that path or create a corrected proposal; do not repeatedly click the bulk retry. |
+| A created diagnostic setting cannot complete rollback | Its inverse is delete, but the diagnostic executor only accepts create/update. Use a separately reviewed Azure removal after checking ingestion dependencies. |
 | Write button is disabled | Check the specific product permission, connection `read_only` state, and capability matrix. |
 | Rule validation fails | Verify signal family, target resource type/region, metric namespace, dimensions, query, and evaluation settings. |
 | Change remains pending | A user with `alerts_manager.approve` must decide it; inspect the Changes tab. |
@@ -206,7 +237,7 @@ Analysis exports support CSV, XLSX, and JSON. Essential Activity Log coverage ex
 | Planned clone preview is invalid | Confirm the source is visible, enabled, and has an active receiver; enable local Action Group creation; provide an Azure-safe prefix; and resolve the destination resource group and location. |
 | Activity Log rule or clone apply is blocked after approval | Select the approved row and apply it; the current row-level apply uses the dependency-aware bulk endpoint for that one requested row, expands prerequisites, and enforces resource group → Action Group → rule order. Resolve any non-approved prerequisite or structural error first. |
 | Selecting one change adds rows from another page | This is the backend-resolved transitive prerequisite closure. Review the requested/prerequisite counts and dependency status before deciding or applying. |
-| Bulk apply reports one failed branch and several skipped rows | Correct or retry the named failed prerequisite. Independent branches have continued; skipped descendants remain approved, so select the failed root or an approved descendant and apply again to recompute and resume that closure. |
+| Bulk apply reports one failed branch and several skipped rows | Resolve the named prerequisite first: eligible failed clones use individual apply, not bulk retry. Independent branches have continued and skipped descendants remain approved. Once the original prerequisite is applied, select an approved descendant to resume; rebuild the dependent plan if a replacement prerequisite is needed. |
 | Bulk decision reports a shared prerequisite | Another unselected pending or approved change depends on that prerequisite. Review that dependent before rejection; the server intentionally retains the shared prerequisite. |
 | Clone receiver endpoints appear absent from preview | This is intentional. Preview and audit summaries expose only source/target IDs and receiver counts; encrypted source configuration is restored only for apply or an eligible retry. |
 | Resource-group prerequisite cannot be rolled back | This is an intentional safety boundary. Verify whether the group is empty and remove it through an independently reviewed Azure process if appropriate. |
@@ -214,6 +245,7 @@ Analysis exports support CSV, XLSX, and JSON. Essential Activity Log coverage ex
 
 ## Related pages
 
+- [Operate Alerts Manager: review gaps and notification destinations]({{ site.baseurl }}/how-to/coverage/alerts-manager/)
 - [Monitoring Coverage]({{ site.baseurl }}/user-guide/coverage/monitoring-coverage/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)
 - [Change Explorer]({{ site.baseurl }}/user-guide/estate-intelligence/change-explorer/)

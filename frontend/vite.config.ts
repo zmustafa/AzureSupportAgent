@@ -1,9 +1,26 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { minify } from "terser";
 
 export default defineConfig({
   plugins: [
     react(),
+    {
+      name: "safe-module-compression",
+      apply: "build",
+      enforce: "post",
+      // Compress within the bundler's hash pipeline, never rewrite hashed files
+      // afterwards. Keep property names, license comments and unsafe transforms
+      // unchanged. Oxc still performs the final output minification pass.
+      async renderChunk(code) {
+        const result = await minify(code, {
+          ecma: 2020, module: true, compress: { passes: 3 },
+          format: { comments: "some", ascii_only: false },
+        });
+        if (result.code === undefined) throw new Error("Module compression produced no code");
+        return { code: result.code, map: null };
+      },
+    },
     // NO SERVICE WORKER. This app is online-only: API responses are deliberately never
     // cached, and the backend serves index.html no-cache + hashed assets immutable, so a
     // service worker provided ~no benefit while causing real staleness bugs (a still-active
@@ -29,6 +46,7 @@ export default defineConfig({
     host: true,
   },
   build: {
+    minify: "oxc",
     chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {

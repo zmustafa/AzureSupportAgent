@@ -98,7 +98,7 @@ async def gather_zone_facts(
                 )
                 if links.ok:
                     llist = _parse(links.stdout) or []
-                    linked = any((l.get("virtualNetwork", {}).get("id", "").lower() == (source_vnet_id or "").lower()) for l in llist) if source_vnet_id else bool(llist)
+                    linked = any((link.get("virtualNetwork", {}).get("id", "").lower() == (source_vnet_id or "").lower()) for link in llist) if source_vnet_id else bool(llist)
                     out["linked_to_source_vnet"] = linked
     except Exception as exc:  # noqa: BLE001
         out["error"] = str(exc)[:300]

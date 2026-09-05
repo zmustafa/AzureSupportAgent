@@ -29,7 +29,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core.coverage_pdf import _portal_url, _resource_link  # canonical portal-arrow link
+from app.core.coverage_pdf import _resource_link  # canonical portal-arrow link
 from app.core.pdf_common import (
     BRAND,
     INK,

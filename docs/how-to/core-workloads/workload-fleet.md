@@ -15,7 +15,7 @@ feature_ids: [SHELL_NAV:workloads, ROUTE:workloads]
 
 ## Prerequisites
 
-- `workloads.read` for fleet/profile views; `workloads.write` for create, edit, merge, delete, and grouping.
+- `workloads.read` for fleet/profile views; `workloads.write` for create, membership Refresh, edit, merge, delete, and grouping.
 - A readable Azure connection for resource selection.
 - Prior source scans for meaningful health, freshness, and risk values.
 
@@ -40,7 +40,7 @@ Open `/workloads`.
 
 1. On `/workloads`, select **+ New workload**.
 2. Enter a unique **Name** and useful **Description**.
-3. Select the Azure connection.
+3. Select an enabled Azure connection. Workload discovery and save reject an explicit missing or disabled connection instead of using the default; reselect the intended connection if it was removed or disabled.
 4. Set workload type, **Environment**, **Criticality**, and **Data class** when known; leave unknown values unset rather than guessing.
 5. In the resource picker, browse or search management groups, subscriptions, resource groups, and resources.
 6. Select the narrowest maintainable boundary. Use explicit resources when only part of a resource group belongs to the workload; use exclusions where the picker supports “scope minus resource.”

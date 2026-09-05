@@ -906,6 +906,14 @@ function ManageCategoriesModal({ collections, onClose }: { collections: Architec
   const [newIcon, setNewIcon] = useState("📁");
   const [newColor, setNewColor] = useState("#2563eb");
 
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") { event.preventDefault(); onClose(); }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["architectureCollections"] });
     qc.invalidateQueries({ queryKey: ["architectures"] });
@@ -935,8 +943,8 @@ function ManageCategoriesModal({ collections, onClose }: { collections: Architec
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold text-gray-800">🗂️ Categories &amp; solutions</h2>
+      <div role="dialog" aria-modal="true" aria-labelledby="architecture-categories-title" className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 id="architecture-categories-title" className="text-lg font-semibold text-gray-800">🗂️ Categories &amp; solutions</h2>
         <p className="mt-1 text-sm text-gray-500">Group architectures into solutions. Each architecture belongs to one category; deleting a category moves its architectures to Uncategorized.</p>
         {error && <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
 

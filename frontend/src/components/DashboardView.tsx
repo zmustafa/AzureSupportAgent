@@ -885,11 +885,11 @@ export function DashboardPanel() {
                 </select>
               </label>
             )}
-            <span className="text-gray-400">{missionReadiness.done}/{missionReadiness.total || 0} readiness signals</span>
-            <span className={sourceErrors.length ? "font-medium text-amber-700" : "text-gray-400"} title={sourceErrors.map((source) => source.label).join(", ")}>
+            <span className="text-gray-500">{missionReadiness.done}/{missionReadiness.total || 0} readiness signals</span>
+            <span className={sourceErrors.length ? "font-medium text-amber-700" : "text-gray-500"} title={sourceErrors.map((source) => source.label).join(", ")}>
               {sourcesReady}/{dashboardSources.length} dashboard sources{sourceErrors.length ? ` · ${sourceErrors.length} unavailable` : ""}
             </span>
-            {dashboardUpdatedAt > 0 && <span className="text-gray-400">updated {formatRelative(new Date(dashboardUpdatedAt).toISOString())}</span>}
+            {dashboardUpdatedAt > 0 && <span className="text-gray-500">updated {formatRelative(new Date(dashboardUpdatedAt).toISOString())}</span>}
           </div>
           <button onClick={() => void refreshDashboard()} disabled={refreshing} className="shrink-0 rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50" aria-live="polite">
             {refreshing || anyPostureLoading ? "⟳ Refreshing…" : "⟳ Refresh dashboard"}
@@ -1455,7 +1455,7 @@ function Badge({ tone, children }: { tone: "brand" | "green" | "gray"; children:
 }
 
 function Empty({ text }: { text: string }) {
-  return <div className="rounded-lg border border-dashed bg-gray-50/60 p-3 text-center text-xs text-gray-400">{text}</div>;
+  return <div className="rounded-lg border border-dashed bg-gray-50/60 p-3 text-center text-xs text-gray-500">{text}</div>;
 }
 
 function SkeletonTile() {
@@ -1484,7 +1484,7 @@ function KpiTile({ to, icon, label, value, sub, tone }: { to: string; icon: stri
       <div className="min-w-0 flex-1">
         <div className={`text-lg font-bold leading-tight ${valueTone}`}>{value}</div>
         <div className="truncate text-[11px] text-gray-500">{label}</div>
-        {sub && <div className="truncate text-[10px] text-gray-400">{sub}</div>}
+        {sub && <div className="truncate text-[10px] text-gray-500">{sub}</div>}
       </div>
     </Link>
   );
@@ -1609,7 +1609,7 @@ function RecentlyVisited({
                 <span className="text-lg" aria-hidden>{recentItemIcon(item.kind)}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-gray-800">{item.title}</span>
-                  <span className="block truncate text-[10px] text-gray-400">{item.subtitle || humanize(item.kind)} · {formatRelative(item.last_visited_at)}</span>
+                  <span className="block truncate text-[10px] text-gray-600">{item.subtitle || humanize(item.kind)} · {formatRelative(item.last_visited_at)}</span>
                 </span>
               </Link>
               <button onClick={() => void act(item, "pin")} disabled={busyId === item.id} className={`rounded p-1 text-xs hover:bg-gray-100 disabled:opacity-40 ${item.pinned ? "text-brand" : "text-gray-300 group-hover:text-gray-500"}`} aria-label={item.pinned ? `Unpin ${item.title}` : `Pin ${item.title}`} aria-pressed={item.pinned}>{item.pinned ? "★" : "☆"}</button>

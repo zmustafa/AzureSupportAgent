@@ -16,6 +16,8 @@ those permissions can consume only the features granted to their active role.
 
 **Application route:** `/dashboard`
 
+**Screenshot scope:** These local test-data examples show unsaved forms, not completed setup. No actual OAuth sign-in, AI-provider connectivity, or Azure connectivity was verified during capture.
+
 ## 1. Secure the bootstrap account
 
 1. Open the deployment's HTTPS URL.
@@ -37,6 +39,10 @@ Do not keep sharing the bootstrap account. Configure named users or SSO after th
 
 A provider that has not been configured remains disabled. Local Ollama or LM Studio must be reachable from the deployed container, not merely from the configuration operator's laptop.
 
+{% include screenshot.html file="admin-provider-azure-openai-draft.png" title="Azure OpenAI setup fields — unsaved example" caption="The endpoint, API version, and deployment name belong to the selected provider. The API key is empty and the endpoint is nonfunctional; nothing was saved or tested." %}
+
+For provider-specific examples and verification, follow [Configure AI providers]({{ site.baseurl }}/how-to/administration/ai-providers/).
+
 ## 3. Connect Azure
 
 **Route:** `/admin/tenants`
@@ -48,11 +54,15 @@ A provider that has not been configured remains disabled. Local Ollama or LM Stu
 5. Test the connection and confirm the expected subscriptions are visible.
 6. Set the intended connection as default if more than one exists.
 
+{% include screenshot.html file="admin-tenant-host-identity.png" title="Host-identity connection — unsaved example" caption="Host identity replaces credential fields with guidance, while Read-only for this tenant remains enabled. This draft was not saved; no identity, subscription discovery, or Azure connectivity was tested." %}
+
+See [Manage Azure tenant connections]({{ site.baseurl }}/how-to/administration/azure-tenants/) for verification and links to each authentication method's detailed form guide.
+
 ## 4. Verify the Dashboard
 
 Return to `/dashboard`. The setup guide should recognize the configured provider and Azure connection. Dashboard cards are capability-filtered or cache-backed; an empty coverage or posture card does not necessarily mean a zero score. It often means that no scan has run for the selected workload.
 
-![The Proactive Support tool directory, grouped by what each tool answers]({{ site.baseurl }}/assets/proactive-support.png)
+See [Dashboard]({{ site.baseurl }}/user-guide/core/dashboard/) for the setup guide and card interpretation. The separate Proactive Support directory lists tools; it is not the Dashboard or evidence that setup succeeded.
 
 ## 5. Discover the first workload
 

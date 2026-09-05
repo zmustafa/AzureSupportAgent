@@ -3,8 +3,6 @@ usage API exists (Layer 3). Wraps ``app.azure.arm.query_resource_graph_paged`` w
 token, scoped to the single subscription being scanned."""
 from __future__ import annotations
 
-from typing import Any
-
 from app.quota.base import CollectorContext
 
 

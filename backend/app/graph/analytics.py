@@ -286,7 +286,6 @@ def concentration_risk(
     estate. Resources/management-groups shared across many workloads bubble up."""
     bc = betweenness_centrality(nodes, edges)
     deg = degree_centrality(nodes, edges)
-    by_id = {n["id"]: n for n in nodes}
     ranked = sorted(
         nodes,
         key=lambda n: (bc.get(n["id"], 0.0), deg.get(n["id"], 0)),

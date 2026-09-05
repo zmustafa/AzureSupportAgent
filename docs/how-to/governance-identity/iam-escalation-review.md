@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:escalation, IAM_NAV:evaluate, IAM_NAV:b
 
 # Run an IAM escalation review
 
-An escalation review answers a question a role list cannot: *this principal is not an Owner — can they become one?* Almost always yes, and almost never through a role called Owner.
+An escalation review asks whether a principal can reach greater privilege through the capabilities in the collected snapshot. A detected route is a review hypothesis; neither a role name nor an empty graph settles the question.
 
 ## Prerequisites
 
@@ -55,7 +55,7 @@ An escalation review answers a question a role list cannot: *this principal is n
 2. Open `/iam/evaluate` in **Can this principal…** mode. Enter the principal, select the scope, and pick or type the action.
 3. Read the verdict. `allowed` confirms the hop. `indeterminate` means an unevaluated ABAC condition or an uncollected role definition is in the path — resolve that before treating the hop as either real or absent. It is never a soft no.
 4. Switch to **Who can…** with the same action and scope to see the whole population holding it. Every candidate is re-evaluated, so a principal blocked by a deny assignment does not appear in the allowed list, and anything that could not be determined sits in its own box rather than being merged into the allowed names.
-5. Switch to **What can they reach** on the principal to see every role they hold at or above the scope, split by control plane and data plane, with deny assignments listed separately and any uncollected role definition named.
+5. Switch to **What can they reach** to inventory covering ancestor and descendant grants, split by plane. Despite the current UI caption, this includes grants below the scope and can include eligibility; use the action evaluator for current allow/deny questions.
 
 **Expected result:** A verdict with the assignment that decided it, for the specific hop you intend to break.
 

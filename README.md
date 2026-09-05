@@ -22,7 +22,10 @@ investigate, monitor, and remediate.
 
 > 🆕 **Latest:** a ten-tab **Entra ID** identity workbench (Conditional Access simulator, PIM, app credentials, and Investigate for any principal), **IAM** access review (effective permissions, escalation paths, least-privilege, review campaigns), **Backup Manager** and **Alerts Manager** — both with approval-gated, reversible changes — and **AI Insight Packs** that watch your estate on a schedule and notify you only when something material happens.
 
-![Architecture designer reverse-engineering live Azure resources with AI rationale](docs/assets/architecture-designer.png)
+![Architecture designer showing a synthetic checkout topology and resource palette](docs/assets/architecture-designer.png)
+
+Screenshots use synthetic example data. Explore the [visual tour](docs/reference/visual-tour.md)
+for more than 100 detailed application views and workflow guidance.
 
 ---
 
@@ -275,14 +278,19 @@ credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint 
 
 ## 📸 Screenshots
 
+These examples show the real application UI with synthetic records, built-in defaults or
+explicit browser fixtures—not a customer tenant or verified live integration. Configuration
+drafts are unsaved and contain no working credentials. The detailed guides provide captions
+and full-size access through the [visual tour](docs/reference/visual-tour.md).
+
 <table>
 <tr>
 <td width="50%"><img src="docs/assets/workloads-fleet.png" alt="Workloads fleet cockpit"><br/><sub><b>Workloads cockpit</b> — composite health scores, resource mix &amp; trend sparklines across your fleet.</sub></td>
 <td width="50%"><img src="docs/assets/workload-detail.png" alt="Workload command center"><br/><sub><b>Workload command center</b> — health, coverage, risk &amp; next-best-actions for a single workload.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/assets/estate-graph.png" alt="Estate Graph knowledge graph"><br/><sub><b>Estate Graph</b> — a live, workload-aware knowledge graph with cost, retirement &amp; RBAC overlays.</sub></td>
-<td width="50%"><img src="docs/assets/proactive-support.png" alt="Proactive Support hub"><br/><sub><b>Proactive Support</b> — every posture &amp; forensic dashboard, grouped into one hub.</sub></td>
+<td width="50%"><img src="docs/assets/estate-graph.png" alt="Synthetic Estate Graph"><br/><sub><b>Estate Graph</b> — workload, architecture and resource relationships.</sub></td>
+<td width="50%"><img src="docs/assets/proactive-support.png" alt="Proactive Support coverage-tool directory"><br/><sub><b>Proactive Support</b> — a filtered directory of coverage workflows.</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/mission-control.png" alt="Mission Control"><br/><sub><b>Mission Control</b> — run every analysis against a workload from one go/no-go cockpit.</sub></td>
@@ -293,7 +301,7 @@ credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint 
 <td width="50%"><img src="docs/assets/architecture-designer.png" alt="Architectures designer"><br/><sub><b>Architectures designer</b> — design diagrams with AI rationale &amp; best-practice review.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/assets/deep-investigation.png" alt="Deep investigation War Room"><br/><sub><b>War Room</b> — assemble a team of specialist agents to investigate in parallel.</sub></td>
+<td width="50%"><img src="docs/assets/deep-investigation.png" alt="Synthetic saved investigation result"><br/><sub><b>Deep Investigation</b> — review hypotheses, supporting evidence and uncertainty.</sub></td>
 <td width="50%"><img src="docs/assets/assessment.png" alt="Well-Architected assessment"><br/><sub><b>Assessments</b> — pillar scores, controls, and framework mappings (NIST/ISO/CIS).</sub></td>
 </tr>
 <tr>
@@ -302,7 +310,7 @@ credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint 
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/telemetry-coverage.png" alt="Telemetry coverage"><br/><sub><b>Telemetry coverage</b> — diagnostic-settings &amp; log coverage with Bicep/Policy gap fixes.</sub></td>
-<td width="50%"><img src="docs/assets/monitor-dashboard.png" alt="Monitor 2.0 dashboard"><br/><sub><b>Monitor 2.0</b> — usage, token cost, provider mix, and activity at a glance.</sub></td>
+<td width="50%"><img src="docs/assets/monitor-dashboard.png" alt="Monitor application counters"><br/><sub><b>Monitor</b> — application counters and live-operation status.</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
@@ -310,7 +318,7 @@ credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint 
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/retirement-coverage.png" alt="Retirement and breaking-change radar"><br/><sub><b>Retirement radar</b> — service retirements &amp; breaking changes mapped to workloads, owners, and deadlines.</sub></td>
-<td width="50%"><img src="docs/assets/entra-findings.png" alt="Entra ID findings inbox"><br/><sub><b>Entra ID</b> &mdash; identity findings ranked by severity: standing global admins, expiring credentials, ownerless apps, MFA &amp; conditional-access gaps.</sub></td>
+<td width="50%"><img src="docs/assets/entra-findings.png" alt="Entra scanner baseline and synthetic finding"><br/><sub><b>Entra ID</b> — saved scanner baselines and existing findings, distinct from the new-finding delta.</sub></td>
 </tr>
 </table>
 

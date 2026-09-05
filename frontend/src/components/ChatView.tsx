@@ -2968,7 +2968,7 @@ export default function ChatView() {
                     return (
                       <div key={n.id}>
                         {n.group && (
-                          <div className="px-2.5 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                          <div className="px-2.5 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-600">
                             {n.group}
                           </div>
                         )}
@@ -3044,7 +3044,7 @@ export default function ChatView() {
                     return (
                       <div key={n.id}>
                         {n.group && (
-                          <div className="px-2.5 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                          <div className="px-2.5 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-600">
                             {n.group}
                           </div>
                         )}
@@ -3234,7 +3234,7 @@ export default function ChatView() {
                 value={chatSearch}
                 onChange={(e) => setChatSearch(e.target.value)}
                 placeholder="Search chats…"
-                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-0"
+                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700 placeholder:text-gray-500 focus:border-gray-300 focus:outline-none focus:ring-0"
               />
               {chatSearch && (
                 <button
@@ -3270,7 +3270,7 @@ export default function ChatView() {
         {canChat && !railCollapsed && (
           <nav className="px-2 pb-2">
             {filteredChats.length === 0 && (
-              <div className="px-3 py-4 text-center text-xs text-gray-400">
+              <div className="px-3 py-4 text-center text-xs text-gray-600">
                 {q
                   ? "No threads match your search."
                   : chatFilter === "pinned"
@@ -3280,7 +3280,7 @@ export default function ChatView() {
             )}
             {pinnedChats.length > 0 && (
               <>
-                <div className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-gray-400">
+                <div className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-gray-600">
                   Favorites
                 </div>
                 {pinnedChats.map(renderChatRow)}
@@ -3288,7 +3288,7 @@ export default function ChatView() {
             )}
             {recentChats.length > 0 && (
               <>
-                <div className="px-2.5 pb-1 pt-3 text-[11px] font-medium text-gray-400">
+                <div className="px-2.5 pb-1 pt-3 text-[11px] font-medium text-gray-600">
                   {q ? "Results" : "Recents"}
                 </div>
                 {recentChats.map(renderChatRow)}

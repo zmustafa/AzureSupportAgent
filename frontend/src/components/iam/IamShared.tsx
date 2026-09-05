@@ -166,7 +166,7 @@ export function scopeCell(r: IamRow): { icon: "mg" | "subscription" | "resource_
 }
 
 export function KpiTile({ label, value, tone }: { label: string; value: number | null | undefined; tone?: "red" | "amber" | "sky" }) {
-  const toneCls = tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-600" : tone === "sky" ? "text-sky-600" : "text-gray-900";
+  const toneCls = tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-700" : tone === "sky" ? "text-sky-700" : "text-gray-900";
   // A missing figure renders as "—", never as 0. A hard zero on a tenant that was never scanned
   // is the most reassuring possible way to say "we did not look", and it is the one rendering
   // this product must never produce.
@@ -372,7 +372,7 @@ export function ScopeTable({
             <td className="px-3 py-1.5 text-gray-500">{s.scopeType}</td>
             <td className="px-3 py-1.5">
               <StatusPill status={s.status} />
-              {s.collectors_attention > 0 && <span className="ml-1 text-[11px] text-amber-600">⚠ {s.collectors_attention}</span>}
+              {s.collectors_attention > 0 && <span className="ml-1 text-[11px] text-amber-700">⚠ {s.collectors_attention}</span>}
             </td>
             <td className="px-3 py-1.5 text-gray-600">{s.row_count}</td>
             <td className="px-3 py-1.5">

@@ -24,6 +24,8 @@ feature_ids: [ADMIN_NAV:tenants]
 
 ## How to add and verify an Azure tenant connection
 
+{% include screenshot.html file="admin-tenant-host-identity.png" title="Prepare a read-only host-identity connection" caption="This unsaved test-data form illustrates method selection and read-only onboarding. No connection was saved, no subscriptions were pulled, and Azure connectivity was not verified; follow the method-specific guide and verification steps below." %}
+
 1. Select **Add connection** and provide a non-sensitive display name.
 2. Choose an authentication method and complete only its visible fields. Each method has its own Azure-side setup — follow its page: [service principal (client secret)]({{ site.baseurl }}/admin/azure-tenants-service-principal-secret/), [service principal (certificate)]({{ site.baseurl }}/admin/azure-tenants-service-principal-certificate/), [host identity]({{ site.baseurl }}/admin/azure-tenants-host-identity/), or [pasted Azure CLI token]({{ site.baseurl }}/admin/azure-tenants-pasted-token/).
 3. Set the default subscription or Log Analytics workspace only when required by workflows.

@@ -30,11 +30,15 @@ Create a local or SSO-only user with username, email, display name, optional ini
 
 New SSO users should remain in the safe `noaccess` role until reviewed. Password reset signs out active sessions.
 
+{% include screenshot.html file="admin-access-default-users.png" title="Access Control users, effective roles, and account status" caption="Review effective roles alongside auth source and status rather than relying on a username. This local test-data list was inspected only; no account or assignment was changed, and no external SSO sign-in was verified." %}
+
 ### Roles
 
 Built-in system roles cannot be edited or deleted. Current built-ins are **admin**, **operator**, **auditor**, **user**, and **noaccess**. Create custom roles by selecting exact capabilities from the grouped catalog. Avoid wildcard assumptions: API enforcement uses the displayed capability strings.
 
 Built-in intent is deterministic: SysAdmin has every permission; Operator has all except the six reserved administration permissions; Auditor has read capabilities plus Chat, Monitor, Audit Log, and privileged-activity reading; User has Chat, Workloads, Architectures, and Ownership reads; NoAccess has none. A custom role containing `users.manage` is an effective administrator and passes all product-permission guards.
+
+{% include screenshot.html file="admin-access-built-in-roles.png" title="Built-in roles and their exact capability lists" caption="Compare the shipped role definitions before creating a custom role. The local catalog is application authorization, not Azure RBAC or proof of Graph consent; no roles were edited or assigned during capture." %}
 
 ### Groups
 

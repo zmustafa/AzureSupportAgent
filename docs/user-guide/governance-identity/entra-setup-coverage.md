@@ -79,13 +79,19 @@ Adds PIM depth, Identity Protection risk, access reviews, entitlement management
 | `IdentityProvider.Read.All` | External identity providers guests sign in with |
 | `DirectoryRecommendations.Read.All` | Microsoft's own directory recommendations |
 
-`RoleAssignmentSchedule.Read.Directory` deserves a specific note: without it the setup page can report every PIM scope granted while the coverage banner still calls activation history a blind spot, because activation *history* is a separate collection from PIM *configuration*.
+The catalog lists **27 scopes** across tiers of 5, 9 and 13. Tier completion describes that catalog, not guaranteed data coverage. Permission probes cover 11 domains, while full refresh has nine collector domains; devices/hybrid appear in capability checks without separate full-refresh collectors.
+
+For activation sessions, distinguish **PIM configuration**, **schedule instances** and **justification**. Instances can use `RoleManagement.Read.Directory`; the read-only source of Entra activation justification is the PIM directory-audit log under `AuditLog.Read.All`. Although `RoleAssignmentSchedule.Read.Directory` remains in the tier catalog, it does not by itself open the app-only schedule-request endpoint. Do not grant Graph write scopes merely to read justification.
 
 ## Identity fabric
 
 The card above the coverage table answers a question no other screen does: **does this tenant authenticate its own users?**
 
 A domain is either *managed* — Entra signs those users in — or *federated*, meaning an external identity provider does it and Entra accepts the result. The card names every federated domain, fingerprints the provider from its issuer URI and endpoints (PingFederate, PingOne, Okta, AD FS, OneLogin, Auth0, Shibboleth and others; an unrecognized provider is reported as unrecognized, with its host, rather than guessed), and states how many users sit behind it.
+
+These views use illustrative browser fixtures, not a live Microsoft Graph probe or a computed assessment of an authentication trust.
+
+{% include screenshot.html file="identity-fabric-perimeter.png" title="Identity fabric: managed and federated authentication" caption="Start by separating domains that authenticate in Entra from those that delegate authentication to an external provider. Use the perimeter view to decide which trust details need review." %}
 
 Expanding a federated domain shows the trust in full:
 
@@ -100,6 +106,8 @@ The **MFA claim** row is the one that matters most. When `federatedIdpMfaBehavio
 
 The certificate rows read the **signing** and **successor** certificates together, because Entra accepts either. A trust whose primary certificate has expired but whose successor is valid is not an outage; it is reported as running on its successor, with the note that the overlap protecting the next renewal has been spent. Only the derived facts are ever shown — subject, issuer, thumbprint and expiry. The certificate itself is parsed during collection and discarded, the same rule application credentials follow.
 
+{% include screenshot.html file="identity-fabric-trust-details.png" title="Federation trust: issuer, MFA behavior and certificate metadata" caption="Expand a trust to review its issuer and MFA behavior alongside signing and successor certificate metadata. The example contains derived metadata only, not credentials or certificate material." %}
+
 Below the trusts, the **guest sign-in** row lists the external identity providers configured for external users — social providers such as Google or Apple, and SAML or WS-Fed federation with a partner domain. This is a second and entirely separate perimeter: a tenant can authenticate every one of its own staff in the cloud and still accept a partner's identity provider for guests. It needs `IdentityProvider.Read.All`, which nothing else in the product uses, so it is commonly the last part of the perimeter to become legible. When the scope is missing the row says so — "not readable" is shown rather than the silence that would read as "no guest provider is configured". Only the registration is shown: the display name, the provider type, the issuer and the client identifier. The client secret is never requested.
 
 Below that, the **hybrid** row reports directory synchronisation, its last run, password hash synchronisation, writeback settings and accidental-deletion prevention. On a federated tenant, password hash synchronisation being off means there is no fallback when the provider is unreachable and leaked-credential detection cannot run at all.
@@ -110,7 +118,7 @@ The same facts are carried, in one line, to the two screens whose own numbers de
 
 ## Tabs and actions
 
-Setup & coverage is a single page with four blocks.
+Setup & coverage is a single page with blockers, Identity fabric, Graph access, license flags, consent tiers, domain coverage and collection statistics.
 
 - **App registration** shows the tenant and client the connection is using, with a link to the consent page. Grant each scope as an **Application** permission — delegated consent will not work for background collection.
 - **Consent tiers** lists all three tiers with per-scope granted or missing state and a completeness marker per tier.
@@ -153,7 +161,7 @@ Several domains accept alternative scopes. `Directory.Read.All` is a superset of
 | --- | --- |
 | A tier shows granted but a domain is still blind | Re-check permissions, then run a collection — the snapshot predates the grant. |
 | Every domain is blind | The connection cannot obtain a Graph token at all; verify tenant, client, and secret or certificate. |
-| PIM configuration is measured but activation history is not | Grant `RoleAssignmentSchedule.Read.Directory`. |
+| PIM configuration is measured but activation detail is absent | Check `RoleManagement.Read.Directory` for schedule instances and `AuditLog.Read.All` for PIM audit justification, then refresh. Configuration and event evidence are different reads. |
 | Risk and governance report unlicensed | The tenant lacks Entra ID P2 or Governance; consent will not help. |
 | Probe result is inconclusive | Usually throttling or a transient Graph error; re-check later. |
 | Consent granted minutes ago is still missing | Wait for propagation and re-check before re-granting. |

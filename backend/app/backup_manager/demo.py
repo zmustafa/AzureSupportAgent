@@ -295,7 +295,7 @@ def build_demo_estate(scope_id: str = CONTOSO_ID) -> dict[str, Any]:
     # (and bill) lives on. Appended rather than repointing a real item so the Gaps tab stays
     # consistent with the Inventory tab.
     orphan_vault = regional_vault
-    orphan_container = f"IaasVMContainer;iaasvmcontainerv2;rg-retired;retired-app-vm"
+    orphan_container = "IaasVMContainer;iaasvmcontainerv2;rg-retired;retired-app-vm"
     rsv_items.append(inventory.shape_rsv_item({
         "id": f"{orphan_vault['id']}/backupFabrics/Azure/protectionContainers/{orphan_container}"
               f"/protectedItems/vm;iaasvmcontainerv2;rg-retired;retired-app-vm",

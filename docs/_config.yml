@@ -60,6 +60,8 @@ exclude:
   - _usecases_build.py
   - _validate.py
   - _validate_public_docs.py
+  - _validate_screenshots.py
+  - _test_screenshots.py
   - _journey_render
   - deck-assets
   - improvement-plans

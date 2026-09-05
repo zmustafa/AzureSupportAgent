@@ -24,7 +24,7 @@ A scanner detects nothing of its own. Every check already exists as a signal in 
 ## Prerequisites and data sources
 
 - Product permission `entra.read` for the scanner list, per-scanner findings, and the inbox. `entra.admin` for **Run**, for a single finding's state change, and for the bulk action. A read-only principal attempting either receives a permission error.
-- A completed Entra collection for the selected connection. Everything on this tab is computed from that snapshot.
+- A completed Entra collection for the native inbox/scanners. Embedded Identity hygiene instead uses its separate cache and requires `identity.read` for viewing and refreshing.
 - Consent tier determines which scanners can run at all. A scanner that requires a domain the tenant is blind to reports that it cannot run rather than reporting zero findings — "no findings" and "could not look" are the same picture and opposite facts. See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/).
 - Entra ID P1 for Conditional Access and sign-in data; Entra ID P2 for Identity Protection risk, PIM depth and governance. An unlicensed domain blocks the scanners that depend on it.
 - Optional: a notification channel, if you want a scanner run to publish its delta.
@@ -54,19 +54,25 @@ Twelve scanners ship with the product. Each one lists its cadence, its signal co
 
 Cadence is the scheduler's hint, not a cron: daily means at least a day since the last run, weekly at least seven. Running from the screen overrides that, so you can re-run a scanner as often as you like while investigating.
 
+The following screenshots display saved browser-fixture results. They illustrate how to read a scanner and its findings, not a computed security assessment; no scanner run or notification was invoked for these views.
+
+{% include screenshot.html file="identity-scanner-baseline.png" title="Scanners: cadence, severity floor and saved delta" caption="Read the scanner's configured cadence and severity floor beside its saved run information. A schedule label or saved delta does not show that a new collection or scanner run occurred when the page opened." %}
+
 **Run** on a single scanner, or **Run all scanners now**, evaluates the selection against the current snapshot and records the run. A run reports the total it found, and either "first run, recorded as the baseline" or the number new and resolved since the last run. Anything in the always-immediate list is called out separately.
 
-A run can optionally notify. Only *new* and *resolved* findings are notified, plus anything on the always-immediate list. A digest that repeats four hundred known findings trains people to filter the sender, and after that the product detects nothing regardless of how good the signals are. Twelve signals bypass the digest entirely and always notify immediately — break-glass over-coverage, privileged Conditional Access exclusions, standing Global Administrator, privileged guests, PIM activation without MFA, cross-plane power, consent-capable applications, unrestricted admin or user consent, privileged users at risk, risky workload identities, and successful legacy authentication. Each is a state change that either indicates active compromise or removes a control that was protecting the tenant.
+A run can optionally notify through the API, but the current UI explicitly sends `notify=false` and offers no notification checkbox. Twelve signals are marked always-immediate in the catalog; that classification does not override the request's notify flag. When enabled, this endpoint publishes one notification per changed scanner, including its immediate count, rather than a separate message per immediate finding. First-run findings can notify when `notify=true`; do not assume the IAM scanner's first-run silence applies here.
 
 **Show findings** expands what a scanner reports right now, worst first, with a per-severity breakdown and a **new since last run** marker. This view is deliberately read-only and does *not* record a run: if opening the screen marked every finding as seen, the next real run would report "nothing changed" precisely because somebody looked. It shows the first two hundred and says so when there are more.
+
+{% include screenshot.html file="identity-scanner-findings.png" title="Scanners: existing findings with zero new results" caption="Expand the saved findings to see why zero new does not mean zero open findings. This read-only example reveals an existing finding without invoking Run or sending notifications." %}
 
 ### Findings inbox
 
 The inbox is the same findings joined to first-seen dates and workflow state. Age is what turns a list into a conversation — a two-hundred-day-old critical is a different problem from one that appeared this morning, and a raw findings list cannot tell them apart.
 
-Filters available on the inbox: severity, pillar, state, minimum ageing in days, unassigned only, a text search over object name and finding title, and offset/limit paging. The header states the total, the suppressed count, and how many findings resolved automatically because the condition stopped appearing. Rows are sorted worst severity first, then oldest first.
+The UI offers Critical/High, Open/Snoozed, Unassigned, Ageing > 30d and text search, plus sortable columns. It requests the first 500 rows without a paging control. The API also accepts pillar, other severity/state filters and offset/limit up to 2,000. The header's recently resolved count covers at most 50 ledger entries, not an all-time total.
 
-Selecting rows opens the bulk action bar. A bulk action carries the selected fingerprints, the target state, a reason, an assignee, a note, and a snooze duration in days.
+Selecting rows opens a bulk bar for state, reason and snooze duration. Assignee and note are API fields, not controls on the current bar. Bulk requests update at most the first 2,000 fingerprints; compare the returned `updated` count with the request. The drawer offers Acknowledge, Suppress and Reopen.
 
 | State | Meaning | Rules |
 | --- | --- | --- |
@@ -88,7 +94,7 @@ Workflow state is never rewritten by a collection. A suppression that disappeare
 
 A **fingerprint** is the stable identity of a finding: a short hash of the signal, the object, and a discriminator. It deliberately contains no timestamp and no count, which is why the same underlying condition produces the same fingerprint on every run. That single property is what makes "new since last scan", snoozing, ticket links and delta notifications work at all — state attaches to the fingerprint, so it survives a refresh instead of being lost when the finding list is rebuilt.
 
-Resolution is computed, never clicked. A fingerprint that stops appearing in the snapshot is recorded as resolved, and that is the only reason the inbox can be trusted: nobody can close a finding that is still true.
+Resolution is computed from fingerprints absent from evaluated findings, never from a cloud remediation action. Suppression, reduced coverage or a failed collector can also remove a fingerprint. Validate equivalent coverage and authoritative state before treating a resolved ledger entry as a fixed control. The scanner run updates the ledger; simply opening its results does not.
 
 Read the three delta terms precisely. **New** means absent from the previous run of *this* scanner. **Resolved** means present last time and gone now. **Persisting** means present in both, with an age. A scanner that has run before will report zero new for weeks while sitting on hundreds of open findings, which is why the total is always shown alongside the delta.
 
@@ -96,6 +102,7 @@ Read the three delta terms precisely. **New** means absent from the previous run
 
 - **Every workflow state is local to this product and is never written to Entra.** Acknowledging, snoozing, suppressing, assigning or annotating a finding changes nothing in the directory. It does not dismiss a Microsoft recommendation, close an Identity Protection risk, or alter any policy.
 - **Suppression hides a real condition until somebody un-suppresses it.** The finding does not stop being true; it stops being visible in the default view. That is why a reason is mandatory, why the suppressed count stays on the header, and why suppression should be reviewed rather than treated as closure.
+- Suppression removes the fingerprint before native Entra scoring and listing. It can raise the score without remediation, and the suppressed row is not recoverable simply by filtering the inbox. Retain its fingerprint/reason for an API reopen or an external suppression register.
 - Running a scanner is read-only against the snapshot and does not call Microsoft Graph.
 - Scanner runs and state changes are recorded in the audit log with the actor, the scanner or state, and the reason.
 - A blocked scanner reports why it cannot run. Treat that as a coverage gap, not as a clean result.

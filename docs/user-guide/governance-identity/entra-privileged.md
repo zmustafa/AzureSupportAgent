@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:privileged]
 
 # Entra: privileged access
 
-**Product permission:** `entra.read` for every view on this tab; `entra.admin` to start a collection from the freshness badge.
+**Product permissions:** `entra.read` for native privileged views and activation action reads; `entra.admin` for native refresh. Embedded **JIT hygiene** uses `identity.read` for both viewing and its independent refresh. Investigate handoffs additionally need `investigate.read`, with `investigate.activity` for behavioral history there.
 
 ## Purpose
 
@@ -25,8 +25,8 @@ Privileged access answers who can do what in the directory, whether that power i
 - Consent tier 1 (`Directory.Read.All`, `RoleManagement.Read.Directory`) for role definitions and assignments. Without it the whole tab is blind.
 - Consent tier 3 for PIM depth: `PrivilegedAccess.Read.AzureAD` and `RoleAssignmentSchedule.Read.Directory` for eligibility, permanence and activation history; `RoleManagementPolicy.Read.Directory` for the per-role activation policy; `PrivilegedAccess.Read.AzureADGroup` for PIM for groups.
 - **Entra ID P2.** PIM does not exist below P2. On a P1 tenant the PIM domain reports `unlicensed`, permanence cannot be resolved, and there is no eligibility or activation data to read.
-- Activation **history** and PIM **configuration** are separate collections behind separate scopes. `RoleManagementPolicy.Read.Directory` fills the PIM config grid; it does not produce a single activation row. Grant `RoleAssignmentSchedule.Read.Directory` for that.
-- An Azure ARM connection with a completed RBAC scan for the cross-plane view and for the Azure half of activation sessions. The join reads the existing RBAC cache; it starts no new Azure collection.
+- Activation history and PIM configuration are separate. `RoleManagementPolicy.Read.Directory` fills policy configuration; schedule instances use `RoleManagement.Read.Directory`, and read-only justification comes from the PIM audit log under `AuditLog.Read.All`. The app-only request endpoint can reject read-only scopes; do not add write consent just to obtain history.
+- A completed IAM scan supplies the cached **Cross-plane** join. Separately, the Entra activation collector reads Azure PIM schedule requests live across visible subscriptions during refresh; it does not obtain those sessions from the IAM cache. Azure Reader may not cover the required PIM reads: inspect the named subscription failures and use approved least-privilege rights.
 
 See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/) for the full scope list and the coverage states.
 
@@ -51,9 +51,23 @@ See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity
 
 Below the filters, an **activation window** bins every loaded session across the real span it covers, with tier-0 stacked in red. Drag either handle, click a column, or use the relative presets to brush a sub-window; the table follows it. The brush is a client-side slice of what was already returned, so it costs no round trip — widening past the loaded range is what the days selector above is for. Changing any filter clears the brush rather than silently hiding rows from the new result set.
 
-Inside that drawer, **actions** answers what the principal actually did during the window. It is the only call in this feature that reaches Microsoft, it runs for one session on demand, and its result is cached. Entra directory audits and the Azure Activity Log are read for the activation window plus a two-minute pad, and every action is classified rather than blamed: `required_activation` when the principal holds no standing role that covers it, `possible_without` when a standing role already allowed it, and `unclassified` when the standing picture is unreadable.
+Selecting **what they did** opens the drawer and immediately requests action enrichment for that session. It reads directory audit events for the window plus a two-minute pad; an Azure activation additionally reads its own subscription's Activity Log. Results are cached for up to 500 session keys and require `refresh=true` through the API to bypass an existing result. The normal drawer does not automatically expire an open-session result.
+
+Attribution is coarse: it checks for any standing privileged directory role or powerful Azure role, not whether that role authorized each particular action at the historical instant. `required_activation` and `possible_without` are leads, not causal proof. `unclassified` applies when the Azure join is unavailable; always inspect collection notes before interpreting an empty action list as unused privilege.
 
 Two further datasets are served by the API without a control on this tab. `GET /api/entra/privileged/activations-export` returns an evidence pack: every session in the window with the ledger timestamps and a `provenance` block naming the exact Graph and ARM endpoints each claim came from. `GET /api/entra/privileged/principal/{principal_id}` returns a per-principal dossier — effective role names, every assignment, recent activations, Azure reach, and the findings raised against that object.
+
+### Reading the JIT hygiene examples
+
+These browser fixtures illustrate the JIT hygiene presentation, including example eligibility and activation rows. They are not a computed tenant assessment and do not establish live schedule coverage. Use native **PIM config** and **Activations**, with their source notes, to review collected schedule evidence.
+
+{% include screenshot.html file="identity-pim-standing-drift.png" title="JIT hygiene: permanent privileged assignments" caption="Begin with the standing-access examples to identify assignments that merit an ownership and permanence review. A privileged row is a review candidate, not an instruction to revoke access." %}
+
+{% include screenshot.html file="identity-pim-stale-eligibility.png" title="JIT hygiene: eligibility to recertify" caption="Compare the example eligibility and activation-history fields before selecting recertification candidates. These fixture rows do not prove that a real assignment was never activated." %}
+
+{% include screenshot.html file="identity-pim-activation-review.png" title="JIT hygiene: active and completed elevations" caption="Distinguish an active elevation from a completed one using the displayed status and time window. The rows illustrate the hygiene view, not a live PIM history read." %}
+
+Continue with the [illustrated activation-session review]({{ site.baseurl }}/how-to/governance-identity/review-privileged-activity/#how-to-review-activations-and-drill-into-one-session) to read a native session and its action drawer.
 
 ## Freshness and scope behavior
 
@@ -61,7 +75,7 @@ One collection builds one snapshot per tenant, and that snapshot serves every En
 
 The activation ledger is the exception to snapshot-only reading. Graph retains directory audit history for about 30 days, so each refresh folds the sessions it can see into an append-only per-tenant record. A session already on record is refined, never duplicated, and history therefore reaches past the retention cliff — but only back to the first collection this product ever ran for the tenant.
 
-The Azure half of cross-plane and of activation sessions comes from the RBAC cache, which is refreshed by its own scan. It can be older than the Entra snapshot, and every consumer carries the `stale` flag and the cache timestamp.
+Cross-plane comes from the separately refreshed IAM cache and carries its age. Activation sessions come from their own collector and local ledger. The ledger retains at most 100,000 sessions per tenant, trimming oldest entries; it is not unlimited history. Native full refreshes update domains independently, while JIT hygiene requires its own Refresh.
 
 ## Interpretation of results
 
@@ -79,7 +93,7 @@ The Azure half of cross-plane and of activation sessions comes from the RBAC cac
 - Activation history before the first collection cannot be recovered; the ledger starts when you start.
 - The action window is padded by two minutes because audit ingestion lags. Actions that landed outside that pad are not shown.
 - Azure actions are recovered per subscription and are bounded per session; a very busy window is truncated rather than paged indefinitely.
-- Grids are capped — assignments at 2000 rows and activation sessions at 500 per page — with the true total reported alongside.
+- Assignments return at most 2,000 rows, activation sessions 500, Cross-plane 1,000 and the API privilege dossier 100 activations. Activation tiles can describe more rows than the loaded table/brush, which has no paging control. Use narrower server filters or the API activation export for retained sessions, not the on-screen subset.
 - Exports and dossiers contain identity metadata. Treat them as governance material and do not paste live tenant, object, or user identifiers into tickets or prompts.
 
 ## Troubleshooting
@@ -88,7 +102,7 @@ The Azure half of cross-plane and of activation sessions comes from the RBAC cac
 | --- | --- |
 | Permanence shows `unknown` for every row | PIM schedule data was not collected. Grant tier 3 and confirm the tenant has Entra ID P2. |
 | PIM config grid is empty | Read the state on the empty panel: `unlicensed` is a license problem, `blind` is a consent problem. |
-| PIM config is populated but there are no activations | Grant `RoleAssignmentSchedule.Read.Directory`; configuration and history are separate collections. |
+| PIM config is populated but activation detail is absent | Check schedule-instance read access and `AuditLog.Read.All` for PIM audit justification. Do not grant Graph write scopes to bypass the request endpoint's restriction. |
 | Activation list stops about 30 days back | That is Graph retention. The ledger extends it forward from the first collection, not backwards. |
 | Cross-plane says unavailable | No Azure RBAC scan exists for this tenant. The banner carries the reason. |
 | Cross-plane shows a stale warning | The RBAC cache predates the Entra snapshot. Re-run the RBAC scan for a current join. |

@@ -15,7 +15,8 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, P
 
 - Product permission `policy.read` and a current inventory; compliance is needed for compliance-based advice.
 - Exact target resource, resource group, subscription, or management-group scope.
-- Change approval outside the app for any Azure remediation.
+- `policy.write` for exemption apply/remove; a connection whose API write gate allows the operation and Azure exemption rights for that connection identity. Preview uses `policy.read`.
+- Change approval outside the app for any Azure remediation. The exemption API has no separate approval workflow.
 
 ## Route
 
@@ -26,11 +27,11 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, P
 1. Open `/policy/effective`.
 
 2. Enter or select the exact target scope.
-3. Resolve assignments and inspect inherited scope, effect, enforcement mode, parameters, and `notScopes`.
-4. Review applicable exemptions, reference IDs, categories, and expiry.
+3. Resolve assignments and inspect the returned source scope, effect and enforcement mode. The resolver matches scope prefixes and removes matching `notScopes`; inspect full parameters and exclusions in Azure.
+4. Follow **N exempt** into Exemptions. These are records referencing the assignment, not a validated applicable-exemption set: check their scope, reference IDs, category and expiry independently.
 5. Repeat at a representative child resource when inheritance or exclusions may differ.
 
-**Expected result:** A calculated set of assignments applicable after scope inheritance, exclusions, and known exemptions.
+**Expected result:** A candidate assignment set with prefix inheritance, exclusions and linked exemption evidence. Management-group ancestry is not expanded for an arbitrary resource target, and exemptions are annotated rather than subtracted.
 
 **Verification:** Compare selected rows with Azure Policy assignments and exemptions at every parent scope. This resolver is not an Azure authorization decision trace.
 
@@ -53,13 +54,15 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, P
 
 2. Choose the exact target assignment and scope, then enter category, expiry, and a non-sensitive justification.
 3. Respect configured guardrails such as required justification, maximum expiry, and blocked never-expiring records.
-4. Select **Preview & validate** and review the diff and generated Azure CLI.
+4. Select **Preview & validate** and review the generated Azure CLI. This is payload validation, not a live before/after comparison. Changing a field clears the preview and requires validation again.
 5. On a read-only connection, copy the CLI into the approved external change process. On a write-enabled connection, select **Create exemption** or **Apply update** only after approval.
 6. Refresh inventory, reopen the exemption, and resolve effective policy at an affected resource.
 
 **Expected result:** The approved exemption is created or updated in Azure, or a reviewed CLI plan is produced without applying it.
 
 **Verification:** Confirm assignment, scope, category, expiry, and justification in Azure. Test that only the intended resources are exempt.
+
+Default guardrails require justification, block never-expiring exemptions and limit expiry to 180 days. The dialog keeps scope and target assignment fixed when editing and has no initiative reference-ID editor. Do not use it to update a selective initiative exemption without separately preserving and checking those IDs. There is no ETag conflict check: reload current Azure values immediately before applying, retain the prior values, and verify after the write. A successful response can be ARM acceptance (`202`), not final-state verification.
 
 ## How to remove an exemption safely
 
@@ -77,11 +80,11 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, P
 
 1. Open `/policy/governance`, then `/policy/advisors`.
 
-2. Review promotion candidates, remediation gaps, conflicts, exemption hygiene, and baseline coverage separately.
+2. Use Governance for dry-run exposure, attribution, scope density and recent assignment creation; use Advisors for promotion, remediation gaps, conflicts, exemption hygiene and baseline coverage.
 3. For a promotion candidate, confirm fresh compliance, representative deployment tests, exclusions, and false positives.
 4. For Modify or DeployIfNotExists gaps, verify assignment identity, location, least-privilege role definitions, and remediation-task design.
 5. For conflicts, compare definition IDs, parameters, scopes, inheritance, and effects before labeling a duplicate.
-6. For a coverage proposal, validate the selected baseline and applicability to the workload.
+6. For a coverage proposal, select WAF (8 controls), MCSB (8) or CIS (7), then **Analyze coverage**. This keyword-based comparison automatically saves a local run under `policy.read`; it is not a full benchmark implementation or proof of enforcement.
 7. Record accepted work in a ticket or rollout plan; do not treat an advisor card as approval.
 
 **Expected result:** Prioritized, source-checked governance work rather than automatic changes.
@@ -94,7 +97,7 @@ Governance, Effective policy, and Advisors are analytical. The Exemptions tab ca
 
 ### Freshness and partial results
 
-Promotion advice depends on available compliance and is unsafe when compliance is stale, absent, sampled, or scoped too narrowly. Conflicts can be intentional. Baseline coverage is a gap heuristic. Resource Graph truncation and inaccessible subscriptions can hide assignments and exemptions.
+Promotion advice depends on available compliance and is unsafe when compliance is stale, absent, sampled, or scoped too narrowly. An assignment missing from a partially successful compliance summary can still receive a **safe** label; verify that assignment's evidence, not just `available=true`. Conflicts compare shared definition IDs and can be intentional. Baseline coverage matches names/categories, not complete rules. Resource Graph caps and inaccessible subscriptions can hide assignments and exemptions.
 
 ## Troubleshooting
 
@@ -102,6 +105,7 @@ Promotion advice depends on available compliance and is unsafe when compliance i
 | --- | --- |
 | Effective assignment is unexpected | Trace parent scopes, `notScopes`, exemption scope, expiry, and workload filter. |
 | Apply action is unavailable | The connection is read-only; use the generated CLI through the approved external process or have an administrator review connection write settings. |
+| Apply fails but your own CLI succeeds | The API uses the connection identity. Verify its scope-specific Azure rights and `policy.write`; do not assume your personal administrator role authorizes the connection. |
 | Exemption validation is blocked | Supply required justification/expiry and comply with configured maximum-expiry and never-expire guardrails. |
 | Safe-to-promote looks wrong | Refresh compliance and test representative create/update paths in audit. |
 | Remediation gap persists | Verify managed identity, assignment location, role-definition IDs, and scope. |

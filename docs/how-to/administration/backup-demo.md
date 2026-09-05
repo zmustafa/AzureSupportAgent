@@ -27,6 +27,8 @@ feature_ids: [ADMIN_NAV:backup, ADMIN_NAV:demodata]
 
 ## How to export and restore selected data
 
+{% include screenshot.html file="admin-backup-export-scope.png" title="Inspect backup scope before downloading" caption="The section catalog shows what an export can include and marks credential sections as secret-redacted. This is a pre-action view only: no download, upload, restore preview, or restore was performed." %}
+
 1. Review the section catalog and counts by configuration, data, reference, and credential tier.
 2. Select only required sections. Select the chat archive only if needed; chat HTML is export-only and is not restored.
 3. Select **Download ZIP backup** and store the archive under organizational controls.
@@ -41,6 +43,8 @@ feature_ids: [ADMIN_NAV:backup, ADMIN_NAV:demodata]
 **Verification:** Reload affected pages, compare counts and reference versions, test providers/connections/connectors, inspect schedules and disabled states, and review `/admin/audit` for backup export/import events.
 
 ## How to seed and remove Demo Data
+
+{% include screenshot.html file="admin-demo-data-loaded.png" title="Review loaded demo data before removal" caption="The local instance already contains seeded synthetic workloads. The capture inspects status and demo-only removal guidance without clicking Load or Remove; it does not demonstrate a completed purge or Azure connectivity." %}
 
 1. Review the current demo status and counts.
 2. Select the seed/load action and confirm.

@@ -34,7 +34,7 @@ from app.workloads.cache import discovery_cache
 router = APIRouter(prefix="/workloads", tags=["workloads"])
 
 # Viewing workloads + running discovery/search analysis requires workloads.read; creating,
-# editing, deleting, restoring, purging and saving discovered workloads requires
+# editing, refreshing membership, deleting, restoring, purging and saving discovered workloads requires
 # workloads.write. The `get_principal` alias is the read tier (so existing call sites stay
 # correct); write endpoints opt into `_write`. Admins always pass via require_permission.
 get_principal = require_permission("workloads.read")
@@ -43,6 +43,21 @@ logger = logging.getLogger("app.api.workloads")
 
 _RG_PREFETCH_CONCURRENCY = 4
 _rg_prefetch_tasks: dict[str, asyncio.Task[None]] = {}
+
+
+def _selected_connection(connection_id: str) -> dict | None:
+    """An explicit selection is authoritative, including a workload's canonical link.
+
+    Keep legacy default selection only when no ID was supplied. This is local to workload
+    operations: the shared turn/config resolver and the Azure/app tenant distinction remain
+    unchanged. Metadata-only operations may still have no configured default connection.
+    """
+    conn = get_connection(connection_id) if connection_id else resolve_connection(None)
+    if connection_id and not conn:
+        raise HTTPException(status_code=404, detail="The selected Azure connection was not found.")
+    if conn and conn.get("disabled"):
+        raise HTTPException(status_code=400, detail="The selected Azure connection is disabled.")
+    return conn
 
 
 class WorkloadNode(BaseModel):
@@ -87,7 +102,7 @@ async def upsert_workload_endpoint(
     if not payload.id:
         data["created_by"] = principal.subject
     # Resolve tenant_id from the connection when available (the Azure AD tenant).
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if conn and not payload.tenant_id:
         data["tenant_id"] = conn.get("tenant_id", "")
     saved = wl_registry.upsert_workload(data)
@@ -494,20 +509,16 @@ def _schedule_resource_group_prefetch(
 
 @router.post("/tree")
 async def tree_endpoint(payload: TreeRequest, _: Principal = Depends(get_principal)):
-    conn = get_connection(payload.connection_id) if payload.connection_id else resolve_connection(None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
-        raise HTTPException(
-            status_code=404 if payload.connection_id else 400,
-            detail="The selected Azure connection was not found." if payload.connection_id else "Pick an Azure connection first.",
-        )
-    if conn.get("disabled"):
-        raise HTTPException(status_code=400, detail="The selected Azure connection is disabled.")
+        raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
+    cid = conn.get("id") or payload.connection_id
 
     # Subscription expansion is special: a cold expand fetches the RG list AND all of the
     # subscription's resources in ONE session, then caches each child RG's resources too —
     # so expanding any resource group underneath is an instant cache hit (no live call).
     if payload.kind == "subscription":
-        sub_key = discovery_cache.key(payload.connection_id, "tree:subscription", payload.node_id)
+        sub_key = discovery_cache.key(cid, "tree:subscription", payload.node_id)
         if not payload.refresh:
             entry_nodes, cached_at, from_cache = await discovery_cache.get_or_compute(
                 sub_key,
@@ -517,7 +528,7 @@ async def tree_endpoint(payload: TreeRequest, _: Principal = Depends(get_princip
             if from_cache:
                 return {"nodes": entry_nodes, **_cache_meta(cached_at, from_cache)}
         # Cold (or forced): compute RG list + all resources together, then cache both.
-        rg_nodes = await _warm_subscription(payload.connection_id, conn, payload.node_id)
+        rg_nodes = await _warm_subscription(cid, conn, payload.node_id)
         cached_at = discovery_cache.put(sub_key, rg_nodes)
         return {"nodes": rg_nodes, **_cache_meta(cached_at, False)}
 
@@ -534,12 +545,12 @@ async def tree_endpoint(payload: TreeRequest, _: Principal = Depends(get_princip
         async def _compute():
             return await discovery.expand_node(conn, payload.kind, payload.node_id)
 
-    key = discovery_cache.key(payload.connection_id, namespace, subkey)
+    key = discovery_cache.key(cid, namespace, subkey)
     nodes, cached_at, from_cache = await discovery_cache.get_or_compute(
         key, _compute, force=payload.refresh
     )
     if not payload.kind and payload.group_by == "subscription":
-        _schedule_resource_group_prefetch(payload.connection_id, conn, nodes)
+        _schedule_resource_group_prefetch(cid, conn, nodes)
     return {"nodes": nodes, **_cache_meta(cached_at, from_cache)}
 
 
@@ -596,7 +607,7 @@ class SearchRequest(BaseModel):
 
 @router.post("/search")
 async def search_endpoint(payload: SearchRequest, _: Principal = Depends(get_principal)):
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
     result = await discovery.search_resources(
@@ -619,14 +630,14 @@ class FacetsRequest(BaseModel):
 
 @router.post("/facets")
 async def facets_endpoint(payload: FacetsRequest, _: Principal = Depends(get_principal)):
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
 
     async def _compute():
         return await discovery.facets(conn, payload.subscription_id)
 
-    key = discovery_cache.key(payload.connection_id, "facets", payload.subscription_id)
+    key = discovery_cache.key(conn.get("id") or payload.connection_id, "facets", payload.subscription_id)
     result, cached_at, from_cache = await discovery_cache.get_or_compute(
         key, _compute, force=payload.refresh
     )
@@ -642,7 +653,8 @@ async def cache_invalidate_endpoint(
     payload: CacheInvalidateRequest, _: Principal = Depends(get_principal)
 ):
     """Drop all cached discovery data for a connection (the picker's Refresh button)."""
-    removed = discovery_cache.invalidate_connection(payload.connection_id)
+    conn = _selected_connection(payload.connection_id)
+    removed = discovery_cache.invalidate_connection((conn or {}).get("id") or payload.connection_id)
     return {"ok": True, "removed": removed}
 
 
@@ -667,10 +679,10 @@ async def cache_prefetch_endpoint(
     instant (served from the same cache keys)."""
     import asyncio
 
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
-    cid = payload.connection_id
+    cid = conn.get("id") or payload.connection_id
     force = payload.refresh
 
     async def warm(namespace: str, subkey: str, compute):
@@ -798,7 +810,7 @@ async def autopilot_survey_endpoint(
     payload: SurveyRequest, _: Principal = Depends(get_principal)
 ):
     """Pre-flight survey: stream the estate facet tallies + default cost estimate (no AI)."""
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
 
@@ -829,7 +841,7 @@ async def autopilot_estimate_endpoint(
 ):
     """Live re-estimate cost + filter preview for a sculpt config against the cached survey
     (no Azure call). Returns ``{needs_survey: true}`` when the survey cache has expired."""
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     tenant_id = conn.get("tenant_id", "") if conn else ""
     result = compute_estimate(
         tenant_id, payload.connection_id, payload.scope_kind, payload.scope_id, payload.config
@@ -856,7 +868,7 @@ async def autopilot_trace_endpoint(
     payload: TraceRequest, _: Principal = Depends(get_principal)
 ):
     """Stream the seed dependency trace: status events then one `trace` event (no AI)."""
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
     if not payload.seed_resource_id.strip():
@@ -884,7 +896,7 @@ async def autopilot_discover_endpoint(
     payload: AutopilotRequest, _: Principal = Depends(get_principal)
 ):
     """Stream AI Workload Autopilot discovery progress + candidates over SSE."""
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
 
@@ -951,7 +963,7 @@ async def list_profiles_endpoint(
     connection_id: str = "", _: Principal = Depends(get_principal)
 ):
     """Saved discovery profiles for a connection (newest first)."""
-    conn = resolve_connection(connection_id or None)
+    conn = _selected_connection(connection_id)
     tenant_id = conn.get("tenant_id", "") if conn else ""
     return {"profiles": discovery_profiles.list_profiles(tenant_id, connection_id)}
 
@@ -961,7 +973,7 @@ async def save_profile_endpoint(
     payload: ProfileSaveRequest, principal: Principal = Depends(_write)
 ):
     """Create or update a discovery profile."""
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     tenant_id = conn.get("tenant_id", "") if conn else ""
     profile = discovery_profiles.save_profile(
         tenant_id, payload.connection_id,
@@ -977,7 +989,7 @@ async def delete_profile_endpoint(
     profile_id: str, connection_id: str = "", principal: Principal = Depends(_write)
 ):
     """Delete a discovery profile."""
-    conn = resolve_connection(connection_id or None)
+    conn = _selected_connection(connection_id)
     tenant_id = conn.get("tenant_id", "") if conn else ""
     ok = discovery_profiles.delete_profile(tenant_id, connection_id, profile_id)
     if not ok:
@@ -1031,7 +1043,7 @@ async def autopilot_save_endpoint(
     """Persist selected Autopilot candidates as Azure Workloads. Records the user's
     grouping corrections into memory and (optionally) launches a Mission Control sweep +
     architecture generation for each new workload."""
-    conn = resolve_connection(payload.connection_id or None)
+    conn = _selected_connection(payload.connection_id)
     tenant_id = conn.get("tenant_id", "") if conn else ""
     origin = (
         {"kind": payload.scope_kind, "id": payload.scope_id, "name": payload.scope_name}
@@ -1120,7 +1132,7 @@ async def estate_coverage_endpoint(
 
     Returns the organized %, the total/organized/orphaned counts, and a sample of orphaned
     resources (those belonging to no workload) for triage. Read-only; cached enumeration."""
-    conn = resolve_connection(connection_id or None)
+    conn = _selected_connection(connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
     cid = conn.get("id", "")
@@ -1212,7 +1224,7 @@ async def overlaps_endpoint(
         return result
 
     # ---- Deep scan: enumerate the estate, then attribute resources to scope nodes. ----
-    conn = resolve_connection(connection_id or None)
+    conn = _selected_connection(connection_id)
     if not conn:
         raise HTTPException(status_code=400, detail="Pick an Azure connection first for a deep scan.")
 
@@ -1282,9 +1294,55 @@ async def overlaps_endpoint(
 
 
 # ----------------------------------------------------------------- refresh
+async def _refresh_scope_memberships(
+    conn: dict, scope_nodes: list[dict]
+) -> list[tuple[list[str], set[str]]]:
+    """Resolve per-node coverage only when exclusions affect newly discovered members.
+
+    Membership is a union of scopes, each minus its own excluded ARM IDs/subtrees. Do not
+    turn one scope's exclusions into a global deny list, or override explicit resource
+    selections. MG hierarchy failures must abort reconciliation rather than widen a scope.
+    """
+    if not any(n.get("excludes") for n in scope_nodes):
+        return []
+    memberships: list[tuple[list[str], set[str]]] = []
+    for node in scope_nodes:
+        kind = node.get("kind")
+        node_id = str(node.get("id") or "").strip().rstrip("/").lower()
+        excludes = {
+            str(value).strip().rstrip("/").lower()
+            for value in node.get("excludes") or [] if str(value).strip()
+        }
+        if kind == "mg":
+            scope = await discovery.resolve_management_group_scope(conn, node_id)
+            prefixes = [f"/subscriptions/{str(s).lower()}" for s in scope["subscriptions"]]
+        elif kind == "subscription":
+            sub = _sub_id_of(node_id) or str(node.get("subscription_id") or "").lower()
+            prefixes = [f"/subscriptions/{sub}"] if sub else []
+        else:
+            sub = str(node.get("subscription_id") or _sub_id_of(node_id)).lower()
+            rg = str(node.get("resource_group") or node.get("name") or node_id.split("/")[-1]).lower()
+            prefixes = [f"/subscriptions/{sub}/resourcegroups/{rg}"] if sub and rg else []
+        memberships.append((prefixes, excludes))
+    return memberships
+
+
+def _refresh_allows_addition(rid: str, memberships: list[tuple[list[str], set[str]]]) -> bool:
+    rid = rid.strip().rstrip("/").lower()
+    covered = False
+    for prefixes, excludes in memberships:
+        if not any(rid == prefix or rid.startswith(prefix + "/") for prefix in prefixes):
+            continue
+        covered = True
+        if not any(rid == value or rid.startswith(value + "/") for value in excludes):
+            return True
+    # Explicit-resource-only workloads retain their established adjacent-RG discovery.
+    return not covered
+
+
 @router.post("/{workload_id}/refresh")
 async def refresh_workload_endpoint(
-    workload_id: str, _: Principal = Depends(get_principal)
+    workload_id: str, _: Principal = Depends(_write)
 ):
     """Re-scan a workload's scope: drop deleted resources, pick up newly-added ones in
     the workload's resource groups, and recompute the type-breakdown summary."""
@@ -1293,7 +1351,7 @@ async def refresh_workload_endpoint(
     wl = wl_registry.get_workload(workload_id)
     if wl is None:
         raise HTTPException(status_code=404, detail="Workload not found.")
-    conn = resolve_connection(wl.get("connection_id") or None)
+    conn = _selected_connection(wl.get("connection_id") or "")
     if not conn:
         raise HTTPException(status_code=400, detail="Workload has no resolvable Azure connection.")
 
@@ -1331,13 +1389,20 @@ async def refresh_workload_endpoint(
             )
         current_by_id = {r["id"].lower(): r for r in current if r.get("id")}
         existing_ids = {n.get("id", "").lower() for n in resource_nodes}
+        try:
+            memberships = await _refresh_scope_memberships(conn, scope_nodes)
+        except (LookupError, PermissionError, ValueError) as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Couldn't resolve workload scope exclusions; resources were left unchanged.",
+            ) from exc
 
         kept_resources = [
             n for n in resource_nodes if n.get("id", "").lower() in current_by_id
         ]
         removed = [n for n in resource_nodes if n.get("id", "").lower() not in current_by_id]
         for rid, r in current_by_id.items():
-            if rid not in existing_ids:
+            if rid not in existing_ids and _refresh_allows_addition(rid, memberships):
                 added.append(
                     {
                         "kind": "resource",

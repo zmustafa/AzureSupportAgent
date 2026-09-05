@@ -13,17 +13,18 @@ feature_ids: [PROACTIVE_NAV:iam, ROUTE:iam, IAM_NAV:accessmap, IAM_NAV:bypass, I
 
 # IAM
 
-**Product permission:** `iam.read`.
+**Product permissions:** `iam.read` for reads, access refreshes, scanner runs and disabled-access script previews; `iam.write` for usage collection, imports/purge and finding state; `iam.review` for campaign writes and run pinning; `iam.simulate` for the change simulator.
 
 ## Purpose
 
 **App routes:** `/iam` and `/iam/:tab` (the former `/rbac` URLs redirect here)
 IAM composes Azure role assignments, role definitions, scope hierarchy, and available Entra directory/group/ownership context into effective-access rows. It is an access-review tool and does not add or remove assignments.
-![IAM access review overview showing grant, principal and privileged counts with per-scope freshness]({{ site.baseurl }}/assets/iam.png)
+
+The screenshots on this page use illustrative browser fixtures, not live tenant reads or evidence of backend-computed access decisions.
+
+{% include screenshot.html file="identity-iam-effective.png" title="IAM Access: normalized grant and investigation handoff" caption="Start with the principal, role, scope and access path, then follow the identity investigation link. This is the Access grid at /iam/effective, not the separate action-level Effective Access evaluator." %}
 
 ## Prerequisites and data sources
-
-### Prerequisites
 
 - An ARM-capable connection with Reader access to role assignments/definitions at all intended management-group, subscription, resource-group, and resource scopes.
 - Graph capability and appropriate directory-role/group/application read consent for resolved principals, transitive group paths, Entra roles, and application ownership.
@@ -94,7 +95,7 @@ Access path is one of three values: **Direct** (assigned to the principal), **Gr
 
 Filtering is server-side and results are paged, so filtering first is both more reliable and cheaper than browsing a large unfiltered estate. Available narrowing: free-text search, the scope and workload filter rail, principal type, surface, access category and privileged-only.
 
-**The export applies the same filters through the same code as the grid.** `GET /api/iam/export` takes the identical parameter set — including the search term and the privileged toggle — so a download cannot quietly contain rows the screen above it did not show. An export that disagrees with the screen it was launched from is worse than no export, because it is the artifact that gets attached to the audit.
+**CSV and JSON apply the grid filters**, including search and privileged-only, to all matching cached rows rather than only loaded pages. **Excel (all tabs)** is different: only scope/workload narrowing reaches its access sheets; analysis sheets remain tenant-wide. The grid loads 200 rows per page, bounded by `iam_max_rows` (default 5,000 per request). Standard row exports carry 71 columns; the API-only `fmt=scanner` projection carries the frozen 46-column interchange schema.
 
 Lighthouse delegations are a surface of their own rather than being folded into Azure RBAC, because those grants do not appear in the portal's Access control (IAM) blade at all — folding them in would make the grid disagree with the portal for the one kind of access an operator is least likely to already know about.
 
@@ -107,6 +108,8 @@ The columns are configurable rather than fixed. "Who can do what", "who can reac
 Use the scope and workload rail on the left to focus the map. Tenant-wide with every principal in one column is legible only after the long tail is folded (see below); narrowing to a subscription, a workload or a search term is what makes individual people visible.
 
 **The group column is not decoration.** Access held through a group cannot be revoked from the person — you remove them from the group. A chain of principal ▸ role ▸ scope renders perfectly well and would prescribe a fix that does not work, so "Via group" is in the default chain.
+
+{% include screenshot.html file="identity-accessmap-grant-paths.png" title="Access Map: follow principal, group, role and subscription" caption="Follow the via-group column before deciding where a grant comes from. This example counts 61 standing grants, excludes four eligible grants and reports one deny separately; folded long tails remain in the totals." %}
 
 **Ribbon width has a stated unit.** *Grants* counts assignment rows and conserves across columns. *Distinct principals* answers "how many people flow along this ribbon" and deliberately does not add up across columns, because one person crossing two ribbons is still one person. The subtitle above the diagram always says which is in use.
 
@@ -121,6 +124,14 @@ Four things the diagram cannot express on its own are therefore reported beside 
 
 Selecting any bar lists the principals and roles behind it and links through to the Effective Access evaluator and the access grid, so the picture is a starting point rather than the end of the trail.
 
+{% include screenshot.html file="identity-accessmap-unexpanded-group.png" title="Access Map: keep unreadable group access visible" caption="Inspect the group whose membership could not be read. Its grant remains visible even though its members are unknown; unreadable membership is not evidence of zero access." %}
+
+Compare the privilege presets without confusing eligibility with access that needs no activation:
+
+{% include screenshot.html file="identity-accessmap-standing-privilege.png" title="Access Map: standing privileged access" caption="Use the standing-privilege view to focus on example grants that need no PIM activation, then trace their principal, role and scope rather than relying on a headline count." %}
+
+{% include screenshot.html file="identity-accessmap-eligible-privilege.png" title="Access Map: active and eligible privilege by state" caption="Read the active/eligible split before interpreting a ribbon. This preset includes both active and eligible privileged grants; it is not an eligible-only view." %}
+
 ### Least Privilege: granted versus used
 
 This tab compares the actions a principal's roles *can* authorize against the actions they were actually observed performing, and proposes a narrower grant. Four things about it are structural:
@@ -132,15 +143,13 @@ This tab compares the actions a principal's roles *can* authorize against the ac
 
 The header states how many of the assessed assignments are over-privileged, and against how many distinct actions this tenant's roles can grant. It separately reports assignments that could **not** be assessed because their role's actions were never collected, and break-glass accounts, which are reported but never recommended for removal. A **What this cannot see** panel lists the exclusions and limitations above the recommendations.
 
-**The usage window is a lookback ending now.** The picker beside **Scan usage** is a popover with presets of 7, 14, 30, 60, and 90 days plus a custom field accepting 1 to 90. The ceiling is Azure Activity Log retention: nothing older than 90 days can be measured, and the popover says so rather than silently clamping a larger request — "unused in 90 days" is a weaker claim than "unused in 180", and a control that quietly substituted one for the other would misstate the evidence behind an access removal.
+**The usage window is a lookback ending now.** The picker beside **Scan usage** offers 7, 14, 30, 60 and 90 days plus a custom field. The custom picker clamps to 1–90 days; the API rejects requests outside that range. Verify the displayed value after applying: this collector does not query an organization's separately archived Activity Log history.
 
 Absolute start and end dates are deliberately not offered. The refresh takes a **day count ending now**, not a date range, so any absolute range would have to collapse to a lookback from today — the control would name one window while the scan read another.
 
-The picker opens on the window the data on screen was actually measured over, not on a fixed default, so the number beside the figures and the number in the control always agree. Selecting a window only sets what the *next* scan will read; the window the current figures came from is stated to the left. **Scan usage** reads the Activity Log per subscription, is slow, and is separate from the access refresh.
+The picker opens on the measured window. Selecting a window changes only the next scan; current figures keep their existing window. **Scan usage** requires `iam.write`, reads Activity Log per subscription, and is separate from the access refresh.
 
 ## Freshness and scope behavior
-
-### Refresh and freshness
 
 Page visits read disk-backed caches and never trigger Azure scans. Scope slices and the directory cache are refreshed independently. **↻ Rescan** in the page header re-collects everything and is available from every tab; the Overview tab additionally offers **⚡ Quick refresh**, **↻ Refresh directory**, and per-scope refresh. Refresh is a non-blocking background job with progress; it can continue if the browser closes.
 
@@ -164,9 +173,9 @@ Usage data on the Least Privilege tab has its own freshness and is not affected 
 7. Verify each candidate against source Azure/Entra state and business ownership.
 8. Remediate through the organization's approved Azure/Entra/PIM process, then refresh the relevant scope and directory.
 
-## Interpretation of results
+For the illustrated offboarding workflow, including owned applications, group-derived access, recoverable accounts and separate removal/rollback previews, see [Export disabled accounts that still hold access]({{ site.baseurl }}/how-to/governance-identity/iam-disabled-access/).
 
-### Interpret results
+## Interpretation of results
 
 - **Privileged** is a classification based on role metadata/name and should be reviewed, not blindly revoked.
 - **Has data actions** means the role definition can authorize data-plane operations; actual access still depends on scope, deny assignments, service controls, and conditions.
@@ -177,15 +186,11 @@ Usage data on the Least Privilege tab has its own freshness and is not affected 
 
 ## Exports, history, scheduling, and integrations
 
-### Export, remediation, and safety
-
-RBAC is read-only. There is no built-in assignment-change, approval, or IaC remediation flow and no general access-grid Excel endpoint. Use available client-side CSV where presented, or an approved external process, and verify the export scope/filters.
+IAM does not execute role-assignment changes. It does provide local certification campaigns, CSV/JSON row exports, a multi-sheet Excel workbook, and generated remediation/rollback artifacts in Azure CLI, PowerShell, Bicep and Terraform formats. Campaign decisions do not revoke cloud access. Review and execute any generated artifact through the approved external change process.
 
 Apply least privilege, but do not remove emergency access, deployment identities, inherited group access, or service-managed assignments without ownership and impact review. Prefer PIM/JIT and narrowly scoped roles where supported. Keep break-glass identities under separate controls.
 
 ## Safety and limitations
-
-### Limitations
 
 - Cache composition and broad searches can be expensive at scale; use scope and principal filters.
 - Text search can query the server as typed; avoid pasting sensitive content.
@@ -208,14 +213,14 @@ Apply least privilege, but do not remove emergency access, deployment identities
 | A subscription is missing | Verify connection visibility and Reader at management-group/subscription scope; inspect scope diagnostics. |
 | Search is slow | Filter scope, surface, and principal type first; use Insights pivots. |
 | Expected access path is absent | Check nested group collection, cache ages, role scope, assignment conditions, and unsupported authorization surfaces. |
-| Remediation action is unavailable | Expected: RBAC does not mutate Azure. Use an approved external/PIM/IaC workflow. |
+| A campaign or usage action is denied | Campaign writes require `iam.review`; Scan usage requires `iam.write`. `iam.read` does not grant either. Scripts remain externally executed. |
 | The header says `scanned just now` but a tab shows old data | The headline is the newest collection across all scopes. Check for the `N of M scopes stale` split beside it, then open Overview for the per-scope ages. |
 | The header shows nothing where freshness should be | The overview has not resolved, or its query failed. That is not the same as never scanned, so nothing is asserted. Check Diagnostics. |
 | Least Privilege says usage was not measured | No usage scan has run for this connection. Set the window and use **Scan usage**; it is separate from every access refresh control. |
 | Least Privilege says the role catalog is missing | Usage was collected but no assignment could be compared against it, because the actions its role grants were never collected. Run **↻ Rescan** to re-collect role definitions, then re-run **Scan usage**. This is not a clean result. |
 | A KPI tile shows `—` | That figure was not measured. It is deliberately not rendered as 0. Check Diagnostics for the collector that could not read. |
 | *Total grants* looks lower than the number of rows in the grid | Deny assignments are excluded from *Total grants* because a deny removes access. They have their own tile and their own surface filter. |
-| A usage window longer than 90 days will not apply | Azure Activity Log retention is the ceiling. The popover states it; the request is not silently shortened. |
+| A usage window becomes 90 days | The custom picker clamps to 1–90 days. The API rejects an out-of-range request; verify the picker value before starting the scan. |
 | The usage window in the picker differs from the window in the figures | Expected. The picker sets the window for the *next* scan; the figures state the window they were measured over. |
 
 ## Related pages

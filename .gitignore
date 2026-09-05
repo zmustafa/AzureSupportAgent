@@ -48,6 +48,10 @@ DEPLOY_RUNBOOK.md
 
 # Internal UI test plan (QA working notes — not product documentation).
 docs/UI_TEST_PLAN.md
+docs/BUG_HUNTING_PLAN.md
+docs/ARCHITECTURES_TEST_PLAN.md
+docs/GRAPH_TEST_PLAN.md
+docs/INVENTORY_TEST_PLAN.md
 
 # Full-suite test findings (QA working notes / bug documentation — not distributable).
 docs/test-findings/

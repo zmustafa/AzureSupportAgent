@@ -46,6 +46,8 @@ not your ISP address — and allowlisting the wrong one is how the first Enforce
 
 ## How to introduce an allowlist safely
 
+{% include screenshot.html file="admin-network-allowed-source-draft.png" title="Review a range before adding it to the allowlist" caption="The unsaved form shows a 256-address preview for the documentation-only 192.0.2.0/24 range. No rule was added, staged, or saved and the firewall stays Off; use your approved egress ranges, not this example, before following the Monitor-first procedure." %}
+
 1. Open `/admin/firewall` and note the address shown in **You are connecting from**. This is the
    address the server resolves, which is the one the policy will be evaluated against.
 2. Select **+ Add my IP** so your own access is covered before anything else.

@@ -317,7 +317,7 @@ async def generate_pack(goal: str, answers: list[dict[str, Any]]) -> dict[str, A
     user = (
         f"{_transcript(goal, answers)}\n\n"
         f"Available data sources (choose ONLY these ids):\n" + "\n".join(src_lines) +
-        f"\n\nAvailable always_notify_if flag codes (choose ONLY these):\n" + "\n".join(flag_lines)
+        "\n\nAvailable always_notify_if flag codes (choose ONLY these):\n" + "\n".join(flag_lines)
     )
     parsed = await _complete_json(GENERATE_PROMPT, user)
     if not isinstance(parsed, dict):

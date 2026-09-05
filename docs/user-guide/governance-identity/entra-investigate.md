@@ -38,9 +38,10 @@ tokens, findings, or historical activity have been removed.
 - Product permission `investigate.activity` only when sign-ins, risk detections, directory audit or
   Azure Activity Log records are needed.
 
-The base dossier reads caches only. Sources are named per section and carry collected time,
-unreadable reason and truncation. The activity and nested-membership actions are explicit live reads
-and are never started by merely opening a dossier.
+The base dossier endpoint reads caches only. Sources carry collected time, unreadable reason and
+truncation. **The UI additionally requests applicable non-Azure activity once per principal on
+arrival**, initially over 24 hours, under `investigate.activity`; an unfilled justification is allowed
+on that automatic request. Azure Activity Log and live membership trees remain explicit opt-ins.
 
 ## Tabs and actions
 
@@ -50,8 +51,9 @@ and are never started by merely opening a dossier.
 | Recently investigated | Shows up to the caller's own 25 recent principals from `investigate.view` audit rows; **clear** stores a browser watermark and hides chips without deleting audit history |
 | Lenses | **Overview**, **Offboarding**, **Recertification**, **Workload identity**, and **Support** reorder the same applicable sections; they do not collect different data |
 | Section links | Jump to Activity, Access, Members, Findings, Changes, or Activations when that section applies to the principal kind |
-| Members tree | For groups, reads requested branches live. One request opens at most 25 branches, returns at most 200 direct children per node and 1,000 nodes overall, and reports truncation |
-| Read activity | Explicitly requests applicable sign-ins, risk and directory-audit data over 1–365 days; the UI offers 24 hours, 3, 7 or 30 days and records the supplied justification |
+| Members / Groups it belongs to | **Show member tree**, **Show parent groups**, or **Read every group live** reads structural membership; **include nested** adds transitive upward membership. Requests are bounded to 25 expansions, 200 children per node and 1,000 nodes overall |
+| Read activity | Reruns applicable sign-ins, risk and directory audit after the automatic arrival read; the UI offers 24 hours, 3, 7 or 30 days and records the supplied justification |
+| Cancel activity | Stops the browser wait; the request remains audited and may finish on the server |
 | Include Azure Activity Log | Adds the slower per-subscription resource-plane read; it is off by default and only queries subscriptions where current access puts the principal in scope |
 | Export | Produces an XLSX dossier with Identity, Directory roles, Azure access, Findings, Timeline, Activations, applicable Members, and Provenance sheets |
 
@@ -66,8 +68,10 @@ warning is only as current as the people snapshot; verify snapshot age before ma
 decision. A cache read that fails marks the affected section unreadable rather than returning an
 empty claim.
 
-Activity is live and windowed. Sign-ins are capped at 500 rows and risk detections at 200 rows;
-provenance marks a cap. Azure Activity Log scope is derived from subscriptions where the principal
+Activity is live and windowed. Interactive and non-interactive sign-ins have separate 500-row caps,
+risk detections a 200-row cap, and directory audit a 500-row cap. The body accepts 1–365 days, but
+Graph reads clamp to 30; the UI therefore cannot retrieve a year of Graph activity. Non-interactive
+sign-ins require enabled Graph beta endpoints. Azure Activity Log scope is derived from subscriptions where the principal
 currently holds access, so an operation in a subscription whose access was later removed can fall
 outside the query. Group-tree reads have the limits listed above and report notes when clamped.
 
@@ -78,10 +82,26 @@ outside the query. Group-tree reads have the limits listed above and report note
 3. Choose the lens that matches the decision; for a disabled person, **Offboarding** leads with
    access and membership rather than activity.
 4. Review Access, Members, Findings, Changes and Activations with each section's provenance.
-5. Request behavioral activity only when justified and permitted; keep Azure Activity Log off
-   unless resource-plane evidence is necessary.
+5. Expect the automatic non-Azure activity read when the principal's capabilities support it.
+  Add the review reason before a deliberate reread; keep Azure Activity Log off unless needed.
 6. Export when a portable evidence artifact is required, then validate conclusions in the current
    Entra/Azure source before changing anything.
+
+### Resolve the principal and trace access
+
+These examples use browser fixtures to illustrate dossier navigation. They do not represent live Graph reads or a backend-computed security assessment.
+
+{% include screenshot.html file="identity-investigate-search.png" title="Investigate: resolve a user or group" caption="Search first, then confirm the principal kind and identifier before opening the dossier. A matching display name alone is not enough to establish that the selected object is the intended one." %}
+
+{% include screenshot.html file="identity-investigate-access.png" title="Investigate: direct and group-derived Azure access" caption="Compare direct grants with access inherited through a group. Keep the role, scope and intermediate group together when deciding which access path needs review." %}
+
+### Read cached membership and change evidence
+
+{% include screenshot.html file="identity-investigate-memberships.png" title="Investigate: cached memberships are a starting point" caption="Treat the cached group list as a floor, not a complete directory membership inventory. Review its source limits before deciding whether an explicit membership expansion is needed." %}
+
+{% include screenshot.html file="identity-investigate-change-history.png" title="Investigate: explain what changed across collections" caption="Read the change details rather than only their timestamps. This example contains seven explicitly modeled change events across eight comparison runs; it is not a live audit history." %}
+
+For the on-demand user membership, direct group-member and nested-cycle examples, follow [How to expand memberships without losing coverage limits]({{ site.baseurl }}/how-to/governance-identity/investigate-entra-finding/#how-to-expand-memberships-without-losing-coverage-limits).
 
 ## Interpretation of results
 
@@ -101,9 +121,10 @@ and group-tree reads write `investigate.activity` and `investigate.members`, inc
 principal, connection and bounded request metadata. Recent history is reconstructed from the
 caller's own dossier-view audit rows.
 
-The XLSX builder neutralizes spreadsheet-formula input and includes a Provenance sheet so an empty
-section cannot be mistaken for a successful clean read. This feature has no schedule and sends no
-notification. Handoffs from Entra findings, guests and IAM preserve the principal identifier.
+The XLSX includes cached structural sections, applicable Group memberships and Provenance. It
+rebuilds the dossier; it does not include the live activity response or branches expanded in the
+browser. Do not describe it as a complete export of everything currently visible. This feature has
+no schedule or notification control. Check the exact principal and connection after every handoff.
 
 ## Safety and limitations
 

@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:applications]
 
 # Entra: applications and consent
 
-**Product permission:** `entra.read` for every view on this tab; `entra.admin` to start a collection from the freshness badge.
+**Product permissions:** `entra.read` for Inventory/Consent; `entra.admin` for native collection and sign-in **Read now**. The embedded **Application Registrations** panel, its refresh/cancel and its separate workbook require `identity.read` in addition to access to the Entra shell.
 
 ## Purpose
 
@@ -62,7 +62,9 @@ A component can be marked not applicable with a stated reason — an Azure-manag
 
 ## Freshness and scope behavior
 
-One collection builds one snapshot per tenant, and that snapshot serves every Entra tab. Refresh from the freshness badge in the page header. Sub-tabs never collect on their own; opening Inventory or Consent reads what is already cached, and the detail panel is served from the same snapshot rather than a live Graph call.
+Inventory and Consent read the native Entra snapshot; their detail panel is cache-backed. Application Registrations has a separate snapshot and refresh. Per-application sign-in outcomes can be enriched after native collection or with **Read now** (`entra.admin`), so a completed inventory is not necessarily a completed outcome read.
+
+Inventory shows **Last sign-in** and **Last failed sign-in**. Read the pending/off/not-measured banner before interpreting an empty cell. Backfill defaults to the visible-app scope, a 24-hour cache window, 100 applications per run and a 300-second budget; it reads at most 50 recent events per application over 30 days. An aggregate activity timestamp can be an attempt, not confirmed successful use; per-event outcomes provide the stronger evidence. These are bounded reads, not complete application audit histories.
 
 Granted permissions are collected by querying the handful of resource service principals that matter — Microsoft Graph, the legacy Azure AD Graph, Exchange Online and SharePoint Online — for everyone holding one of their application permissions, rather than fanning a call out across every principal in the tenant. A consent granted minutes ago will not appear until the next collection.
 
@@ -89,9 +91,11 @@ enabled/deactivated state.
 
 ## Interpretation of results
 
+**Registrations permissions are requested permissions.** That operational panel reads the app manifest's `requiredResourceAccess`; its Application/Delegated counts do not prove tenant consent. Use the native Inventory detail's granted application and delegated permissions to establish actual grants. The two panels answer different questions and must not be reconciled merely by comparing their permission counts.
+
 - **A large permission count is not automatically bad, and a small one is not automatically safe.** One `RoleManagement.ReadWrite.Directory` grant outranks forty read scopes. Read the tier and the self-grant marker, not the number.
 - **Self-grant is the tenant-takeover primitive.** An application able to assign app roles or write applications, directory objects, or permission-grant policy can give itself everything else. Treat that marker as the top of the queue.
-- **Tenant-wide delegated grants behave like application permissions.** A grant consented for all principals applies to everyone who signs in, not only to the person who accepted it.
+- **Tenant-wide delegated consent is not app-only access.** `AllPrincipals` removes the need for each user to consent, but delegated operations still run in a signed-in user context and are constrained by that user's access.
 - **Requested is not granted.** Permissions in the manifest with no matching assignment carry no access. They are worth reviewing before the next consent, not today.
 - **No owner is an operational finding.** Nobody is accountable for rotating the credentials or retiring the application, which is usually why the credential is the one that expires unnoticed.
 - **Deactivated does not mean harmless or deleted.** The corresponding service principal is
@@ -113,6 +117,8 @@ enabled/deactivated state.
 - Permission tiering is a judgment about blast radius, not a Microsoft classification. An unrecognized write-scoped permission is treated as high rather than ignored.
 - Conditional Access relevance is derived from the snapshot's enforced policies and application targeting; it is not a Microsoft what-if evaluation.
 - Azure reach comes from the RBAC cache and can be older than the Entra snapshot. The panel says so when it is.
+- Application 360's CA relevance is a simple enabled-policy/all-apps or explicit-app join, not a complete exclusion, cohort or condition evaluation. Likewise an empty owner detail is not sufficient when the grid says ownership was unreadable.
+- Registrations CSV reflects local filters; **Excel (all sheets)** exports all applications in that panel's completed cache. The native Entra workbook is a different snapshot. None can recover objects excluded by upstream collection caps.
 - Exports and screenshots of this tab contain application identifiers and consent detail. Handle them as governance material.
 
 ## Troubleshooting

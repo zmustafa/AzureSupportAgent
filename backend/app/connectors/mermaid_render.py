@@ -238,7 +238,6 @@ def render_mermaid_png(source: str) -> Optional[bytes]:
     for n in sorted(nodes.values(), key=lambda x: x.order):
         layers.setdefault(n.layer, []).append(n)
 
-    cross = 0.0  # running position along the cross axis per layer
     layer_extent: dict[int, int] = {}
     for li in sorted(layers):
         row = layers[li]

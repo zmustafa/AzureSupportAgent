@@ -29,7 +29,7 @@ Ownership records accountable people, teams, and services and associates them wi
 | Azure scope | Connection and subscription/workload scope for scans, subjects, coverage, and suggestions. |
 | Tagging | Azure write permission is required only when applying ownership records as resource tags. |
 
-The owner directory and **My Estate** are shared owner-centric views. **Assignments**, **Coverage**, **Suggestions**, and **Attestation** use the selected connection and scope as applicable.
+The owner directory and **My Estate** are shared across Azure connections within the application tenant. Coverage scans use a connection and a workload/subscription scope. Assignments and Suggestions use subject-scope filters, but their backing registries are not partitioned by the connection selector. Attestation deliberately hides the connection picker. A connection selection is not an ownership-data isolation boundary.
 
 ## Tabs and actions
 
@@ -41,7 +41,7 @@ Create people, teams, or service owners manually or through the federated people
 
 ### Assignments
 
-Link an owner to a subscription, resource group, resource, workload, or architecture. Filter by current scope and use bulk operations carefully. Assignments in this registry do not grant Azure RBAC permissions; they record accountability.
+The **Assignments** tab lists workloads and architectures with **Assign owner** or **Manage** on each row. The dialog chooses an existing owner, accountability role, and Primary flag, and removes current assignments. It is not a generic **+ Assign** subject picker. The registry/API supports six subject kinds—management group, subscription, resource group, resource, workload, and architecture—and API bulk/transfer/assignment-Trash operations; these are not all controls in this tab. Workload scope selects the workload subject itself, not every contained resource. Assignments record accountability and do not grant Azure RBAC permissions.
 
 ### Coverage
 
@@ -49,7 +49,7 @@ Review owned versus unowned subjects, coverage percentage, gaps, and trend. A hi
 
 ### Suggestions
 
-Review proposed owners derived from available signals such as RBAC assignments, directory groups, and existing workload context. Accept only after confirming the candidate is accountable—not merely technically capable or historically active.
+Review proposed owners derived from available signals such as RBAC assignments, directory groups, and existing workload context. Accept only after confirming the candidate is accountable—not merely technically capable or historically active. **Dismiss** hides a suggestion in the current tab session; it does not persist a rejection decision and the suggestion can reappear after reopening.
 
 ### My Estate
 
@@ -61,17 +61,15 @@ Record owner sign-off for scoped assignments. Items are **never**, **stale** at 
 
 ## Freshness and scope behavior
 
-Coverage page loads are cache-only; an explicit refresh performs a read-only Azure scan, stores a trend point, and becomes stale after six hours. Suggestions are cache-only and combine inventory owner tags, RBAC evidence, and orphan-tag promotion signals. Directory and estate are tenant-wide; assignments, coverage, suggestions, and attestation honor tenant, subscription, or workload scope as implemented.
+**Load coverage** retrieves a stored snapshot; **Refresh** performs a read-only Azure scan and stores a trend point. Coverage requires a specific workload or subscription, not whole-tenant scanning. The current page nudges a rescan after 24 hours; loading a snapshot does not enforce the API module's declared six-hour TTL or automatically refresh old data. Suggestions combine cached inventory tags, RBAC evidence, and orphan-tag promotion signals.
 
-## Workflow overview
-
-### Implementation-grounded usage scenarios
+## Usage scenarios
 
 1. **Onboard accountable owners from a workbook:** open `/ownership/directory`, upload CSV or Excel, choose a sheet when required, review the AI-suggested column mapping and row preview, then import owners and any resolvable assignments with `ownership.write`.
 2. **Close an unowned workload gap:** refresh `/ownership/coverage` for the workload, inspect cached tag/RBAC evidence in `/ownership/suggestions`, accept a verified candidate to create an explicit assignment, and refresh coverage to verify the denominator and gap changed.
 3. **Publish ownership as Azure tags:** from Directory, open **Apply as tags**, preview conflicts and skipped unowned resources, confirm the live write, inspect per-resource results in **Revisions**, and revert the saved recovery copy only after checking for later tag changes.
 
-### Maintain the ownership lifecycle
+## Maintain the ownership lifecycle
 
 1. Build or import the owner directory and remove duplicates.
 2. Select the correct Azure connection and narrow scope.
@@ -90,9 +88,9 @@ Coverage page loads are cache-only; an explicit refresh performs a read-only Azu
 - **Coverage** depends on the selected subject set and current inventory.
 - **Attested** is a historical declaration and should be checked for expiry or changed conditions.
 
-## Exports, history, scheduling, and integrations
+## Exports, tag history, and integrations
 
-- Import and export directory/assignment data in supported tabular formats such as CSV; validate a small sample before large imports.
+- Export the owner directory as CSV/Excel, including assignment counts. Import can also create resolvable assignments; directory export is not a full round-trip backup of every assignment.
 - Tag-application revision history records proposed/applied ownership-tag changes and supports the available review or revert flow.
 - Assignment changes are available to workload, architecture, inventory, and graph experiences that resolve ownership.
 - Directory lookups can integrate with configured Entra, OIDC/SSO, and RBAC sources.
@@ -102,9 +100,11 @@ Coverage page loads are cache-only; an explicit refresh performs a read-only Azu
 - Ownership records do not modify RBAC or confer authority.
 - RBAC-derived suggestions can identify administrators rather than accountable service owners.
 - Tag application writes to Azure and can conflict with policy, casing rules, inherited tags, or automation. Always preview.
+- Tag preview is recalculated on apply, not a frozen plan approval. A custom literal value applies to all target resources without owner lookup. The current dialog does not send the section's connection selection; verify the connection actually used before any write, especially for a non-default workload connection.
+- Apply merges the chosen tag and captures current tags before writes. **Revert** replaces each target's entire tag set with its captured prior state; it can erase later unrelated tag changes and is not conflict-aware. Partial apply/revert is possible. Review each resource outcome rather than treating a saved revision as proof of success.
 - Import can create duplicates or overwrite intended values if identifiers are inconsistent.
 - Purging Trash is permanent.
-- Import preview accepts files up to 8 MB; confirmed imports are bounded to 10,000 mapped rows, while tag-plan Resource Graph collection is bounded to 5,000 rows.
+- Import preview accepts files up to 8 MB and returns at most 5,000 rows for the dialog to submit; the confirm mapper processes at most 10,000 rows. Subscription tag-plan collection is capped at 5,000 resources, the plan returns 2,000 items, and the UI displays the first 200. Aggregate counts can therefore exceed the displayed or applied set; narrow large operations and verify actual targets.
 - Directory exports contain personal and organizational information; handle them under applicable privacy rules.
 
 ## Troubleshooting
@@ -117,6 +117,22 @@ Coverage page loads are cache-only; an explicit refresh performs a read-only Azu
 | Assignment is not visible elsewhere | Confirm subject identifier and tenant, then refresh the consuming view. |
 | Tag apply fails | Check Azure write rights, locks, policy denials, tag limits, and the previewed resource set. |
 | Import reports errors | Validate required columns, kinds, stable identifiers, encoding, and duplicate rows. |
+
+## Screenshot walkthrough
+
+These synthetic browser fixtures illustrate an accountability review, not verified directory identities, live ownership coverage, or applied assignments or tags.
+
+### 1. Review accountable people and teams
+
+{% include screenshot.html file="estate-ownership-directory.png" title="Accountable teams and people in the ownership directory" caption="Review owner records before assigning responsibility so the accountable person or team is clear. A directory entry records ownership context; it does not grant Azure access." %}
+
+### 2. Examine assignment coverage at the subject level
+
+{% include screenshot.html file="estate-ownership-assignments.png" title="Direct, workload-derived, and missing ownership assignments" caption="Distinguish direct assignments, workload-derived ownership, and missing ownership before deciding which subjects need confirmation. An existing association is not a substitute for confirming accountability with the owner." %}
+
+### 3. Prioritize scoped ownership gaps
+
+{% include screenshot.html file="estate-ownership-coverage.png" title="Ownership coverage, evidence sources, and production gaps" caption="Check the workload scope and evidence sources, then inspect the unowned subjects rather than relying on the percentage alone; a high aggregate can still conceal a critical ownership gap." %}
 
 ## Related pages
 

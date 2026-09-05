@@ -44,11 +44,11 @@ principal; and the deep-dive tabs at `/entra/conditional-access`, `/entra/privil
 
 1. Select a row to open the finding drawer.
 
-2. Read the title and detail, then the **Why this matters** block. That text comes from the signal definition in the registry, not from the individual finding, so it explains the class of problem.
+2. Read the title, detail and evidence. The shared drawer shows **Why this matters** and remediation only when a signal definition is supplied; the current inbox does not pass that definition. Use the signal catalog or finding-detail API if those blocks are absent.
 3. Read the **Evidence** list. These are the exact values the signal fired on and they are what make the score verifiable rather than a black box.
 4. Read the **Remediation** section, including the numbered steps where the signal provides them.
 5. Follow the portal link to validate the object in the Microsoft Entra admin center, and the documentation link where the signal carries one. Graph data is cached and eventually consistent — validate before you act.
-6. Record the owner. Each finding carries an assignee in its workflow state, shown under the state column and filterable with the **Unassigned** chip. Set it where the app offers the assignee field.
+6. Record the owner in the approved review system, or use the finding-state API's `assignee` field. The inbox displays existing assignees and filters Unassigned, but its current drawer/bulk bar does not edit assignees.
 7. Select **Acknowledge** to mark the finding as being worked. Use **Reopen** to move it back to open if the investigation shows it was acknowledged in error.
 
 **Expected result:** A finding in the acknowledged state with an owner, and a validated understanding of what has to change in Entra.
@@ -62,13 +62,34 @@ principal; and the deep-dive tabs at `/entra/conditional-access`, `/entra/privil
 3. If the header and warning banner show **⚠ disabled**, treat that as the account state in the
 	cached snapshot—not as proof that assignments, group membership, active tokens, or historical
 	actions are gone. Prioritize the Access, Members, Activations, and Findings sections.
-4. Separate structural access from behavioral history: activity requires its additional product permission and may be unavailable even when identity detail is visible.
+4. Expect an automatic, bounded non-Azure activity request on arrival when applicable. It needs `investigate.activity` and may be denied while structural detail remains visible. Azure Activity Log is not included automatically.
 5. Follow handoffs to IAM or Conditional Access only when the destination preserves the same principal or scope.
 6. Validate significant conclusions against the named source record and the current Entra portal state.
 
 **Expected result:** One principal's identity, structural reach, and available activity evidence are correlated without treating missing domains as clean results.
 
 **Verification:** The selected object remains the same across each handoff, timestamps are current enough for the decision, and every conclusion cites source evidence.
+
+## How to expand memberships without losing coverage limits
+
+Start with the [cached membership and change examples]({{ site.baseurl }}/user-guide/governance-identity/entra-investigate/#read-cached-membership-and-change-evidence). A cached group list is a starting point, not proof that every membership has been enumerated.
+
+1. Confirm the same principal and tenant before requesting more membership detail.
+2. For a user, use **Read every group live** and **include nested** when the review needs upward transitive membership. Keep any unreadable or truncated branches in the review notes.
+3. For a group, use **Show member tree** to distinguish direct user members from nested groups, then expand only the branches needed for the decision.
+4. Stop at a cycle marker rather than interpreting a repeated group as another independent path. Check the bounded tree and its source notes before drawing conclusions about completeness.
+
+The three views below use browser fixtures. Their on-demand membership controls are intercepted by those fixtures; no directory request leaves the browser boundary, and the examples do not validate backend membership collection.
+
+{% include screenshot.html file="identity-investigate-transitive-memberships.png" title="Investigate: expand direct and nested user memberships" caption="Compare the expanded parent groups with the cached membership floor. Although the control is labeled as a live read, this screenshot uses a fixture response, not a Microsoft Graph request." %}
+
+{% include screenshot.html file="identity-investigate-group-members.png" title="Group investigation: direct users and nested groups" caption="Read the first level of the member tree before expanding a child group. These direct members were loaded through a mocked on-demand action, not inferred from an empty cached list." %}
+
+{% include screenshot.html file="identity-investigate-group-cycle.png" title="Group investigation: recognize the cycle guard" caption="The example path returns from Offline nested group to Offline access group and stops without another expansion. A cycle marker explains the stopping point; it does not mean the repeated group has no members." %}
+
+**Expected result:** Direct membership, nested paths and cycle or coverage limits remain distinguishable in the investigation.
+
+**Verification:** Confirm consequential membership paths against current directory evidence. The dossier XLSX does not include branches expanded in the browser, so retain the required review evidence separately.
 
 ## How to review a disabled principal for residual access
 
@@ -79,9 +100,9 @@ principal; and the deep-dive tabs at `/entra/conditional-access`, `/entra/privil
 	managed identity.
 4. Review standing and eligible Entra roles, Azure assignments, transitive group membership,
 	privilege activations, findings, and access-change history. Disabled state does not remove them.
-5. If authorized for `investigate.activity`, enter a ticket/reason, choose the shortest useful
-	window, and select **Read activity**. Include the Azure Activity Log only when resource-plane
-	operations are needed; it is an explicit, slower per-subscription read.
+5. The initial non-Azure activity request may already have run with an empty reason. For a
+	deliberate reread, enter the ticket/reason, choose the shortest useful window and select
+	**Read activity**. Include Azure Activity Log only when resource-plane evidence is needed.
 6. Export the dossier when an evidence workbook is required, then validate account state and any
 	remaining assignments in the authoritative Entra and Azure views.
 
@@ -104,7 +125,7 @@ audit record identifies the reviewer and principal without changing Entra or Azu
 
 **Expected result:** The selected findings carry the chosen state with a durable reason, and snoozes carry an expiry date.
 
-**Verification:** Filter by **Snoozed** to see the deferred set. The suppressed count in the summary line increases by exactly the number you suppressed, and the posture score changes only because those signals were excluded.
+**Verification:** Filter by Snoozed for deferred work. Preserve suppressed fingerprints and reasons: suppression removes them before normal inbox listing/scoring, so filtering is not a way to retrieve all suppressed rows. Compare returned `updated` with the request (maximum 2,000), not just a chip count.
 
 ## How to close the loop after remediation
 
@@ -122,7 +143,9 @@ audit record identifies the reviewer and principal without changing Entra or Azu
 
 ## Safety and rollback
 
-Reading the inbox, opening a finding, and viewing scanner results are all read-only, and viewing scanner results deliberately does not record a run — otherwise merely looking would consume the new-versus-resolved baseline. Acknowledging, snoozing, suppressing, running a scanner and applying a bulk action are local writes stored per tenant by this product, recorded in the audit trail, and never pushed to Entra. Every one of them is reversible: reopen the finding, or apply a different state to the same selection.
+Reading the inbox/finding and scanner results does not record a scanner run. Workflow actions and scanner baselines are local writes, not directory changes. A state can be reopened (use its retained fingerprint through the API if suppression removed it from the UI), but running a scanner advances its baseline and reopening a finding does not restore that earlier delta. UI scanner runs send `notify=false`.
+
+A resolved fingerprint may reflect suppression or lost measurement rather than remediation. Verify equivalent collector coverage and the live configuration before claiming closure. Investigate's XLSX exports cached structural evidence, not its live activity response or expanded membership branches.
 
 The remediation itself always happens in Entra through your change process, with its own approval and rollback. Treat a bulk suppression as the highest-risk action on this page, because it removes findings from the score for everyone who reads it afterwards. Never paste real tenant IDs, object IDs, user principal names or evidence values into tickets, prompts or exported examples.
 

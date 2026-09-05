@@ -32,7 +32,7 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:compare, IAM_NAV:simulator]
 6. Read the role column. A role-to-role transition is rendered as `from → to`, and a re-scope that moved outwards carries a `broader scope` marker.
 7. Use the change-type selector to isolate one class when you need to answer a specific question — for example `activated` for eligible assignments that were elevated since the last collection.
 
-**Expected result:** A classified list of every access movement between the two collections, with the widening ones separable from the narrowing ones.
+**Expected result:** Classified changes over collected access. The UI requests at most 500 changes for the chosen class and applies the risk-only toggle to those loaded rows; it is not necessarily every matching movement.
 
 **Verification:** Pick one `added` row and confirm the assignment exists in Azure; pick one `removed` row and confirm it does not.
 
@@ -99,7 +99,7 @@ Never treat an unattributed change as unauthorized. Activity Log retention is fi
 | A group membership change produced no rows | Refresh the directory. Group expansion is what turns a membership change into effective-access changes, and the diff is keyed on the effective principal. |
 | A `path_changed` row looks like nothing happened | The access is unchanged; the route to it changed — for example direct access became group-derived. It usually still changes how the access would be revoked. |
 | An unfamiliar custom role is reported as `escalated` | Escalation is decided by coarse privilege tier, and an unrecognized custom role is placed at write tier so it is never mislabelled a de-escalation from Reader. Confirm what the role authorizes. |
-| The list is truncated | A banner states `Showing the first N of M changes`. Filter by change class or by risk direction to narrow it. |
+| An expected row is outside the loaded list | Choose a specific change class or use API offset/limit (maximum 2,000). The UI's risk-only toggle filters its loaded 500 rows and does not fetch omitted rows; compare `filtered_total` with the returned length. |
 
 ## Related docs
 

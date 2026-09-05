@@ -48,7 +48,7 @@ def demo_timeline() -> dict[str, Any]:
         points.append(
             {
                 "timestamp": _ts(minute),
-                "failure_rate_pct": fail if not (minute in (35, 40)) else (38.0 if minute == 35 else 41.0),
+                "failure_rate_pct": fail if minute not in (35, 40) else (38.0 if minute == 35 else 41.0),
                 "failed": int((fail / 100) * 480),
                 "total": 480,
                 "p95_ms": 2400.0 if spiking else 320.0,

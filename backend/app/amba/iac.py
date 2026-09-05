@@ -219,7 +219,7 @@ def _bicep_activity(gap: dict[str, Any]) -> str:
     activity = rec.get("activity_log") or {}
     conditions = [
         "        {",
-        f"          field: 'category'",
+        "          field: 'category'",
         f"          equals: {_q(activity.get('category', 'ServiceHealth'))}",
         "        }",
     ]

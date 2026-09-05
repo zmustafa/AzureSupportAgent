@@ -4,12 +4,11 @@ build the canvas path overlay, persist + diff. Streams events for the live UI an
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 from app.netcheck import store
-from app.netcheck.probe import STATUS_FAIL, STATUS_OK, STATUS_WARN, run_probe
+from app.netcheck.probe import STATUS_FAIL, STATUS_WARN, run_probe
 
 log = logging.getLogger("app.netcheck.analyzer")
 

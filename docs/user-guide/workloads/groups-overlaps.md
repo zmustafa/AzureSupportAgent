@@ -107,6 +107,18 @@ No dedicated export, history, scheduling, or integration controls are documented
 | Compare looks inconsistent | Review member signal freshness and missing components |
 | Suggested groups are incorrect | Ignore them and create explicit groups; suggestions rely on environment/name tokens |
 
+## Screenshot walkthrough
+
+These group views use synthetic browser fixtures to illustrate member review and comparison. They are not live drift verification or an overlap-scan result.
+
+### 1. Review the family without merging its members
+
+{% include screenshot.html file="estate-group-members.png" title="Group rollup and independent environment members" caption="Review the family rollup alongside its separate workload members so production and development remain distinct analysis boundaries rather than being merged into one resource set." %}
+
+### 2. Investigate differences between environments
+
+{% include screenshot.html file="estate-group-compare.png" title="Production and development resource and coverage comparison" caption="Compare resource composition and coverage signals to identify differences worth reviewing. Confirm signal freshness and intended environment design before treating a highlighted difference as a defect." %}
+
 ## Related pages
 
 - [Workload fleet]({{ site.baseurl }}/user-guide/workloads/fleet/)

@@ -11,7 +11,7 @@ feature_ids: [ROUTE:mission-control]
 
 # Run Mission Control
 
-![Mission Control readiness board]({{ site.baseurl }}/assets/mission-control.png)
+{% include screenshot.html file="core-mission-fleet.png" title="Choose a workload from Mission Control readiness" caption="Compare the displayed workload states before opening one board. This synthetic fleet example is not evidence of a completed mission or live Azure collection." %}
 
 ## Prerequisites
 
@@ -36,6 +36,8 @@ Landing: `/mission-control`. Workload board: `/mission-control/{workloadId}`.
 **Expected result:** A durable mission records terminal per-system states and a Go, Warning, No-go, Unknown, or Cancelled rollup.
 
 **Verification:** Open source records and confirm scope/timestamp; the readiness ring measures completed selected systems, not release probability.
+
+{% include screenshot.html file="core-mission-board.png" title="Review the workload board and saved Mission Log" caption="Check attention tiles and history before deciding which source system needs review. The board and saved-log display are synthetic fixtures; no mission was launched and backend persistence was not tested by this capture." %}
 
 ## How to run fleet missions
 
@@ -78,12 +80,13 @@ Landing: `/mission-control`. Workload board: `/mission-control/{workloadId}`.
 
 1. Select **Cancel** for a running mission when remaining work should stop.
 2. Wait for the current system to reach a cancellation point.
-3. If the browser disconnects, reopen `/mission-control/{workloadId}`; durable state and live reconnect recover progress.
-4. After a server restart, interrupted runs appear failed rather than remaining permanently running; start a new mission when appropriate.
+3. If the browser disconnects, let the page's bounded reconnect attempts and saved-status checks complete. Disconnecting alone does not cancel the mission.
+4. If recovery still fails, reopen `/mission-control/{workloadId}` and select the same mission in history. Its full saved activity log and system states reload; a queued or running mission reattaches to live progress.
+5. After a server restart, interrupted runs appear failed rather than remaining permanently running; start a new mission when appropriate.
 
 **Expected result:** Remaining orchestration stops or reconnects without losing persisted terminal work.
 
-**Verification:** Mission status becomes cancelled/failed/succeeded/partial and no tile remains falsely running.
+**Verification:** Confirm the reopened mission is the same history entry, its saved Mission Log is restored, and its status becomes cancelled/failed/succeeded/partial rather than remaining falsely running.
 
 ## Safety and rollback
 

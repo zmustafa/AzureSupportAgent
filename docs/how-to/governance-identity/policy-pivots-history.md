@@ -50,8 +50,8 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:byperson, POLICY_NAV:bysubscripti
 1. Open `/policy/timeline` and choose the relevant time slice.
 
 2. Inspect assignment activity using only records with known dates.
-3. Open `/policy/pivot` and select row and column dimensions such as person, management group, subscription, policy, or date.
-4. Apply slicers, then export CSV or Excel.
+3. Open `/policy/pivot` and add/reorder row dimensions: assigner, management group, subscription, policy or created date. Columns split by enforcement mode; they are not an arbitrary column-dimension picker.
+4. Choose a preset and date granularity where offered, then export CSV or Excel. The date-window slicer belongs to Timeline. **Save perspective** keeps the row layout and granularity in this browser, not the data or a server schedule.
 5. Record dimensions, filters, generated time, and source cache age with the result.
 
 **Expected result:** A reproducible grouped analysis over the currently loaded assignment snapshot.
@@ -60,12 +60,11 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:byperson, POLICY_NAV:bysubscripti
 
 ## How to review saved policy history
 
-1. Open `/policy/history`.
-
-2. Separate saved rollout simulations from coverage runs.
-3. Open the relevant record and check workload, creation time, inputs, and output.
-4. Compare it with current inventory before reusing any recommendation.
-5. Delete a local record only when retention policy permits and `policy.write` is available.
+1. Open `/policy/history` for inventory/compliance summaries, not rollout results.
+2. With `policy.write`, select **Take snapshot** to collect a new connection-wide inventory and compliance summary. This action does not take the workload filter as input.
+3. Read assignment, exemption, definition and non-compliance deltas against the previous stored summary. Compare only like-for-like connection coverage; the list is not filtered by the connection picker.
+4. For rollout results, open **Saved simulations** on `/policy/rollout`; for coverage runs, open **Analysis history** on `/policy/advisors`. Check creation time and workload before reopening a record.
+5. Delete a simulation or coverage run only when retention permits and `policy.write` is available. History has no snapshot-delete button.
 
 **Expected result:** A traceable local record of prior analysis, not proof that Azure was changed.
 
@@ -78,6 +77,8 @@ Pivots and exports are read-only. Saving and deleting history writes only local 
 ### Freshness and partial results
 
 All pivots derive from the loaded inventory and inherit its age, workload filter, missing metadata, and Resource Graph truncation. History does not auto-refresh its old inputs. A blank date or author is unknown data, not absence of activity.
+
+The snapshot list returns at most 30 records. Storage caps are 60 snapshot summaries, 100 simulations and 100 coverage runs in their respective registries. These are bounded local histories, not immutable per-connection archives.
 
 ## Troubleshooting
 

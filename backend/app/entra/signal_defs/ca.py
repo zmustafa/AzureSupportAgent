@@ -21,7 +21,6 @@ from app.entra.signals import (
     SignalUnavailable,
     domain,
     pop_enabled_members,
-    pop_enabled_users,
     pop_policies,
     user_index,
 )

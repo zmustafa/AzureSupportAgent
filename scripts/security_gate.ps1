@@ -90,7 +90,11 @@ function Add-Check {
 
 function Test-Tool { param([string]$Name) return [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
-$dockerOk = Test-Tool docker
+$dockerOk = $false
+if (Test-Tool docker) {
+    $dockerServer = docker version --format '{{.Server.Version}}' 2>$null
+    $dockerOk = $LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($dockerServer -join ''))
+}
 $py = Join-Path $repo 'backend\.venv\Scripts\python.exe'
 
 Write-Host ""
@@ -286,9 +290,23 @@ if ($Stage -in 'preflight', 'all') {
     # Filter to security codes so ordinary lint (unused imports, etc.) is not reported
     # as a security finding.
     $ruff = & $py -m ruff check (Join-Path $repo 'backend\app') --output-format json 2>$null
-    $ruffAll = try { @($ruff | ConvertFrom-Json) } catch { $null }
-    $ruffSec = if ($null -ne $ruffAll) { @($ruffAll | Where-Object { $_.code -match '^(S|ASYNC)\d+$' }) } else { $null }
-    if ($null -eq $ruffAll) { Add-Check 'ruff security rules (S,ASYNC)' 'ERROR' 'could not parse' }
+    $ruffExit = $LASTEXITCODE
+    $ruffAll = @()
+    $ruffParsed = $false
+    try {
+        # Keep an empty JSON array as an array: pipeline enumeration otherwise turns
+        # a clean [] response into $null and incorrectly labels the scan an error.
+        $ruffResult = ConvertFrom-Json -InputObject ($ruff -join "`n") -NoEnumerate -ErrorAction Stop
+        if ($ruffResult -isnot [Array]) { throw 'Expected a Ruff JSON array' }
+        $ruffAll = @($ruffResult)
+        $ruffParsed = $ruffExit -in @(0, 1)
+    } catch { $ruffParsed = $false }
+    $ruffSec = @($ruffAll | Where-Object { $_.code -match '^(S|ASYNC)\d+$' })
+    if (-not $ruffParsed) {
+        Add-Check 'ruff security rules (S,ASYNC)' 'ERROR' 'scan failed or invalid JSON'
+        Add-Finding -Id 'S5.0-ruff' -Severity 'BLOCKER' -Title 'Ruff security scan could not be verified' `
+            -Action 'Resolve the scanner execution or output error before publishing.'
+    }
     elseif ($ruffSec.Count -eq 0) { Add-Check 'ruff security rules (S,ASYNC)' 'PASS' "$($ruffAll.Count) non-security lint" }
     else {
         Add-Check 'ruff security rules (S,ASYNC)' 'WARN' "$($ruffSec.Count) finding(s)"
@@ -298,9 +316,22 @@ if ($Stage -in 'preflight', 'all') {
     }
 
     $bandit = & $py -m bandit -r (Join-Path $repo 'backend\app') -ll -f json -q 2>$null
-    $banditN = try { @(($bandit | ConvertFrom-Json).results).Count } catch { -1 }
+    $banditExit = $LASTEXITCODE
+    $banditN = -1
+    try {
+        if ($banditExit -notin @(0, 1)) { throw 'Bandit execution failed' }
+        $banditReport = ConvertFrom-Json -InputObject ($bandit -join "`n") -ErrorAction Stop
+        if ($banditReport.PSObject.Properties.Name -notcontains 'results' -or
+            $banditReport.PSObject.Properties.Name -notcontains 'metrics' -or
+            @($banditReport.errors).Count -gt 0) { throw 'Incomplete Bandit report' }
+        $banditN = @($banditReport.results).Count
+    } catch { $banditN = -1 }
     if ($banditN -eq 0) { Add-Check 'bandit (medium+)' 'PASS' }
-    elseif ($banditN -lt 0) { Add-Check 'bandit (medium+)' 'ERROR' 'could not parse' }
+    elseif ($banditN -lt 0) {
+        Add-Check 'bandit (medium+)' 'ERROR' 'could not parse'
+        Add-Finding -Id 'S5.0-bandit' -Severity 'BLOCKER' -Title 'Bandit security scan could not be verified' `
+            -Action 'Resolve the scanner execution or output error before publishing.'
+    }
     else {
         Add-Check 'bandit (medium+)' 'WARN' "$banditN finding(s)"
         Add-Finding -Id 'S5.2' -Severity 'MEDIUM' -Title "bandit: $banditN medium+ finding(s)" `
@@ -447,7 +478,16 @@ if ($Stage -eq 'image') {
         docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest `
             image --severity CRITICAL --quiet --format json $ImageRef 2>$null |
             Set-Variable trivyJson
-        $crit = try { @(($trivyJson | ConvertFrom-Json).Results.Vulnerabilities | Where-Object { $_.FixedVersion }).Count } catch { -1 }
+        $trivyExit = $LASTEXITCODE
+        $crit = -1
+        try {
+            if ($trivyExit -ne 0) { throw 'Trivy execution failed' }
+            $trivyReport = ConvertFrom-Json -InputObject ($trivyJson -join "`n") -ErrorAction Stop
+            if (-not $trivyReport.SchemaVersion -or -not $trivyReport.ArtifactName) {
+                throw 'Trivy did not return an image report'
+            }
+            $crit = @($trivyReport.Results.Vulnerabilities | Where-Object { $_.FixedVersion }).Count
+        } catch { $crit = -1 }
         if ($crit -eq 0) {
             Add-Check 'image CRITICAL CVEs with fixes' 'PASS'
             # A clean image CVE scan IS the 'container-cve' suite.
@@ -460,7 +500,11 @@ if ($Stage -eq 'image') {
                 }
             }
         }
-        elseif ($crit -lt 0) { Add-Check 'image CRITICAL CVEs with fixes' 'ERROR' }
+        elseif ($crit -lt 0) {
+            Add-Check 'image CRITICAL CVEs with fixes' 'ERROR'
+            Add-Finding -Id 'S9.0-cve' -Severity 'BLOCKER' -Title 'Image vulnerability scan could not be verified' `
+                -Action 'Resolve the Trivy execution or report error before publishing the image.'
+        }
         else {
             Add-Check 'image CRITICAL CVEs with fixes' 'FAIL' "$crit fixable"
             Add-Finding -Id 'S9.2' -Severity 'HIGH' -Title "$crit CRITICAL CVE(s) with an available upstream fix" `

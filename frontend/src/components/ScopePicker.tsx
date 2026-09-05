@@ -88,6 +88,7 @@ export function ScopePicker({
             <AzureIcon kind="workload" className="h-3.5 w-3.5" />
           </span>
           <select
+            aria-label="Workload scope"
             value={workloadId}
             onChange={(e) => pickWorkload(e.target.value)}
             className="max-w-[240px] rounded-lg border py-1.5 pl-7 pr-2 text-xs"

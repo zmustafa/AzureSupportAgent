@@ -11,75 +11,83 @@ feature_ids: [PROACTIVE_NAV:telemetry, ROUTE:telemetry, TELEMETRY_COVERAGE_LOCAL
 
 # Telemetry Coverage
 
-**Product permission:** `coverage.read`; reference and approved-workspace management require `coverage.manage`.
+**Product permission:** `coverage.read` for scans, artifacts, findings, tickets, evidence, and run cleanup; `coverage.manage` for reference/workspace edits and submitting, deciding, or deleting change requests.
 
 ## Purpose
 
 **App route:** `/telemetry`
-Telemetry Coverage compares discovered diagnostic settings with a resource-type-specific reference. It identifies resources with no diagnostics, incomplete categories, destination drift, or destinations that could not be read.
-![Telemetry Coverage dashboard showing diagnostic-setting gaps and remediation options]({{ site.baseurl }}/assets/telemetry-coverage.png)
+Telemetry Coverage compares discovered diagnostic settings with a resource-type-specific reference. It reports missing settings/categories and workspace-list drift; it does not test destination reachability or ingestion.
+
+> **Screenshot context:** These native application views use isolated synthetic demo data, not live Azure evidence. Demo Azure writes are disabled. Unknown or unreadable settings are not confirmed absence, and configured destinations do not prove ingestion.
+
+{% include screenshot.html file="ops-telemetry-diagnostic-coverage.png" title="Telemetry categories and destination coverage" caption="Review category completeness and destination drift separately. A compliant configuration does not establish that logs or metrics arrived at the destination." %}
 
 ## Prerequisites and data sources
 
-### Prerequisites
-
 - An enabled ARM-capable Azure connection with Reader access to the selected scope and permission to read `Microsoft.Insights/diagnosticSettings`.
 - A selected workload or subscription scope.
-- At least one approved Log Analytics workspace configured with `coverage.manage` when destination compliance is required.
+- A workload uses its configured connection; subscription mode lets you select a connection. Subscription discovery is loaded when you open its picker.
+- For service-principal CLI collection, administrator-enabled command execution, an allowed/installed Azure CLI, and valid sign-in are required. Supported non-service-principal diagnostic-setting reads use ARM REST instead.
+- Configure approved Log Analytics workspace resource IDs with `coverage.manage` when workspace drift detection is required. An empty list disables that comparison.
 - Write permissions and an appropriate Azure role are needed only when an exported remediation is later deployed outside this view.
 
 ## Tabs and actions
 
-### Views
-
-- **Coverage** provides scorecards, trend, a resource/category matrix, gap details, workspace selection, and all-resources detail.
-- **Fleet** compares the latest saved workload snapshots, including any-settings, all-categories, and unreadable-destination indicators.
+- **Coverage** contains **Telemetry Coverage** and **All Resources**. Search and status filters, compact/expanded groups, and category checklists help inspect the loaded result. All Resources filters include type, resource group, and reference membership; **covered** means membership, not compliance.
+- **Fleet** compares latest saved workload results by coverage, resources with diagnostics, all-category percentage, and unknown destinations. Entry is cache-only; **Scan selected** explicitly starts a durable batch, with **Cancel pending** and **Retry failed**.
 - **Cleanup** supports trash, restore, and purge for saved runs.
-- The resource drawer shows available/recommended categories, enabled categories, destination, and retention information that the collector could observe.
+- **Details** shows reference categories, enabled/missing state, destination IDs, and the maximum enabled diagnostic-setting retention value observed. **View in Inventory** opens `/inventory/grid`; **Find in architecture** opens the first stored diagram with a matching ARM ID, or reports no match.
+- Bulk generation, findings, and approval submission use all gaps, regardless of matrix filters. Drawer generation/ticket actions use one resource.
+
+{% include screenshot.html file="ops-telemetry-all-resources.png" title="Telemetry inventory inside and outside the reference" caption="Use All Resources to understand the discovered footprint and reference membership. A covered type is not a compliant resource, and an unlisted requirement is not a successful diagnostic check." %}
 
 ## Freshness and scope behavior
 
-### Scan and freshness
+**Load coverage** reads the saved snapshot for a newly selected scope; revisiting the last loaded scope can do so automatically. This coverage read does not scan Azure. `telemetry_cache_ttl_s` independently defaults to 21,600 seconds (six hours). A missing result offers **Run first scan**; demo scopes may regenerate synthetic data locally.
 
-Page load reads the latest saved snapshot and never launches a surprise estate scan. Results include generated time, age, and stale state; the common default TTL is six hours. An explicit refresh can stream start, progress, completion, and error events while resources are inspected.
+**Refresh now** streams scanned-resource progress and falls back to a plain refresh if streaming fails. Its server task owns collection, cache, history, and trends even after the client disconnects; application shutdown can cancel this local task. Failed collection preserves any prior good snapshot and does not create a healthy history/trend entry. Check generated time and exported `scan_error`/`error`, even if an old table remains visible.
 
-A configurable per-scope scan cap protects Azure and the service. If the result indicates truncation or unreadable resources, do not interpret the percentage as whole-estate coverage. Fleet reads saved results and does not itself refresh every workload.
+The per-resource cap defaults to **200** (configurable 1–2,000), with **12** concurrent diagnostic reads (1–24). Only the first capped set of reference-mapped resources receives a settings read; the computation still includes other discovered reference resources, which can appear as **No diagnostics**. There is no dedicated cap-exceeded status. Narrow the scope or have an administrator review the cap before interpreting a large estate. Resource discovery is paged up to 10,000 rows per scope predicate.
 
 ## Workflow overview
 
-### Workflow
-
 1. Open `/telemetry`, choose the connection and scope, and inspect freshness.
-2. Choose the approved destination used for generated artifacts.
+2. Review approved destinations under **Settings → Telemetry Reference Set → Approved workspaces** (`/admin/telemetry`). The coverage page has no destination picker.
 3. Refresh if the snapshot is missing, stale, or predates a relevant deployment.
-4. Review **no settings**, **partial**, **drift**, and **unreadable** groups separately.
-5. Open a resource and verify that missing categories are actually supported by that resource type.
+4. Review **No diagnostics**, **Partial / drift**, and **Compliant**, alongside the unreadable count and collection errors.
+5. Open a resource and verify category support in Azure separately; the drawer shows the reference checklist, not a live category-availability catalog.
 6. Generate Bicep for explicit diagnostic settings or a policy-oriented artifact for broad governance.
 7. Review resource scopes, categories, destination, identity/RBAC, retention expectations, and rollout approach.
-7. Optionally create workload findings, create a connector-backed ticket, save the result to Evidence Locker, download a PDF, or send Bicep to the Approval Inbox. Approval is a handoff, not proof of deployment.
-8. Deploy through the approved IaC pipeline, then re-scan to verify.
+8. Optionally create workload findings, create a connector-backed ticket, save the latest snapshot to Evidence Locker, download a PDF, or—with `coverage.manage`—send Bicep to the Approval Inbox.
+9. Deploy through the approved IaC pipeline, then re-scan to verify.
 
 ## Interpretation of results
 
-### Interpret results
-
 - **None**: no diagnostic setting was observed.
-- **Partial**: a setting exists, but one or more recommended categories were not enabled.
-- **Compliant**: observed settings satisfy the active reference and destination checks.
-- **Drift**: settings point somewhere other than an approved/selected destination or differ from the expected configuration.
-- **Unreadable/unknown destination**: the collector could not verify destination details. Treat this as missing evidence, not automatically as a missing setting.
+- **Partial / drift**: settings exist, but reference categories are missing or at least one nonempty workspace ID is outside the approved list.
+- **Compliant**: no category gap or workspace-list drift was found. This does not require a Log Analytics destination when settings use only storage/Event Hub, and does not prove delivery.
+- **Unknown destinations** counts resources with workspace-list drift, not failed workspace reachability probes. **Unreadable** separately counts failed diagnostic-setting reads; these can also appear as None, so investigate collection failure first.
+- **Headline coverage** is the percentage with all reference categories, whereas each resource-type group's percentage counts compliant rows. A 100% headline can therefore coexist with destination drift. A zero-resource percentage is not positive evidence.
 
-Category availability differs by Azure resource type and API version. A category expected by a stale custom reference may no longer be supported, while a new category may not yet be in the reference.
+Category availability differs by Azure resource type and API version. Retention shown here comes from diagnostic-setting `retentionPolicy`, not the workspace's table-retention policy. The current classifier uses every category in the reference even if its editor **Recommended** toggle is off, and treats `allLogs`/`all` groups as satisfying the whole reference checklist. Verify metrics and optional-category behavior separately before relying on the score.
 
-## Exports, history, scheduling, and integrations
+## Reference and approved workspaces
 
-### Remediation, policy, and approval
+The built-in telemetry seed (version 2) has **116 category entries across 32 resource types**. Repeated categories such as `AllMetrics` count once per type. Categories have `log`/`metric` kind and `audit`, `security`, `operational`, or `performance` group. These are local defaults, not a live Azure catalog.
 
-Generated Bicep uses diagnostic-setting resources and can require a placeholder resource reference. Policy-oriented output is intended for a DeployIfNotExists design; assignment requires an identity and suitable role assignment at the target scope. The app generates or proposes artifacts—it does not silently deploy them.
+At `/admin/telemetry`, add/remove types, add catalog or blank categories, duplicate/edit categories, and use **Advanced: JSON**. **Save new version**, **Reset to built-in**, and **History → Restore** create new versions; history retains 50 revisions. Category keys are capped at 80 characters, names at 120, and rationale at 600; malformed/duplicate keys are dropped on save.
 
-Users with `coverage.manage` curate the approved-workspace list and telemetry reference. Reference changes affect future classifications. If local governance uses change requests, review the proposed reference diff before approval; reference approval is not approval to modify Azure resources.
+**Approved workspaces** stores one workspace resource ID per line. Opening it reads the approved list only. Choose a connection and click **Load workspaces**/**Refresh workspaces** for optional live discovery (up to 500 workspaces); **Cancel** stops that request. Discovery does not add destinations to the approved list. Save the list explicitly; it is separate from reference revision history.
 
-Finding registration requires workload scope. Ticketing requires a configured supported connector. PDF and evidence actions use the currently loaded scan; confirm its freshness before preserving or sharing it.
+## Remediation, approvals, and exports
+
+Generated Bicep contains placeholder scope references and missing-category settings. Policy output is an assignment skeleton with a placeholder DeployIfNotExists definition, identity/RBAC guidance, and parameters—not a completed policy/remediation deployment. With no `workspace_id` in the request, generation uses the first approved workspace or a placeholder; the UI uses this default. Review drift-only output carefully because it may not reproduce all currently enabled logs.
+
+**Send to Approval Inbox** proposes Bicep under `/admin/telemetrychanges`; the API also accepts policy output. Review **View**, **Approve**/**Reject**, and **Mark applied** after external execution. Decisions only update sign-off metadata, not the reference or Azure. **Delete** removes the request, not the deployment. Up to 200 gap-detail records are retained per request alongside the submitted count and generated text.
+
+Workload **Create findings** writes an Operations-pillar assessment run. Drawer **Create ticket** immediately calls an enabled Jira/ServiceNow connector, outside the coverage approval workflow. **Export** downloads the full loaded JSON regardless of filters. **PDF** and **Save to Evidence** use the latest server-cached scope snapshot, not a selected historical run; verify the artifact's timestamp.
+
+Run history supports View/Delete and Trash restore/delete-forever/empty. Saving retains up to 30 active runs per scope; trends retain 90 points and coalesce identical scores within five minutes. Cleanup offers older-than-30/90-day, demo, empty, and retain-last-N selection (0–30; default 2); presets are not schedules. Deletion does not clear the separate latest cache or trend. Optional nightly cache refresh is described in the [shared operating model]({{ site.baseurl }}/user-guide/coverage/#shared-operating-model).
 
 ## Safety and limitations
 
@@ -93,16 +101,18 @@ Finding registration requires workload scope. Ticketing requires a configured su
 ## Troubleshooting
 
 
-| Symptom | Check |
-| --- | --- |
-| No approved workspace appears | Ask a user with `coverage.manage` to curate approved workspaces and verify connection visibility. |
-| Many resources are unreadable | Verify diagnostic-settings read access, destination access, scan cap, and connection scope. |
-| A supported category is shown missing everywhere | Refresh the reference and confirm exact category names/API support. |
-| Policy remediation does nothing | Check assignment identity, role assignment, definition parameters, evaluation delay, and remediation task state. |
-| Bicep has placeholders | Replace resource and workspace references with reviewed IaC symbols before validation/deployment. |
+| Symptom | Likely cause | Resolution |
+| --- | --- | --- |
+| No workspace appears | Discovery has not run, the wrong connection is selected, or access failed. | Open Approved workspaces, select the connection, load workspaces, then explicitly save approved IDs. |
+| Many rows show No diagnostics | Settings were absent, unreadable, or outside the capped probe set. | Check unreadable/error fields and resource count; verify Monitoring Reader and the CLI execution gate where applicable, then retry a smaller scope. |
+| 100% coverage but Partial / drift rows | The headline measures category completeness, not approved destinations. | Inspect `drift_workspaces` and the approved list; confirm the intended routing before changing it. |
+| A category is missing everywhere | Reference names differ from supported categories or sub-resource scope. | Verify Azure category support (including storage service sub-resources), edit the reference if justified, and re-scan. |
+| Policy remediation does nothing | Generated output is only a skeleton or the external assignment is incomplete. | Supply the definition, identity, RBAC and parameters; verify the external remediation task. |
+| Bicep has placeholders | No reviewed symbolic scope or destination was supplied. | Replace scope/workspace placeholders and inspect enabled categories before external validation. |
 
 ## Related pages
 
+- [Operate Telemetry Coverage: inspect settings and verify remediation]({{ site.baseurl }}/how-to/coverage/telemetry-coverage/)
 - [Monitoring Coverage]({{ site.baseurl }}/user-guide/coverage/monitoring-coverage/)
 - [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)

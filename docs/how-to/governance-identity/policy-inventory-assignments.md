@@ -27,20 +27,20 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:overview, POLICY_NA
 1. Open `/policy/overview` and select the connection and workload scope.
 
 2. Read the generated time, age, cache state, and any `never loaded` message.
-3. Select **Refresh** for cached inventory behavior, or **Scan Compliance** when a live Azure pull and compliance summaries are required.
+3. Select **Refresh** to force a live inventory pull, or **Scan compliance** to include Policy Insights summaries. A page visit alone is cache-only; Refresh retains compliance once enabled in that page session.
 4. Open `/policy/inventory` and review definitions, initiatives, assignments, exemptions, and the scope tree.
 5. Confirm that expected management groups and subscriptions appear before using totals.
 
 **Expected result:** A scope-bounded snapshot containing the policy objects visible to the selected connection, plus compliance only when requested and available.
 
-**Verification:** Compare a known assignment and its scope with Azure Policy. Confirm generated time is after the scan and inspect any Resource Graph truncation warning.
+**Verification:** Compare a known assignment and its scope with Azure Policy. Confirm generated time is after the scan, inspect errors, and compare subscription coverage. Definitions/assignments are capped at 2,000 each and initiatives/exemptions at 1,000 each before workload filtering; compliance summarizes at most 24 subscriptions. Not every cap has a UI warning.
 
 ## How to review and export assignments
 
 1. Open `/policy/assignments` after selecting the same connection and workload.
 
-2. Filter the register by policy, scope, effect, enforcement mode, or search text.
-3. Open a row and verify definition or initiative, parameters, assignment identity, `notScopes`, and scope.
+2. Use **All enforcement**, scope-kind and assigner filters, or search assignment/policy text. The register has no separate effect filter.
+3. Read the register's attribution, creation date, description and enforcement columns. Use Inventory for effect and identity type, and the Azure assignment for full parameters, identity and `notScopes`; the register does not open a detail drawer.
 4. Export the filtered rows with **CSV** or **Excel**.
 5. Open the file locally and confirm the row count and filters match the UI.
 

@@ -18,7 +18,8 @@ feature_ids: [ROUTE:chat, ROUTE:c]
 ## Purpose
 
 Chat is the conversational entry point for Azure investigation. A normal turn is best for a focused question. Deep Investigation convenes a War Room of specialist agents that researches, forms hypotheses, validates them against available evidence, and produces a structured conclusion.
-![Deep Investigation War Room showing a hypothesis tree]({{ site.baseurl }}/assets/deep-investigation.png)
+
+{% include screenshot.html file="core-investigation-conversation.png" title="Deep Investigation question, evidence, and completed answer" caption="Read the question and evidence context alongside the answer. This saved-conversation presentation uses synthetic browser responses; no real Azure collection, LLM investigation, or backend persistence was performed for this example." %}
 
 ### When to use each mode
 
@@ -71,10 +72,12 @@ Deep mode can involve networking, identity, compute, storage, security, reliabil
 7. If the result is inconclusive, add missing access/time context or reduce the scope before retrying.
 8. Where available, save a conclusive RCA to a linked architecture's Memory, create a ticket, or continue in a breakout thread.
 
+{% include screenshot.html file="core-investigation-result.png" title="Deep Investigation hypotheses, evidence, and recommended actions" caption="Review hypothesis outcomes and supporting evidence before accepting a conclusion or action. The completed result is illustrative, not an executed investigation or proof of root cause; no recommendation was applied." %}
+
 ### Chat lifecycle and safety
 
 - Chats and messages are stored for the signed-in user/tenant context. Archive is reversible; purge and empty-trash operations are permanent.
-- Stopping or navigating away may not erase work already performed server-side. Reopen the chat to inspect its state.
+- Navigating away or losing the stream does not cancel the server-side turn. **Stop** explicitly requests cancellation and attempts to save partial output; neither action undoes tool work already performed. Reopen the chat to verify what was saved.
 - Ticket handoff can include the conversation and a generated PDF. Review the transcript for sensitive content first.
 - Never provide passwords, tokens, private keys, full connection strings, or unnecessary personal data.
 - Treat any write proposal as a plan. Use feature-specific preview, approval, audit, and rollback controls.
@@ -94,7 +97,10 @@ A Deep Investigation limits hypothesis depth to keep completion bounded. If a ca
 
 ## Exports, history, scheduling, and integrations
 
-No dedicated export, history, scheduling, or integration controls are documented for this feature page.
+Reopening `/c/{chatId}` loads persisted messages and reconnects to an active server turn when
+available. Live event replay is bounded and is separate from saved chat history; losing the
+browser stream is not a reason to submit the same question again. Ticket handoff can send the
+conversation and a generated PDF externally, so review the saved transcript before sending.
 
 ## Safety and limitations
 

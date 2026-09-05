@@ -1,4 +1,35 @@
 # Keep the build context small for ACR/cloud builds.
+# Local operational material never belongs in a build context, including remote builds.
+state/
+.security/
+.docs-work/
+.uxshots/
+.vscode/
+.vs/
+test-results/
+playwright-report/
+**/test-results/
+**/playwright-report/
+.acrname
+.stgname
+.imgdigest
+sap.txt
+backend/_deck_*.py
+backend/scripts/_*.py
+backend/scripts/_*.ps1
+backend/scripts/_*.txt
+frontend/scripts/add_*.py
+frontend/scripts/fix_*.py
+frontend/scripts/rename_*.py
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+**/*.xlsx
+**/*.pptx
+**/*.bak
+**/*.tmp
 **/.venv
 **/node_modules
 **/.data

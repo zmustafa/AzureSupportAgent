@@ -196,7 +196,7 @@ export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-xl">🛡️</span>
             <h1 className="text-lg font-bold text-gray-800">Entra ID</h1>
-            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand-dark">
               Identity posture
             </span>
           </div>

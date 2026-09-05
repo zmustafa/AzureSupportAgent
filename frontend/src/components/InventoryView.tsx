@@ -180,7 +180,7 @@ function Header({
             const stale = (inv.age_seconds ?? 0) > STALE_SECONDS;
             return (
               <span
-                className={`text-[11px] ${stale ? "font-bold text-red-600" : "text-gray-400"}`}
+                className={`text-[11px] ${stale ? "font-bold text-red-600" : "text-gray-600"}`}
                 title={`Collected ${new Date(inv.fetched_at).toLocaleString()}${stale ? " — over 6 hours ago; refresh recommended" : ""}`}
               >
                 Updated {ageLabel(inv.age_seconds)}
@@ -198,7 +198,7 @@ function Header({
           <Stat label="locations" value={s.location_count} />
           <Stat label="workloads" value={s.workload_count} />
           {s.unassigned_count > 0 && (
-            <span className="text-gray-400">
+            <span className="text-gray-600">
               · <b className="text-gray-600">{s.unassigned_count}</b> not in any workload
             </span>
           )}
@@ -586,7 +586,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
       <aside data-testid="inventory-filter-sidebar" className="hidden w-60 shrink-0 overflow-y-auto border-r bg-white px-3 py-3 lg:block">
         <div className="mb-3">
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Scope</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Scope</span>
             <button type="button" onClick={() => setFiltersCollapsed(true)} aria-label="Collapse inventory filters" title="Collapse inventory filters" className="flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700">
               <PanelLeftIcon className="h-4 w-4" />
             </button>
@@ -963,7 +963,7 @@ function NlSearchBar({
 // =========================================================================== Active chips
 function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <span className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+    <span className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-blue-700">
       {label}
       <button onClick={onRemove} className="text-brand/60 hover:text-brand">✕</button>
     </span>
@@ -1128,7 +1128,7 @@ function Grid({
 
   if (resources.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+      <div className="flex flex-1 items-center justify-center text-sm text-gray-600">
         {refreshing ? <Skeleton rows={8} className="w-2/3" /> : "No resources match your filters."}
       </div>
     );
@@ -1172,13 +1172,13 @@ function Grid({
             </div>
           </td>
         )}
-        {cols.has("cost") && <td className={`px-2 ${pad} text-right text-[12px] ${c ? "font-medium text-gray-700" : "text-gray-400"}`}>{moneyFmt(c, costCurrency)}</td>}
+        {cols.has("cost") && <td className={`px-2 ${pad} text-right text-[12px] ${c ? "font-medium text-gray-700" : "text-gray-600"}`}>{moneyFmt(c, costCurrency)}</td>}
         {cols.has("workloads") && (
           <td className={`px-2 ${pad}`}>
             <div className="flex flex-wrap gap-1">
-              {r.workloads.length === 0 ? <span className="text-[11px] text-gray-300">—</span> :
+              {r.workloads.length === 0 ? <span className="text-[11px] text-gray-600">—</span> :
                 r.workloads.slice(0, 2).map((w) => <span key={w.id} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600">🧩 {w.name}</span>)}
-              {r.workloads.length > 2 && <span className="text-[10px] text-gray-400">+{r.workloads.length - 2}</span>}
+              {r.workloads.length > 2 && <span className="text-[10px] text-gray-600">+{r.workloads.length - 2}</span>}
             </div>
           </td>
         )}
@@ -1218,7 +1218,7 @@ function Grid({
               return (
                 <tr key={`g-${item.key}`} ref={rowVirtualizer.measureElement} data-index={vi.index} className="bg-gray-50/80">
                   <td colSpan={colCount} className={`px-3 ${pad} cursor-pointer text-[12px] font-semibold text-gray-600`} onClick={() => { const n = new Set(collapsed); if (n.has(item.key)) n.delete(item.key); else n.add(item.key); setCollapsed(n); }}>
-                    {collapsed.has(item.key) ? "▸" : "▾"} {item.label} <span className="ml-1 rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">{item.count}</span>
+                    {collapsed.has(item.key) ? "▸" : "▾"} {item.label} <span className="ml-1 rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600">{item.count}</span>
                   </td>
                 </tr>
               );
@@ -1744,7 +1744,7 @@ function FacetGroup({ title, children, max = 999 }: { title: string; children: R
   if (items.length === 0) return null;
   return (
     <div className="mb-3">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">{title}</div>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">{title}</div>
       <div className="space-y-0.5">{shown}</div>
       {items.length > max && (
         <button onClick={() => setExpanded((v) => !v)} className="mt-1 text-[11px] text-brand hover:underline">
@@ -1773,11 +1773,11 @@ function FacetRow({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[12px] ${active ? "bg-brand/10 text-brand" : dimmed ? "text-gray-300 hover:bg-gray-50" : "text-gray-600 hover:bg-gray-100"}`}
+      className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[12px] ${active ? "bg-brand/10 text-blue-700" : dimmed ? "text-gray-500 hover:bg-gray-50" : "text-gray-600 hover:bg-gray-100"}`}
     >
       {icon}
       <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
-      <span className={`shrink-0 text-[10px] ${active ? "text-brand" : "text-gray-400"}`}>{count}</span>
+      <span className={`shrink-0 text-[10px] ${active ? "text-blue-700" : "text-gray-600"}`}>{count}</span>
     </button>
   );
 }

@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.backup_manager import builtin_seed, dr, gaps, service
+from app.backup_manager import builtin_seed, dr, service
 from app.models import BackupManagerChange
 
 log = logging.getLogger("app.backup_manager.changes")

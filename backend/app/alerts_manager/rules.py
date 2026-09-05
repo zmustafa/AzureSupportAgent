@@ -224,7 +224,6 @@ def editable_rule(resource: dict[str, Any]) -> dict[str, Any]:
         "identity": resource.get("identity") or {},
     }
     if family == "smart":
-        action_groups = props.get("actionGroups") if isinstance(props.get("actionGroups"), dict) else {}
         detector = props.get("detector") if isinstance(props.get("detector"), dict) else {}
         base.update(
             {

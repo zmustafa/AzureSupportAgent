@@ -61,7 +61,7 @@ The distinction matters: a header count that shrank as you scrolled would be wor
 
 **Finding detail and state.** Expanding a card shows why it matters, what to do, any framework references, and the raw evidence. Four states are available: `open`, `in_progress`, `accepted`, `suppressed`. State is stored against the finding's fingerprint, so it survives re-evaluation — a collection run never clears somebody's risk acceptance. Suppressed and accepted findings are dimmed and are excluded from the list unless **Show suppressed** is ticked. Where the affected object is a resolvable principal, an investigate affordance links to the identity view.
 
-The page is capped; a banner states `Showing the first N of M findings` when the cap bites.
+The UI requests the first 200 findings and has no paging control. The API permits 1–500 per page with an offset. Compare shown cards with server totals even when no truncation banner appears; use narrower filters or the workbook for a larger review.
 
 ### Scanners
 
@@ -128,7 +128,7 @@ Neither tab honours the scope and workload filter rail; both are tenant-wide for
 2. Open **Findings**. Read the coverage figure on the score card and open the unmeasured panel before reading the list. A short list on a tenant with half its checks unmeasured is a coverage problem, not a clean result.
 3. Group by severity, then by check. Work the critical section first; the collapsed headers are the summary.
 4. Expand a finding for its evidence, then verify the claim against Azure or Entra before acting on it.
-5. Record a state on anything you have decided about. Use `accepted` for a risk somebody owns and `suppressed` for a finding that is wrong or irrelevant, with a reason in both cases.
+5. Record a state on anything you have decided about. Use `accepted` for owned risk and `suppressed` for an irrelevant finding. The current buttons send an empty reason; the API accepts an optional reason up to 1,000 stored characters. Record the rationale through the API or an approved change record rather than expecting a reason dialog.
 6. Open **Scanners** and run the scanners relevant to what you just changed, so the next run's delta is measured from a baseline you understand.
 
 ## Interpretation of results
@@ -151,6 +151,7 @@ Neither tab honours the scope and workload filter rail; both are tenant-wide for
 ## Safety and limitations
 
 - Neither tab writes to Azure. A scanner run writes only this product's own baseline, and a state change writes only this product's own workflow record.
+- Suppression/acceptance hides a finding from the default list but does not alter the IAM score or raw scanner selection. A scanner may continue reporting accepted risk; do not confuse workflow state with detector resolution.
 - Running a scanner is gated on `iam.read`, the same permission as viewing the tab. Changing a finding's state is the stricter `iam.write`.
 - Findings inherit every limitation of the snapshot they were computed from: uncollected scopes, missing Graph context, unreadable data-plane authorization and unsupported access surfaces all reduce what can be measured, and are reported as unmeasured rather than absorbed into a pass.
 - The findings page is capped and paged; broad reading should be done through the workbook rather than by scrolling.

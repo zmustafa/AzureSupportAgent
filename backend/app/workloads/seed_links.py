@@ -17,8 +17,6 @@ from typing import Any
 
 from app.exec.command_runner import (
     KQL_RESOURCE_CAPTURE_BYTES,
-    close_sp_session,
-    open_sp_session,
     parse_kql_rows,
     run_kql_capture,
     run_kql_collect,

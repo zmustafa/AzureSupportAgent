@@ -22,6 +22,8 @@ feature_ids: [SHELL_NAV:proactive, ROUTE:proactive, ROUTE:monitor, ROUTE:stats]
 
 **Monitor** presents application health and operational activity. **Stats** provides a compact, read-only metrics summary. Neither page substitutes for feature history or the audit log.
 
+{% include screenshot.html file="core-monitor-activity.png" title="Monitor application counters and live-operation status" caption="The built-in overview separates application activity from currently running work. This synthetic fixture shows no active operations; its counters are not measured operator activity or billed provider usage." %}
+
 ## Prerequisites and data sources
 
 Sign in with a role that exposes the route. Monitor and Stats require `monitor.view`; a custom

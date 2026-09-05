@@ -14,7 +14,7 @@ permalink: /how-to/core-workloads/workload-detail-groups/
 
 ## Prerequisites
 
-- `workloads.read`; `workloads.write` for membership, group, and overlap-removal changes.
+- `workloads.read`; `workloads.write` for membership Refresh, edits, group, and overlap-removal changes.
 - A usable Azure connection for Analyze, eligible refresh, and deep overlap expansion.
 
 ## Route
@@ -30,12 +30,24 @@ Detail: `/workloads/{id}`. Groups: `/workloads/groups` and `/workloads/groups/{i
 5. Inspect each health component and freshness before the aggregate score.
 6. Review retirement, critical-finding, assessment-gap, and next-action indicators.
 7. Select **Analyze** when signals are missing/stale; follow links to the source feature for errors.
-8. For an Autopilot-origin workload, use **Refresh** to reconcile children under tracked resource groups and review added/removed items.
+8. For membership changes, follow the separate Refresh procedure below; Analyze does not reconcile membership.
 9. Open Architecture, Assessments, Mission Control, Graph, or Chat as required.
 
 **Expected result:** Scope, component health, risk, and freshness are understood for one workload.
 
 **Verification:** Confirm source-feature timestamps and compare the Resources tab with current Azure inventory.
+
+## How to refresh workload membership safely
+
+1. With `workloads.read` and `workloads.write`, open the workload's **Resources** and record its current membership before changing it.
+2. Confirm the saved Azure connection exists and is enabled. Refresh does not substitute the default for a missing or disabled saved connection.
+3. Return to the workload card on `/workloads` and select **Refresh**. The scan reconciles children of resource groups identified by existing explicit resource nodes; it is not a full expansion of every broad scope node.
+4. On success, review added/removed counts and reopen **Resources** to check the exact membership.
+5. If refresh reports that resources were left unchanged, inspect the connection, access, throttling, and scope-exclusion error before retrying. Enumeration must be complete within the 1,000-resource limit across the requested groups; review and narrow an oversized workload rather than treating its unreturned resources as deleted.
+
+**Expected result:** A complete enumeration updates the application workload definition. Incomplete or unreadable enumeration returns HTTP 502 without changing membership or `last_refreshed`.
+
+**Verification:** Compare **Resources** with the recorded membership and reported delta. After a refused refresh, verify the prior membership remains; after success, check additions and removals against Azure before running downstream analyses.
 
 ## How to create and compare workload groups
 
@@ -68,7 +80,7 @@ Detail: `/workloads/{id}`. Groups: `/workloads/groups` and `/workloads/groups/{i
 ## Safety and rollback
 
 - Analyze can issue multiple read scans; confirm scope first.
-- Workload Refresh currently focuses on resource-group children; review higher-level scope changes manually.
+- Workload Refresh writes only the application definition, never Azure resources. It requires `workloads.write` and focuses on resource-group children; review higher-level scope changes manually. Failed enumeration leaves membership unchanged; a successful reconciliation has no one-click undo, so retain the prior membership for manual correction.
 - Group rollups are cached aggregations, not scans. A highlighted difference is not automatically a defect.
 - Removing membership changes downstream analyses. Shared resources must not be deduplicated without owner review.
 - Group deletion is non-destructive; workload membership edits can be reversed by restoring the prior node/exclusion manually.
@@ -79,6 +91,8 @@ Detail: `/workloads/{id}`. Groups: `/workloads/groups` and `/workloads/groups/{i
 | --- | --- |
 | Aggregate seems too healthy | Check absent components; scoring reweights only analyzed signals. |
 | Analyze is unauthorized | Verify feature permissions and Azure access for each underlying scan. |
+| Refresh is unauthorized | Membership Refresh requires `workloads.write`, even when the workload can be viewed with `workloads.read`. |
+| Refresh is cancelled with resources left unchanged | Correct unreadable/incomplete enumeration or unresolved scope exclusions. The collector's 1,000-resource limit applies across all requested groups; narrow oversized membership deliberately before retrying. |
 | Group rollup is unknown | Analyze member workloads and check freshness. |
 | Expected overlap is absent | Run Deep scan and verify the selected connection. |
 | Scope-implied overlap cannot be removed inline | Edit the broad scope or add an exclusion in the workload editor. |

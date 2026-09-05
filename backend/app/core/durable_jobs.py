@@ -14,7 +14,7 @@ import weakref
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, TypeVar, overload
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -1001,6 +1001,31 @@ class DurableJobContext:
 FeatureRunner = Callable[[DurableJobContext], Awaitable[JobOutcome | Mapping[str, Any] | None]]
 
 
+_T = TypeVar("_T")
+
+
+class _TenantTaskMap(dict[tuple[str, str], asyncio.Task[None]]):
+    """Store only tenant-qualified handles; retain unambiguous legacy adapter reads.
+
+    Mission Control calls ``tasks.get(mission_id)`` with a UUID. A key-only lookup
+    must never select an arbitrary tenant when multiple tenants reuse that key.
+    Lifecycle code always supplies the complete tuple, including for removals.
+    """
+
+    @overload
+    def get(self, key: tuple[str, str] | str, default: None = None) -> asyncio.Task[None] | None: ...
+
+    @overload
+    def get(self, key: tuple[str, str] | str, default: _T) -> asyncio.Task[None] | _T: ...
+
+    def get(self, key: tuple[str, str] | str, default: _T | None = None) -> asyncio.Task[None] | _T | None:
+        if isinstance(key, str):
+            matches = (task for (_, job_key), task in self.items() if job_key == key)
+            match = next(matches, None)
+            return match if match is not None and next(matches, None) is None else default
+        return super().get(key, default)
+
+
 class DurableJobExecutor:
     """Shared detached-runner lifecycle used by feature-specific job adapters.
 
@@ -1028,8 +1053,8 @@ class DurableJobExecutor:
         )
         self.retention_seconds = retention_seconds
         self.event_limit = max(1, int(event_limit))
-        self.tasks: dict[str, asyncio.Task[None]] = {}
-        self._heartbeats: dict[str, asyncio.Task[None]] = {}
+        self.tasks = _TenantTaskMap()
+        self._heartbeats: dict[tuple[str, str], asyncio.Task[None]] = {}
         _EXECUTORS.add(self)
 
     async def start(
@@ -1040,6 +1065,8 @@ class DurableJobExecutor:
         metadata: Mapping[str, Any],
         runner: FeatureRunner,
     ) -> Claim:
+        tenant_id = tenant_id or "default"
+        local_key = (tenant_id, key)
         claim = await self.store.claim(
             tenant_id=tenant_id, feature=self.feature, key=key, metadata=metadata
         )
@@ -1062,13 +1089,13 @@ class DurableJobExecutor:
                     job_id=context.job_id,
                     lease_token=context.lease_token,
                     should_stop=lambda: (
-                        self.tasks.get(key) is None or self.tasks[key].done()
+                        self.tasks.get(local_key) is not task or task.done()
                     ),
                 )
                 context.cancel_requested = cancel_requested
                 if not owned or cancel_requested:
-                    task = self.tasks.get(key)
-                    if task is not None and not task.done():
+                    # This heartbeat belongs to this attempt, never a replacement task.
+                    if not task.done():
                         task.cancel()
             except asyncio.CancelledError:
                 return
@@ -1126,20 +1153,25 @@ class DurableJobExecutor:
                     retention_seconds=self.retention_seconds,
                 )
             finally:
-                heartbeat = self._heartbeats.get(key)
-                if heartbeat is heartbeat_task:
-                    self._heartbeats.pop(key, None)
-                    heartbeat.cancel()
-                    await asyncio.gather(heartbeat, return_exceptions=True)
+                if heartbeat_task is not None:
+                    if self._heartbeats.get(local_key) is heartbeat_task:
+                        self._heartbeats.pop(local_key, None)
+                    heartbeat_task.cancel()
+                    await asyncio.gather(heartbeat_task, return_exceptions=True)
 
         task = asyncio.create_task(_run(), name=f"durable-{self.feature}-{key[:32]}")
-        self.tasks[key] = task
+        self.tasks[local_key] = task
         heartbeat_task = asyncio.create_task(_heartbeat())
-        self._heartbeats[key] = heartbeat_task
+        self._heartbeats[local_key] = heartbeat_task
 
         def _forget(completed: asyncio.Task[None]) -> None:
-            if self.tasks.get(key) is completed:
-                self.tasks.pop(key, None)
+            if self.tasks.get(local_key) is completed:
+                self.tasks.pop(local_key, None)
+            # Also cover cancellation before _run entered its try/finally.
+            if heartbeat_task is not None:
+                if self._heartbeats.get(local_key) is heartbeat_task:
+                    self._heartbeats.pop(local_key, None)
+                heartbeat_task.cancel()
 
         task.add_done_callback(_forget)
         # Give the detached runner one scheduling opportunity before returning. Besides making
@@ -1167,7 +1199,7 @@ class DurableJobExecutor:
         requested = await self.store.request_cancel(
             tenant_id=tenant_id, feature=self.feature, key=key
         )
-        task = self.tasks.get(key)
+        task = self.tasks.get((tenant_id or "default", key))
         if requested and task is not None and not task.done():
             task.cancel()
         return requested

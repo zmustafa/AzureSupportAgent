@@ -146,7 +146,6 @@ async def run_probe(
 
     steps = _plan_steps(protocol=protocol, port=port, payload=payload)
     caps = set((vm.get("capabilities") or []))
-    pkg = vm.get("pkg_manager", "")
 
     for step in steps:
         command = _build_command(step, target=target, port=port, payload=payload)

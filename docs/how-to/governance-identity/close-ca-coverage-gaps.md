@@ -37,6 +37,10 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:co
 
 **Verification:** Open the policies named in the drawer on the **Policies** sub-tab and confirm their state and scope in the Microsoft Entra admin center before you plan a change.
 
+These screenshots use browser fixtures to illustrate the review steps. Their coverage and impact figures are not a computed tenant assessment or evidence of a successful policy change.
+
+{% include screenshot.html file="identity-ca-coverage.png" title="Find a Conditional Access coverage gap" caption="Choose a cohort, application class and applicable control before investigating the policies behind the cell. Device-registration controls that Entra does not support remain unavailable; sign-in attribution is not measured here." %}
+
 ## How to prioritize application-class exposure
 
 1. Open `/entra/conditional-access/exposure` after confirming the snapshot age.
@@ -48,6 +52,8 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:co
 **Expected result:** A severity-ordered application class and its specific exposed controls are selected for review.
 
 **Verification:** The expanded finding and Coverage cell identify the same application class and gap; verify the involved policies in Entra before acting.
+
+{% include screenshot.html file="identity-ca-exposure-impact.png" title="Exposure finding: impact, blast radius and first step" caption="Expand the application-class row and read the specific impact and first step before drafting a change. Use the example explanation to structure a review, then verify the policies and affected population in your own source evidence." %}
 
 ## How to check conflicts, exclusions and break-glass exposure
 
@@ -67,14 +73,14 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:co
 1. Open the **Simulate** sub-tab. Choose the change kind — enable, disable, set to report-only, or delete — and select the policy. The candidate list is filtered to policies for which that change is meaningful.
 
 2. Narrow the sign-in contexts if you only care about a subset; by default the simulator runs every context it publishes.
-3. Select **Simulate**. Read the result as a diff, not as a verdict. **Newly blocked** principals cannot satisfy the new control — that is a hard block, not friction. **Protection lost** is the silent risk of a cleanup: a control that used to apply no longer does. **Newly challenged** can satisfy the control and will see an extra prompt.
+3. Select **Simulate** and read modeled changes, not guaranteed outcomes. Counts are principal/context cases, not unique people. **Session restricted** reports session-control changes separately; unknown MFA registration is assumed satisfiable, so real blocks may be higher.
 4. Read the break-glass impact first and never dismiss it. A change that locks out emergency access is the one failure mode that cannot be fixed from inside the tenant.
 5. Select **Simulate & save** to keep the run as evidence for the change review. Saved simulations are listed with their counts, break-glass impact and a marker when they are based on older data than the current snapshot.
-6. Export the policy set as policy-as-code for the change record. The export resolves identifiers to names alongside the raw values, in JSON for tooling or Markdown for a review document, and carries the snapshot timestamp.
+6. If a policy evidence artifact is needed, use `/api/entra/ca/export` (JSON/Markdown) or Posture's workbook. There is no CA policy-export button here, and the normalized JSON is not a directly re-applicable Graph policy payload.
 
 **Expected result:** A saved, dated simulation and a policy export that together describe the current state and the predicted change.
 
-**Verification:** Re-open the saved simulation and confirm the counts and break-glass figure match what you are about to propose. Treat the model as evidence for a review, never as proof — it is an offline model of the snapshot, not a Microsoft what-if evaluation.
+**Verification and safety:** Preserve the initial result before Re-run, which overwrites the saved result/time. The list has no open-result control; the saved-detail API returns it. Check sample size, unknown MFA and `sampling.case_budget_exhausted` (20,000-case budget, at most 100 listed cases). The UI does not separately display that budget flag. Validate the policy in Microsoft's tools before enforcement.
 
 ## How to roll out and confirm
 
@@ -84,7 +90,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:co
 3. Review the report-only results in Microsoft's own sign-in logs before enforcing. Confirm the affected population resembles the simulated newly challenged and newly blocked sets.
 4. Enforce the policy, keeping the exclusions you decided to preserve.
 5. Return to the app, select **Refresh** on the freshness badge, and wait for the collection to finish.
-6. Re-run the saved simulation against the new snapshot, then re-read the coverage matrix. Do both: the re-run confirms the model no longer predicts a change, and the matrix confirms the cell actually moved.
+6. Re-read Coverage and authoritative sign-in results. Re-run saved input only if it still represents a meaningful proposal: it overwrites the saved record and can conflict after deletion. Repeating an enable/delete input is not a universal post-deployment test.
 
 **Expected result:** The target cell reports enforced coverage for the cohort, and the headline uncovered figures fall by roughly the population you modeled.
 
@@ -94,7 +100,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:co
 
 Every Conditional Access read in this feature is read-only, and the simulator is pure computation over the cached snapshot — no policy is created, modified, enabled or deleted by this product. The local writes are the saved simulation and the break-glass confirmation, both stored per tenant, both recorded in the audit trail, and both discardable without touching Entra.
 
-The real change happens in Entra and is rolled back there. Report-only is the rollback plan: it is the only stage where an enforcement mistake costs nothing. Never enforce a new control without a confirmed break-glass account excluded and tested, and never quote a simulated count as a guaranteed outcome. Exports contain policy structure and identifiers — treat them as sensitive governance material and keep real tenant, object and user identifiers out of tickets, prompts and shared examples.
+The real change and rollback happen in Entra. Preserve the original policy and an independently tested emergency-access procedure; decide whether rollback restores prior settings, disables the new policy or changes it to report-only. Report-only is a testing mode, not a guarantee of cost-free recovery or a backup. Exports contain policy structure and identifiers; protect them as governance evidence.
 
 ## Troubleshooting
 
