@@ -430,12 +430,15 @@ async def test_per_app_events_supply_the_real_success_and_failure():
             {"appId": "other", "lastSignInActivity": {"lastSignInDateTime": "2025-01-13T00:11:51Z"}},
         ],
     }
+    latest_success = appregs._signed_in(1)
+    latest_failure = appregs._signed_in(2)
+    older_success = appregs._signed_in(3)
     FakeGraphClient.signin_events = {
         "app-0": [
             # Newest first, exactly as `$orderby=createdDateTime desc` returns them.
-                {"createdDateTime": "2026-08-29T17:28:26Z", "status": {"errorCode": 0}},
-                {"createdDateTime": "2026-08-29T09:00:00Z", "status": {"errorCode": 700027}},
-                {"createdDateTime": "2026-08-28T09:00:00Z", "status": {"errorCode": 0}},
+            {"createdDateTime": latest_success, "status": {"errorCode": 0}},
+            {"createdDateTime": latest_failure, "status": {"errorCode": 700027}},
+            {"createdDateTime": older_success, "status": {"errorCode": 0}},
         ],
     }
     apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
@@ -446,8 +449,8 @@ async def test_per_app_events_supply_the_real_success_and_failure():
     assert block["stale"] is False
 
     app = apps[0]
-    assert app["lastSignIn"] == "2026-08-29T17:28:26Z", "newest SUCCESS"
-    assert app["lastFailedSignIn"] == "2026-08-29T09:00:00Z", "newest FAILURE"
+    assert app["lastSignIn"] == latest_success, "newest SUCCESS"
+    assert app["lastFailedSignIn"] == latest_failure, "newest FAILURE"
     assert app["lastSignInKnown"] is True
     assert appregs.signin_bucket(app) == appregs.SIGNIN_BUCKET_RECENT
 

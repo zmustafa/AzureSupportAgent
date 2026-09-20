@@ -257,7 +257,9 @@ if ($Stage -in 'preflight', 'all') {
             -Action "backend\.venv\Scripts\python.exe -m pip install pip-audit"
     }
     else {
-        $pa = & $py -m pip_audit -r (Join-Path $repo 'backend\requirements.txt') --format json 2>$null
+        # Avoid inaccessible user-profile caches stalling pip-audit on Windows.
+        $pa = & $py -m pip_audit -r (Join-Path $repo 'backend\requirements.txt') `
+            --cache-dir (Join-Path $stateDir 'pip-audit-cache') --format json 2>$null
         if ($LASTEXITCODE -eq 0) { Add-Check 'pip-audit (backend)' 'PASS' }
         else {
             $vulns = try { ($pa | ConvertFrom-Json).dependencies | Where-Object { $_.vulns } } catch { $null }
