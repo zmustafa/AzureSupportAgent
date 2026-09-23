@@ -23,7 +23,7 @@
     "@tiptap/starter-kit": "^3.31.3",
     "@xyflow/react": "^12.11.3",
     "clsx": "^2.1.1",
-    "cytoscape": "^3.34.1",
+    "cytoscape": "^3.34.3",
     "dompurify": "^3.4.15",
     "jszip": "^3.10.1",
     "mermaid": "^11.17.0",
