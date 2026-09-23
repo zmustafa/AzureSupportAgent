@@ -129,7 +129,7 @@ truststore==0.10.4
 typing-inspection==0.4.2
 typing_extensions==4.16.0
 tzdata==2026.2
-uncalled-for==0.3.2
+uncalled-for==0.4.0
 urllib3==2.7.0
 uvicorn==0.52.1
 watchfiles==1.2.0
