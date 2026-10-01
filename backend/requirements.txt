@@ -100,7 +100,7 @@ pydantic-settings==2.14.2
 pydantic_core==2.46.4
 pyee==14.0.0
 Pygments==2.21.0
-PyJWT==2.13.0
+PyJWT==2.15.0
 pyperclip==1.11.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
