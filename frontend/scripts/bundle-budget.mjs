@@ -52,20 +52,29 @@ const chunks = js.map((name) => {
   };
 });
 
+const config = existsSync(BUDGET_FILE) ? JSON.parse(readFileSync(BUDGET_FILE, "utf8")) : {};
+// Opt-in chunks are third-party code that is only fetched when a user explicitly asks for it
+// (e.g. mermaid's elk layout engine for `layout: elk` diagrams). They still count toward the
+// total, but are excluded from the largest-chunk check so they do not mask a regression in an
+// application chunk by forcing that ceiling up to their size. Keys are hash-stripped names.
+const optInChunks = new Set(config.optInChunks ?? []);
+
 const entry = chunks.find((c) => c.entry);
 const totalRaw = chunks.reduce((n, c) => n + c.raw, 0);
 const totalGzip = chunks.reduce((n, c) => n + c.gzip, 0);
+const budgetedChunks = chunks.filter((c) => !optInChunks.has(c.key));
 
 const measured = {
   entryRawKB: entry ? Math.round(entry.raw / KB) : 0,
   entryGzipKB: entry ? Math.round(entry.gzip / KB) : 0,
   totalRawKB: Math.round(totalRaw / KB),
   chunkCount: chunks.length,
-  largestChunkRawKB: Math.round(Math.max(...chunks.map((c) => c.raw)) / KB),
+  largestChunkRawKB: Math.round(Math.max(...budgetedChunks.map((c) => c.raw)) / KB),
 };
 
 if (update) {
-  writeFileSync(BUDGET_FILE, `${JSON.stringify({ budgets: measured }, null, 2)}\n`);
+  const next = { budgets: measured, ...(optInChunks.size ? { optInChunks: [...optInChunks] } : {}) };
+  writeFileSync(BUDGET_FILE, `${JSON.stringify(next, null, 2)}\n`);
   console.log(`Budget rewritten to today's sizes:\n${JSON.stringify(measured, null, 2)}`);
   process.exit(0);
 }
@@ -74,12 +83,12 @@ if (!existsSync(BUDGET_FILE)) {
   console.error(`No ${BUDGET_FILE}. Run with --update to create it.`);
   process.exit(2);
 }
-const { budgets } = JSON.parse(readFileSync(BUDGET_FILE, "utf8"));
+const { budgets } = config;
 
 console.log(`\n  ${chunks.length} chunks, ${measured.totalRawKB} KB raw / ${Math.round(totalGzip / KB)} KB gzip\n`);
 console.log("  Largest chunks");
 for (const c of [...chunks].sort((a, b) => b.raw - a.raw).slice(0, 8)) {
-  const tag = c.entry ? "  <-- ENTRY (first paint)" : "";
+  const tag = c.entry ? "  <-- ENTRY (first paint)" : optInChunks.has(c.key) ? "  (opt-in, excluded from largest-chunk)" : "";
   console.log(`    ${String(Math.round(c.raw / KB)).padStart(5)} KB  ${String(Math.round(c.gzip / KB)).padStart(4)} KB gz  ${c.key}${tag}`);
 }
 

@@ -1,5 +1,31 @@
 source "https://rubygems.org"
 
-gem "github-pages", group: :jekyll_plugins
-gem "jekyll-remote-theme"
+# Local preview toolchain for the GitHub Pages site. The live site is built by the LEGACY
+# GitHub Pages builder, which ignores this file and its lockfile entirely, so this only has to
+# reproduce that builder's behaviour faithfully for `bundle exec jekyll serve`.
+#
+# Deliberately NOT the `github-pages` meta-gem: its last release (232) hard-pins
+# jekyll-remote-theme 0.4.3, which requires rubyzip < 3.0 and therefore locks in a rubyzip
+# with a known path-traversal advisory (fixed in 3.4.0). Instead, pin the same Jekyll 3.10 /
+# kramdown GFM stack github-pages 232 uses, plus the plugins the legacy builder enables by
+# default, and take a jekyll-remote-theme that accepts a patched rubyzip.
+gem "jekyll", "= 3.10.0"
+gem "kramdown", "= 2.4.0"
+gem "kramdown-parser-gfm", "= 1.1.0"
+gem "webrick", "~> 1.8"
+gem "rubyzip", ">= 3.4.0"
 gem "just-the-docs"
+
+group :jekyll_plugins do
+  # Listed in _config.yml `plugins:`.
+  gem "jekyll-remote-theme", ">= 0.6.2"
+  gem "jekyll-redirect-from", "= 0.16.0"
+  gem "jekyll-seo-tag", "= 2.8.0"
+  gem "jekyll-sitemap", "= 1.4.0"
+  # Enabled implicitly by the legacy Pages builder (GitHubPages::Plugins::DEFAULT_PLUGINS).
+  gem "jekyll-default-layout", "= 0.1.5"
+  gem "jekyll-optional-front-matter", "= 0.3.2"
+  gem "jekyll-readme-index", "= 0.3.0"
+  gem "jekyll-relative-links", "= 0.6.1"
+  gem "jekyll-titles-from-headings", "= 0.5.3"
+end
