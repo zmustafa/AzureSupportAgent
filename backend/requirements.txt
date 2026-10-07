@@ -14,7 +14,7 @@ asyncssh==2.24.0
 attrs==26.1.0
 Authlib==1.7.2
 azure-core==1.41.0
-azure-identity==1.25.3
+azure-identity==1.26.0
 azure-servicebus==7.14.3
 beartype==0.22.9
 boto3==1.43.107
