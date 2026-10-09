@@ -97,7 +97,7 @@ function Chip({ children, tone = "gray" }: { children: React.ReactNode; tone?: s
         : tone === "sky"
           ? "bg-sky-100 text-sky-800"
           : "bg-gray-100 text-gray-700";
-  return <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>{children}</span>;
+  return <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>{children}</span>;
 }
 
 /** One copyable script block.
@@ -132,7 +132,7 @@ function ScriptBlock({
         {note && <span className="text-gray-500">— {note}</span>}
         <button
           type="button"
-          className="ml-auto rounded border px-1.5 py-0.5 text-gray-600 hover:bg-gray-50"
+          className="ml-auto rounded-sm border px-1.5 py-0.5 text-gray-600 hover:bg-gray-50"
           data-testid={`${testId}-copy`}
           onClick={async () => {
             await navigator.clipboard?.writeText(text);
@@ -143,7 +143,7 @@ function ScriptBlock({
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="mt-1 max-h-64 overflow-auto rounded bg-gray-50 p-2 font-mono text-[10px] text-gray-700">
+      <pre className="mt-1 max-h-64 overflow-auto rounded-sm bg-gray-50 p-2 font-mono text-[10px] text-gray-700">
         {text}
       </pre>
     </div>
@@ -185,7 +185,7 @@ function ResourcePanel({ resources }: { resources: IamLeaverResource[] }) {
         </label>
       </div>
       {[...bySub.entries()].map(([sub, kinds]) => (
-        <div key={sub} className="rounded border bg-white">
+        <div key={sub} className="rounded-sm border bg-white">
           <div className="border-b bg-gray-50 px-2 py-1 text-[11px] font-medium text-gray-700">
             {sub}
           </div>
@@ -342,7 +342,7 @@ function IdentityRow({
     if (open && el) onMeasured(el.offsetHeight);
   });
   return (
-    <div ref={rootRef} className="rounded border bg-white" data-testid="leaver-identity">
+    <div ref={rootRef} className="rounded-sm border bg-white" data-testid="leaver-identity">
       <div className="flex w-full items-center gap-2 px-2">
         <input
           type="checkbox"
@@ -414,7 +414,7 @@ function IdentityRow({
             )}
             <button
               type="button"
-              className="ml-auto rounded border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50"
+              className="ml-auto rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50"
               onClick={() => {
                 navigator.clipboard?.writeText(identityAsMarkdown(i, tierLabel, dormancyLabel));
                 setCopied(true);
@@ -426,13 +426,13 @@ function IdentityRow({
           </div>
 
           {i.onPremSynced === "true" && (
-            <div className="rounded bg-sky-50 p-2 text-sky-900">
+            <div className="rounded-sm bg-sky-50 p-2 text-sky-900">
               This account is mastered in on-premises Active Directory. Remove the access here,
               but any account-state change must be made in AD or the next sync reverts it.
             </div>
           )}
           {i.softDeleted && (
-            <div className="rounded bg-red-50 p-2 text-red-900">
+            <div className="rounded-sm bg-red-50 p-2 text-red-900">
               <div className="font-semibold">In the Entra ID recycle bin</div>
               Deleted{i.deletedDateTime ? ` on ${dayOf(i.deletedDateTime)}` : ""}, and recoverable
               for 30 days. Restoring the object restores every grant below at once, so these are
@@ -441,7 +441,7 @@ function IdentityRow({
             </div>
           )}
           {i.ownedDetail.length > 0 && (
-            <div className="rounded bg-red-50 p-2 text-red-900">
+            <div className="rounded-sm bg-red-50 p-2 text-red-900">
               <div className="font-semibold">Live now, not dormant</div>
               A service principal signs in with its own secret or certificate, so disabling this
               user's account did not stop it. Reassign ownership and roll the credential —
@@ -868,7 +868,7 @@ export function LeaversTab() {
   if (!d.measured) {
     return (
       <div className="p-4" data-testid="leavers-not-measured">
-        <div className="rounded border border-amber-300 bg-amber-50 p-4">
+        <div className="rounded-sm border border-amber-300 bg-amber-50 p-4">
           <div className="text-sm font-semibold text-amber-900">Not measured</div>
           <p className="mt-1 max-w-2xl text-xs text-amber-900">{d.reason}</p>
           <p className="mt-2 max-w-2xl text-xs text-amber-800">
@@ -934,13 +934,13 @@ export function LeaversTab() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, UPN, role, group, object id…"
             aria-label="Search disabled identities"
-            className="w-56 rounded border px-2 py-1"
+            className="w-56 rounded-sm border px-2 py-1"
           />
           <select
             value={principalType}
             onChange={(e) => setPrincipalType(e.target.value)}
             aria-label="Principal type"
-            className="rounded border px-2 py-1"
+            className="rounded-sm border px-2 py-1"
           >
             <option value="">All types</option>
             <option value="User">User</option>
@@ -950,7 +950,7 @@ export function LeaversTab() {
             value={onPrem}
             onChange={(e) => setOnPrem(e.target.value)}
             aria-label="Directory"
-            className="rounded border px-2 py-1"
+            className="rounded-sm border px-2 py-1"
           >
             {ON_PREM_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -977,7 +977,7 @@ export function LeaversTab() {
           <button
             type="button"
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+            className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
             data-testid="leavers-more-filters"
           >
             {showAdvanced ? "Fewer filters" : "More filters"}
@@ -987,7 +987,7 @@ export function LeaversTab() {
               type="button"
               onClick={startReview}
               disabled={starting || shown === 0}
-              className="rounded border border-brand px-2 py-1 font-medium text-brand hover:bg-brand/5 disabled:opacity-50"
+              className="rounded-sm border border-brand px-2 py-1 font-medium text-brand hover:bg-brand/5 disabled:opacity-50"
               data-testid="leavers-start-review"
               title="Create a certification campaign over exactly these identities, on the Reviews tab"
             >
@@ -997,7 +997,7 @@ export function LeaversTab() {
               type="button"
               onClick={showPreview}
               disabled={previewing || shown === 0}
-              className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-preview-remediation"
               title="Show the ordered revocation script for these identities. Nothing is run."
             >
@@ -1008,7 +1008,7 @@ export function LeaversTab() {
               type="button"
               onClick={() => download.start(api.iamLeaversExportUrl("csv", "identities", selectorFilter), "iam-disabled-access-identities.csv", "People CSV")}
               disabled={download.phase !== "idle"}
-              className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-export-identities-csv"
             >
               People (CSV)
@@ -1017,7 +1017,7 @@ export function LeaversTab() {
               type="button"
               onClick={() => download.start(api.iamLeaversExportUrl("csv", "grants", selectorFilter), "iam-disabled-access-grants.csv", "Grants CSV")}
               disabled={download.phase !== "idle"}
-              className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-export-grants-csv"
             >
               Grants (CSV)
@@ -1026,7 +1026,7 @@ export function LeaversTab() {
               type="button"
               onClick={() => download.start(api.iamLeaversExportUrl("xlsx", "identities", selectorFilter), "iam-disabled-access.xlsx", "Disabled-access workbook")}
               disabled={download.phase !== "idle"}
-              className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-export-xlsx"
             >
               Workbook (XLSX)
@@ -1036,14 +1036,14 @@ export function LeaversTab() {
 
         {showAdvanced && (
           <div
-            className="flex flex-wrap items-center gap-2 rounded bg-gray-50 p-2 text-xs"
+            className="flex flex-wrap items-center gap-2 rounded-sm bg-gray-50 p-2 text-xs"
             data-testid="leavers-advanced-filters"
           >
             <select
               value={dormancy}
               onChange={(e) => setDormancy(e.target.value)}
               aria-label="Dormancy"
-              className="rounded border px-2 py-1"
+              className="rounded-sm border px-2 py-1"
             >
               <option value="">Any dormancy</option>
               {Object.entries(dormancyLabels).map(([k, label]) => (
@@ -1057,7 +1057,7 @@ export function LeaversTab() {
               value={signinKind}
               onChange={(e) => setSigninKind(e.target.value)}
               aria-label="Sign-in kind"
-              className="rounded border px-2 py-1"
+              className="rounded-sm border px-2 py-1"
               disabled={!dormancy}
               title="Which sign-in timestamp the dormancy filter is measured from"
             >
@@ -1071,7 +1071,7 @@ export function LeaversTab() {
               value={subscription}
               onChange={(e) => setSubscription(e.target.value)}
               aria-label="Subscription"
-              className="max-w-[16rem] rounded border px-2 py-1"
+              className="max-w-[16rem] rounded-sm border px-2 py-1"
             >
               <option value="">All subscriptions</option>
               {d.facets.subscriptions.map((s) => (
@@ -1084,7 +1084,7 @@ export function LeaversTab() {
               value={role}
               onChange={(e) => setRole(e.target.value)}
               aria-label="Role"
-              className="max-w-[16rem] rounded border px-2 py-1"
+              className="max-w-[16rem] rounded-sm border px-2 py-1"
             >
               <option value="">All roles</option>
               {d.facets.roles.map((r) => (
@@ -1097,7 +1097,7 @@ export function LeaversTab() {
               value={plane}
               onChange={(e) => setPlane(e.target.value)}
               aria-label="Plane"
-              className="rounded border px-2 py-1"
+              className="rounded-sm border px-2 py-1"
             >
               <option value="">All planes</option>
               {d.facets.planes.map((p) => (
@@ -1110,7 +1110,7 @@ export function LeaversTab() {
               value={group}
               onChange={(e) => setGroup(e.target.value)}
               aria-label="Granting group"
-              className="max-w-[16rem] rounded border px-2 py-1"
+              className="max-w-[16rem] rounded-sm border px-2 py-1"
             >
               <option value="">Any group</option>
               {d.facets.groups.map((g) => (
@@ -1179,7 +1179,7 @@ export function LeaversTab() {
                   const v = views.find((x) => x.name === e.target.value);
                   if (v) applyView(v.filter);
                 }}
-                className="rounded border px-2 py-1"
+                className="rounded-sm border px-2 py-1"
               >
                 <option value="">Saved views…</option>
                 {views.map((v) => (
@@ -1190,7 +1190,7 @@ export function LeaversTab() {
               </select>
               <button
                 type="button"
-                className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+                className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
                 onClick={() => {
                   const name = window.prompt("Name this view");
                   if (!name) return;
@@ -1212,7 +1212,7 @@ export function LeaversTab() {
               value={grouping.groupBy}
               onChange={(e) => grouping.setGroupBy(e.target.value)}
               aria-label="Group identities"
-              className="rounded border px-2 py-1"
+              className="rounded-sm border px-2 py-1"
             >
               {dimensions.map((dim) => (
                 <option key={dim.key} value={dim.key}>
@@ -1229,7 +1229,7 @@ export function LeaversTab() {
                   value={grouping.subGroupBy}
                   onChange={(e) => grouping.setSubGroupBy(e.target.value)}
                   aria-label="Sub-group identities"
-                  className="rounded border px-2 py-1"
+                  className="rounded-sm border px-2 py-1"
                 >
                   {dimensions
                     .filter((dim) => dim.key !== grouping.groupBy)
@@ -1243,14 +1243,14 @@ export function LeaversTab() {
               <button
                 type="button"
                 onClick={grouping.collapseAll}
-                className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+                className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
               >
                 Collapse all
               </button>
               <button
                 type="button"
                 onClick={grouping.expandAll}
-                className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+                className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
               >
                 Expand all
               </button>
@@ -1285,7 +1285,7 @@ export function LeaversTab() {
               <span className="text-gray-600">{selCount} selected</span>
               <button
                 type="button"
-                className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+                className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
                 onClick={() => {
                   const picked = identities.filter((i) => selected.has(i.principalId));
                   navigator.clipboard?.writeText(
@@ -1306,7 +1306,7 @@ export function LeaversTab() {
               <button
                 type="button"
                 onClick={() => setSelected(new Set())}
-                className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+                className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
               >
                 Clear
               </button>
@@ -1318,11 +1318,11 @@ export function LeaversTab() {
           </span>
         </div>
         {startError && (
-          <div className="rounded bg-red-50 px-2 py-1 text-[11px] text-red-800">{startError}</div>
+          <div className="rounded-sm bg-red-50 px-2 py-1 text-[11px] text-red-800">{startError}</div>
         )}
         {selCount > 0 && (
           <div
-            className="rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-900"
+            className="rounded-sm bg-sky-50 px-2 py-1 text-[11px] text-sky-900"
             data-testid="leavers-selection-banner"
           >
             {selCount} identit{selCount === 1 ? "y" : "ies"} selected — the exports, the review
@@ -1330,7 +1330,7 @@ export function LeaversTab() {
           </div>
         )}
         {preview && (
-          <div className="rounded border bg-white p-2" data-testid="leavers-remediation-preview">
+          <div className="rounded-sm border bg-white p-2" data-testid="leavers-remediation-preview">
             <div className="flex items-center gap-2 text-[11px]">
               <span className="font-semibold text-gray-700">Revocation script</span>
               {preview.measured ? (
@@ -1346,7 +1346,7 @@ export function LeaversTab() {
               )}
               <button
                 type="button"
-                className="ml-auto rounded border px-1.5 py-0.5 text-gray-600 hover:bg-gray-50"
+                className="ml-auto rounded-sm border px-1.5 py-0.5 text-gray-600 hover:bg-gray-50"
                 onClick={() => setPreview(null)}
               >
                 Close
@@ -1366,7 +1366,7 @@ export function LeaversTab() {
             {preview.measured && preview.planes && (
               <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
                 {Object.entries(preview.planes).map(([p, n]) => (
-                  <span key={p} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
+                  <span key={p} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-700">
                     {PLANE_LABELS[p] ?? p}: {n}
                   </span>
                 ))}
@@ -1405,7 +1405,7 @@ export function LeaversTab() {
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-3">
         {shown === 0 ? (
-          <div className="rounded border bg-white p-4 text-xs text-gray-600">
+          <div className="rounded-sm border bg-white p-4 text-xs text-gray-600">
             {d.total_identities === 0
               ? "No disabled principal holds access in this tenant. Account state was collected, so this is a measured result."
               : "No disabled identity matches these filters."}
@@ -1433,7 +1433,7 @@ export function LeaversTab() {
                       type="button"
                       onClick={() => grouping.toggle(line.key)}
                       style={{ paddingLeft: 8 + line.depth * 16 }}
-                      className="flex w-full items-center gap-2 rounded bg-gray-100 py-1 pr-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-200"
+                      className="flex w-full items-center gap-2 rounded-sm bg-gray-100 py-1 pr-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-200"
                       data-testid="leaver-group-header"
                     >
                       <span className="text-gray-400">
@@ -1466,7 +1466,7 @@ export function LeaversTab() {
         )}
 
         {d.limitations.length > 0 && (
-          <details className="mt-3 rounded border bg-gray-50 p-2 text-[11px] text-gray-600">
+          <details className="mt-3 rounded-sm border bg-gray-50 p-2 text-[11px] text-gray-600">
             <summary className="cursor-pointer font-medium text-gray-700">
               What this report cannot tell you ({d.limitations.length})
             </summary>

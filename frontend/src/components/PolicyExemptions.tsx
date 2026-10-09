@@ -257,7 +257,7 @@ function ExemptionPivot({ rows }: { rows: PolicyExemption[] }) {
   return (
     <div className="space-y-2">
       {/* builder */}
-      <div className="rounded-xl border bg-white p-3 shadow-sm">
+      <div className="rounded-xl border bg-white p-3 shadow-xs">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-medium uppercase text-gray-400">Rows</span>
           {levels.map((d, i) => (
@@ -313,16 +313,16 @@ function ExemptionPivot({ rows }: { rows: PolicyExemption[] }) {
 
       {/* pivot table */}
       <div className="flex items-center gap-2 text-[11px] text-gray-500">
-        <button onClick={expandAll} className="rounded border px-2 py-0.5 hover:bg-gray-50">Expand all</button>
-        <button onClick={() => setExpanded(new Set())} className="rounded border px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
+        <button onClick={expandAll} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50">Expand all</button>
+        <button onClick={() => setExpanded(new Set())} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
         <span className="ml-auto">{rows.length} exemption(s)</span>
-        <button onClick={exportCsv} className="rounded border px-2 py-0.5 hover:bg-gray-50">⬇ CSV</button>
-        <button onClick={() => void exportXlsx()} className="rounded border border-green-300 bg-green-50 px-2 py-0.5 text-green-700 hover:bg-green-100">⬇ Excel</button>
+        <button onClick={exportCsv} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50">⬇ CSV</button>
+        <button onClick={() => void exportXlsx()} className="rounded-sm border border-green-300 bg-green-50 px-2 py-0.5 text-green-700 hover:bg-green-100">⬇ Excel</button>
       </div>
       {!levels.length ? (
         <div className="rounded-lg border border-dashed bg-gray-50/60 p-6 text-center text-xs text-gray-400">Add at least one row dimension to build a pivot.</div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-xl border bg-white shadow-xs">
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 text-[11px] uppercase text-gray-500">
               <tr>
@@ -545,15 +545,15 @@ export function ExemptionsTab({
       <td className="px-3 py-1.5 text-gray-700"><span className="inline-flex items-center gap-1.5"><ScopeGlyph kind={e.scope_kind} /> {scopeName(e)}</span></td>
       <td className="px-3 py-1.5 text-gray-600">{e.category}</td>
       <td className="px-3 py-1.5">
-        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_TONE[e.status || "active"]}`}>{STATUS_LABEL[e.status || "active"]}</span>
+        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${STATUS_TONE[e.status || "active"]}`}>{STATUS_LABEL[e.status || "active"]}</span>
         <span className="ml-1 text-[10px] text-gray-400">{daysLabel(e)}</span>
       </td>
       <td className="px-3 py-1.5 tabular-nums text-gray-600">{e.status === "never" ? "Never" : fmtDate(e.expires_on)}</td>
       <td className="max-w-[220px] truncate px-3 py-1.5 text-gray-500" title={e.description}>{e.description || "—"}</td>
       <td className="px-3 py-1.5 text-right">
         <div className="inline-flex gap-1">
-          <button onClick={() => setEditing(e)} className="rounded border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Edit</button>
-          <button onClick={() => setConfirmOp({ kind: "remove", ex: e })} className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50">Remove</button>
+          <button onClick={() => setEditing(e)} className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Edit</button>
+          <button onClick={() => setConfirmOp({ kind: "remove", ex: e })} className="rounded-sm border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50">Remove</button>
         </div>
       </td>
     </tr>
@@ -631,7 +631,7 @@ export function ExemptionsTab({
         <ExemptionPivot rows={rows} />
       ) : (
       /* table */
-      <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border bg-white shadow-xs">
         <table className="w-full text-left text-sm">
           <thead className="bg-gray-50 text-[11px] uppercase text-gray-500">
             <tr>
@@ -647,31 +647,31 @@ export function ExemptionsTab({
             {showColFilters && (
               <tr className="border-t bg-white">
                 <th className="px-2 py-1.5 font-normal">
-                  <input value={colFilters.exemption} onChange={(e) => setCol("exemption", e.target.value)} placeholder="Filter…" className="w-full rounded border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
+                  <input value={colFilters.exemption} onChange={(e) => setCol("exemption", e.target.value)} placeholder="Filter…" className="w-full rounded-sm border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
                 </th>
                 <th className="px-2 py-1.5 font-normal">
-                  <input value={colFilters.assignment} onChange={(e) => setCol("assignment", e.target.value)} placeholder="Filter…" className="w-full rounded border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
+                  <input value={colFilters.assignment} onChange={(e) => setCol("assignment", e.target.value)} placeholder="Filter…" className="w-full rounded-sm border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
                 </th>
                 <th className="px-2 py-1.5 font-normal">
-                  <input value={colFilters.scope} onChange={(e) => setCol("scope", e.target.value)} placeholder="Filter…" className="w-full rounded border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
+                  <input value={colFilters.scope} onChange={(e) => setCol("scope", e.target.value)} placeholder="Filter…" className="w-full rounded-sm border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
                 </th>
                 <th className="px-2 py-1.5 font-normal">
-                  <select value={colFilters.category} onChange={(e) => setCol("category", e.target.value)} className="w-full rounded border px-1 py-0.5 text-[11px] font-normal normal-case">
+                  <select value={colFilters.category} onChange={(e) => setCol("category", e.target.value)} className="w-full rounded-sm border px-1 py-0.5 text-[11px] font-normal normal-case">
                     <option value="">All</option>
                     {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </th>
                 <th className="px-2 py-1.5 font-normal">
-                  <select value={colFilters.status} onChange={(e) => setCol("status", e.target.value)} className="w-full rounded border px-1 py-0.5 text-[11px] font-normal normal-case">
+                  <select value={colFilters.status} onChange={(e) => setCol("status", e.target.value)} className="w-full rounded-sm border px-1 py-0.5 text-[11px] font-normal normal-case">
                     <option value="">All</option>
                     {statusOptions.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
                   </select>
                 </th>
                 <th className="px-2 py-1.5 font-normal">
-                  <input value={colFilters.expires} onChange={(e) => setCol("expires", e.target.value)} placeholder="Filter…" className="w-full rounded border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
+                  <input value={colFilters.expires} onChange={(e) => setCol("expires", e.target.value)} placeholder="Filter…" className="w-full rounded-sm border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
                 </th>
                 <th className="px-2 py-1.5 font-normal">
-                  <input value={colFilters.justification} onChange={(e) => setCol("justification", e.target.value)} placeholder="Filter…" className="w-full rounded border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
+                  <input value={colFilters.justification} onChange={(e) => setCol("justification", e.target.value)} placeholder="Filter…" className="w-full rounded-sm border px-1.5 py-0.5 text-[11px] font-normal normal-case" />
                 </th>
                 <th className="px-2 py-1.5 text-right">
                   {activeColFilters > 0 && <button onClick={clearColFilters} className="text-[11px] font-normal normal-case text-gray-400 hover:text-red-600">Clear</button>}
@@ -720,7 +720,7 @@ function GroupRows({ title, list, open, onToggle, renderRow }: { title: string; 
         <td colSpan={8} className="px-3 py-1.5">
           <span className="inline-flex items-center gap-1.5">
             <span className="text-gray-400">{open ? "▾" : "▸"}</span>{title}
-            <span className="ml-1 rounded bg-gray-200 px-1.5 text-[10px] text-gray-600">{list.length}</span>
+            <span className="ml-1 rounded-sm bg-gray-200 px-1.5 text-[10px] text-gray-600">{list.length}</span>
           </span>
         </td>
       </tr>
@@ -731,7 +731,7 @@ function GroupRows({ title, list, open, onToggle, renderRow }: { title: string; 
 
 function Kpi({ label, value, tone, active, onClick }: { label: string; value: number; tone?: string; active?: boolean; onClick?: () => void }) {
   return (
-    <button onClick={onClick} className={`rounded-lg border bg-white px-3 py-2 text-left shadow-sm transition ${active ? "ring-2 ring-brand/40" : "hover:bg-gray-50"}`}>
+    <button onClick={onClick} className={`rounded-lg border bg-white px-3 py-2 text-left shadow-xs transition ${active ? "ring-2 ring-brand/40" : "hover:bg-gray-50"}`}>
       <div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div>
       <div className="truncate text-[11px] text-gray-500">{label}</div>
     </button>
@@ -890,9 +890,9 @@ function ExemptionModal({
           {plan && plan.valid && (
             <div className="space-y-2 rounded-md border bg-gray-50 p-2">
               <div className="text-[11px] font-medium uppercase text-gray-500">Preview — generated az CLI</div>
-              <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-[10px] leading-relaxed text-gray-100">{plan.cli}</pre>
+              <pre className="overflow-x-auto rounded-sm bg-gray-900 p-2 text-[10px] leading-relaxed text-gray-100">{plan.cli}</pre>
               <div className="flex items-center gap-2">
-                <button onClick={() => navigator.clipboard?.writeText(plan.cli)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-white">Copy CLI</button>
+                <button onClick={() => navigator.clipboard?.writeText(plan.cli)} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-white">Copy CLI</button>
                 <span className="text-[10px] text-gray-400">ARM PUT {plan.arm.path.split("/").slice(-2).join("/")}</span>
               </div>
             </div>

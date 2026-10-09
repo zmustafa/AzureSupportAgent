@@ -171,10 +171,10 @@ function FlowSankeyNode(props: NodeProps) {
       value: payload.value, valueLabel: formatValue?.(payload.value ?? 0),
     }, event.clientX, event.clientY)}
     onMouseLeave={() => onHover?.(null)}
-    className="cursor-pointer outline-none" opacity={dimmed ? 0.22 : 1}>
+    className="cursor-pointer outline-hidden" opacity={dimmed ? 0.22 : 1}>
     <rect x={x} y={y} width={width} height={Math.max(3, height)} rx={2} fill={fill} fillOpacity={0.9} className="transition-all duration-150" />
     {showIcon && <foreignObject x={iconX} y={y + Math.max(3, height) / 2 - 8} width={16} height={16} style={{ overflow: "visible" }}>
-      <div className="h-4 w-4 rounded bg-white/90 p-0.5 shadow-sm"><AzureIcon kind="resource" type={payload.resource_type} className="h-full w-full" /></div>
+      <div className="h-4 w-4 rounded-sm bg-white/90 p-0.5 shadow-xs"><AzureIcon kind="resource" type={payload.resource_type} className="h-full w-full" /></div>
     </foreignObject>}
     <text x={labelX} y={y + Math.max(10, height) / 2} dy="0.35em" textAnchor={onRight ? "start" : "end"}
       fontSize={11} fontWeight={600} fill="#334155" stroke="white" strokeWidth={3} paintOrder="stroke">
@@ -215,7 +215,7 @@ function FlowSankeyLink(props: LinkProps) {
       title: payload.title, value: payload.value, valueLabel: formatValue?.(payload.value ?? 0),
       paths: payload.paths, path_count: payload.path_count,
     }, event.clientX, event.clientY)}
-    onMouseLeave={() => onHover?.(null)} className="cursor-pointer outline-none">
+    onMouseLeave={() => onHover?.(null)} className="cursor-pointer outline-hidden">
     <path d={path} fill="none" stroke="transparent" strokeWidth={Math.max(12, linkWidth + 8)} />
     <path d={path} fill="none" stroke={color} strokeWidth={Math.max(1, linkWidth)}
       strokeOpacity={dimmed ? 0.08 : selected ? 0.78 : 0.28} className="transition-all duration-150" />
@@ -225,11 +225,11 @@ function FlowSankeyLink(props: LinkProps) {
 function PathTooltip({ item }: { item: Hover }) {
   const paths = item.paths || [];
   const total = item.path_count ?? paths.length;
-  return <div role="tooltip" className="pointer-events-none fixed z-[70] max-w-[520px] rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-xl" style={{ left: item.x, top: item.y }}>
+  return <div role="tooltip" className="pointer-events-none fixed z-70 max-w-[520px] rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-xl" style={{ left: item.x, top: item.y }}>
     <div className="font-semibold text-gray-900">{item.title || item.name || "Flow"}</div>
     {item.valueLabel && <div className="mt-0.5 text-[10px] text-gray-500">{item.valueLabel}</div>}
     <div className="mt-2 text-[10px] font-medium uppercase tracking-wide text-gray-400">Complete {total === 1 ? "path" : "paths"}</div>
-    <div className="mt-1 space-y-1">{paths.map((path) => <div key={path} className="rounded bg-gray-50 px-2 py-1 leading-4 text-gray-700">{path}</div>)}</div>
+    <div className="mt-1 space-y-1">{paths.map((path) => <div key={path} className="rounded-sm bg-gray-50 px-2 py-1 leading-4 text-gray-700">{path}</div>)}</div>
     {total > paths.length && <div className="mt-1 text-[10px] text-gray-400">+ {total - paths.length} more complete paths</div>}
   </div>;
 }
@@ -620,18 +620,18 @@ export function SankeyExplorer({
       <div className="relative">
         <input aria-label={`Search ${title}`} value={flowQuery}
           onChange={(event) => { setFlowQuery(event.target.value); select(""); }}
-          placeholder={searchPlaceholder} className="w-72 rounded border px-3 py-1.5 pr-8 text-xs" />
+          placeholder={searchPlaceholder} className="w-72 rounded-sm border px-3 py-1.5 pr-8 text-xs" />
         {flowQuery && <button aria-label="Clear flow search" onClick={() => { setFlowQuery(""); select(""); }}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">×</button>}
       </div>
       {flowQuery && <span className="text-[10px] text-gray-500">{graph.nodes.length} matching nodes · {graph.links.length} links</span>}
-      {selectedKey && <button onClick={() => select("")} className="rounded border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">Clear highlight</button>}
+      {selectedKey && <button onClick={() => select("")} className="rounded-sm border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">Clear highlight</button>}
       <label className="text-xs">Maximum links
-        <select value={maxLinks} onChange={(event) => { setMaxLinks(Number(event.target.value)); select(""); }} className="ml-2 rounded border px-2 py-1">
+        <select value={maxLinks} onChange={(event) => { setMaxLinks(Number(event.target.value)); select(""); }} className="ml-2 rounded-sm border px-2 py-1">
           {[100, 250, 500, 1000].map((value) => <option key={value}>{value}</option>)}
         </select>
       </label>
-      <div role="group" aria-label="Sankey zoom controls" className="flex items-center overflow-hidden rounded border bg-white text-xs">
+      <div role="group" aria-label="Sankey zoom controls" className="flex items-center overflow-hidden rounded-sm border bg-white text-xs">
         <button type="button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= ZOOM_MIN}
           onClick={() => changeZoom(zoom - ZOOM_STEP)} className="h-7 w-7 border-r font-semibold hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">−</button>
         <output aria-label="Current Sankey zoom" aria-live="polite" className="w-12 text-center tabular-nums">{zoom}%</output>
@@ -641,7 +641,7 @@ export function SankeyExplorer({
           className="h-7 border-l px-2 font-medium hover:bg-gray-50">Fit</button>
       </div>
       <button type="button" aria-label={fullscreen ? "Exit full screen" : "Show full screen"} title={fullscreen ? "Exit full screen" : "Full screen"}
-        onClick={() => void toggleFullscreen()} className="h-7 rounded border bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
+        onClick={() => void toggleFullscreen()} className="h-7 rounded-sm border bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
         {fullscreen ? "⤢ Exit full screen" : "⛶ Full screen"}
       </button>
       {actions}
@@ -718,7 +718,7 @@ export function SankeyExplorer({
         else if (event.key === "0") { event.preventDefault(); changeZoom(100); }
       }}
       style={fullscreen || fillHeight ? undefined : { height: heightPx }}
-      className={`${fullscreen || fillHeight ? "min-h-0 flex-1" : ""} min-w-0 ${canPan ? "overflow-auto" : "overflow-hidden"} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}
+      className={`${fullscreen || fillHeight ? "min-h-0 flex-1" : ""} min-w-0 ${canPan ? "overflow-auto" : "overflow-hidden"} outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}
     >
       {graph.nodes.length ? baseSize.width > 0 && baseSize.height > 0 && (
         <div className="relative" style={{ width: Math.max(baseSize.width, baseSize.width * zoom / 100), height: Math.max(baseSize.height, requiredHeight * zoom / 100) }}>
@@ -732,7 +732,7 @@ export function SankeyExplorer({
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-gray-500">
           <div>{flowQuery ? `No flows match “${flowQuery}”.` : emptyMessage}</div>
-          {onClearFilters && <button type="button" onClick={() => { setFlowQuery(""); onClearFilters(); }} className="rounded border px-3 py-1 text-xs text-blue-700">Clear filters</button>}
+          {onClearFilters && <button type="button" onClick={() => { setFlowQuery(""); onClearFilters(); }} className="rounded-sm border px-3 py-1 text-xs text-blue-700">Clear filters</button>}
         </div>
       )}
     </div>
@@ -740,7 +740,7 @@ export function SankeyExplorer({
     <div className="flex shrink-0 flex-wrap justify-center gap-3 border-t px-4 py-2 text-[11px]">
       {legendEntries.map(([kind, color]) => (
         <span key={kind} className="flex items-center gap-1 capitalize">
-          <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: color }} />{kind.replaceAll("_", " ")}
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />{kind.replaceAll("_", " ")}
         </span>
       ))}
     </div>

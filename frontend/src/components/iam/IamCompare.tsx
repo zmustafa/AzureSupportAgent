@@ -61,7 +61,7 @@ function Actor({ change }: { change: IamChange }) {
                          title="Investigate the identity that made this change" />
       )}
       {a.changeSource && a.changeSource !== "Unknown" && (
-        <span className="ml-1 rounded bg-gray-100 px-1 text-[10px] text-gray-600">{a.changeSource}</span>
+        <span className="ml-1 rounded-sm bg-gray-100 px-1 text-[10px] text-gray-600">{a.changeSource}</span>
       )}
       {a.confidence === "inferred" && (
         <span className="ml-1 text-[10px] text-amber-700" title="Matched on scope and time rather than on the assignment id.">
@@ -75,12 +75,12 @@ function Actor({ change }: { change: IamChange }) {
 function Row({ c }: { c: IamChange }) {
   return (
     <div className="flex items-baseline gap-2 border-b px-3 py-1.5 last:border-b-0">
-      <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${CLASS_CLASS[c.class] ?? "bg-gray-100 text-gray-700"}`}>
+      <span className={`shrink-0 rounded-sm px-1.5 text-[10px] font-semibold uppercase ${CLASS_CLASS[c.class] ?? "bg-gray-100 text-gray-700"}`}>
         {CLASS_LABEL[c.class] ?? c.class}
       </span>
       <span className="flex min-w-0 flex-1 items-baseline gap-1 text-xs font-medium text-gray-800">
         <span className="min-w-0 truncate">{c.principalName || c.principalId}</span>
-        {c.privileged && <span className="shrink-0 rounded bg-red-50 px-1 text-[10px] text-red-700">privileged</span>}
+        {c.privileged && <span className="shrink-0 rounded-sm bg-red-50 px-1 text-[10px] text-red-700">privileged</span>}
         {investigatableId(c.principalType, c.principalId) && (
           <InvestigateLink principalId={c.principalId} label={c.principalName || c.principalId} />
         )}
@@ -143,7 +143,7 @@ export function CompareTab() {
             type="button"
             onClick={() => attribute.mutate()}
             disabled={attribute.isPending || !d?.changes?.length}
-            className="ml-auto rounded border bg-white px-2 py-1 text-xs text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+            className="ml-auto rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-50"
             title="Join these changes to the Azure Activity Log to find out who made them. Runs per subscription and is slow."
           >
             {attribute.isPending ? "Attributing…" : "Find out who"}
@@ -152,7 +152,7 @@ export function CompareTab() {
 
         {/* Nothing to compare against is NOT an all-clear. */}
         {d && !d.available && (
-          <div data-testid="diff-unavailable" className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
+          <div data-testid="diff-unavailable" className="mt-2 rounded-sm border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
             There is no earlier snapshot to compare against, so no change can be shown. This is not
             a clean bill of health — it means the comparison could not be made.
             {d.note && <div className="mt-1">{d.note}</div>}
@@ -180,7 +180,7 @@ export function CompareTab() {
           value={cls}
           onChange={(e) => setCls(e.target.value)}
           aria-label="Change class"
-          className="rounded border border-gray-300 px-1.5 py-0.5 text-xs"
+          className="rounded-sm border border-gray-300 px-1.5 py-0.5 text-xs"
         >
           <option value="">All change types</option>
           {(d?.classes ?? Object.keys(CLASS_LABEL)).map((c) => (
@@ -199,7 +199,7 @@ export function CompareTab() {
       <div className="min-h-0 flex-1 overflow-auto">
         {q.isLoading && <div className="p-4 text-sm text-gray-500">Loading…</div>}
         {d?.available && changes.length === 0 && (
-          <div className="m-3 rounded border bg-white p-3 text-xs text-gray-600">
+          <div className="m-3 rounded-sm border bg-white p-3 text-xs text-gray-600">
             Nothing changed between these two snapshots.
           </div>
         )}

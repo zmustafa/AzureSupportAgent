@@ -165,11 +165,11 @@ export function LocationFilterToolbar({
 
   if (selectedLocations.size === 0) return null;
   return (
-    <div className="border-b border-brand/20 bg-brand/[0.03] px-4 py-2.5">
+    <div className="border-b border-brand/20 bg-brand/3 px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Regions</span>
         {[...selectedLocations].map((loc) => (
-          <span key={loc} className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[12px] text-gray-700 shadow-sm ring-1 ring-gray-200">
+          <span key={loc} className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[12px] text-gray-700 shadow-xs ring-1 ring-gray-200">
             {friendlyLocation(loc)}
             <button onClick={() => onToggleLocation(loc)} className="text-gray-400 hover:text-red-500" title="Remove region">✕</button>
           </span>
@@ -189,10 +189,10 @@ export function LocationFilterToolbar({
               onClick={() => onToggleWorkload(w.id)}
               title={on ? "Remove this workload from the filter" : "Filter the inventory to this workload"}
               className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] transition ${
-                on ? "bg-brand text-white shadow-sm" : "bg-white text-gray-700 ring-1 ring-gray-200 hover:ring-brand/40"
+                on ? "bg-brand text-white shadow-xs" : "bg-white text-gray-700 ring-1 ring-gray-200 hover:ring-brand/40"
               }`}
             >
-              <span className="max-w-[14rem] truncate">{w.name}</span>
+              <span className="max-w-56 truncate">{w.name}</span>
               <span className={`tabular-nums ${on ? "text-white/80" : "text-gray-400"}`}>{w.count}</span>
             </button>
           );
@@ -351,14 +351,14 @@ export function LocationMode({
 
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
           {/* World map */}
-          <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-sky-200 bg-[#dbeaf5] shadow-sm">
+          <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-sky-200 bg-[#dbeaf5] shadow-xs">
             {/* Zoom controls */}
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-1">
               <button
                 onClick={() => zoomAt(1.6, W / 2, H / 2)}
                 disabled={view.scale >= ZOOM_MAX}
                 title="Zoom in"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white/95 text-lg leading-none text-gray-700 shadow-sm hover:bg-white disabled:opacity-40"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white/95 text-lg leading-none text-gray-700 shadow-xs hover:bg-white disabled:opacity-40"
               >
                 +
               </button>
@@ -366,7 +366,7 @@ export function LocationMode({
                 onClick={() => zoomAt(1 / 1.6, W / 2, H / 2)}
                 disabled={view.scale <= ZOOM_MIN}
                 title="Zoom out"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white/95 text-lg leading-none text-gray-700 shadow-sm hover:bg-white disabled:opacity-40"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white/95 text-lg leading-none text-gray-700 shadow-xs hover:bg-white disabled:opacity-40"
               >
                 −
               </button>
@@ -374,7 +374,7 @@ export function LocationMode({
                 onClick={() => setView({ scale: 1, tx: 0, ty: 0 })}
                 disabled={view.scale === 1 && view.tx === 0 && view.ty === 0}
                 title="Reset view"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white/95 text-xs leading-none text-gray-700 shadow-sm hover:bg-white disabled:opacity-40"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white/95 text-xs leading-none text-gray-700 shadow-xs hover:bg-white disabled:opacity-40"
               >
                 ⟳
               </button>
@@ -496,7 +496,7 @@ export function LocationMode({
           {/* Breakdown panel: Region (drives the map) / Resource group / Type. Every
               dimension here filters the whole inventory (locSel / rgSel / typeSel). */}
           <div className="w-full shrink-0 lg:w-64">
-            <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+            <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-xs">
               {/* Dimension switcher */}
               <div className="mb-2 flex gap-0.5 rounded-lg bg-gray-100 p-0.5">
                 {([
@@ -510,7 +510,7 @@ export function LocationMode({
                     <button
                       key={id}
                       onClick={() => setDim(id)}
-                      className={`flex-1 rounded-md px-1 py-1 text-[11px] font-medium transition ${dim === id ? "bg-white text-brand shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                      className={`flex-1 rounded-md px-1 py-1 text-[11px] font-medium transition ${dim === id ? "bg-white text-brand shadow-xs" : "text-gray-500 hover:text-gray-700"}`}
                     >
                       {label}{n > 0 && <span className="ml-0.5 rounded-full bg-brand/10 px-1 text-[9px] text-brand">{n}</span>}
                     </button>
@@ -538,7 +538,7 @@ export function LocationMode({
                             onClick={() => onToggleLocation(p.key)}
                             className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition ${sel ? "bg-brand/10 ring-1 ring-brand/30" : isActive(p.key) ? "bg-brand/5" : "hover:bg-gray-50"}`}
                           >
-                            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border" style={{ borderColor: sel ? "#0369a1" : "#cbd5e1", background: sel ? "#0369a1" : "transparent" }}>
+                            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-xs border" style={{ borderColor: sel ? "#0369a1" : "#cbd5e1", background: sel ? "#0369a1" : "transparent" }}>
                               {sel && <span className="text-[9px] leading-none text-white">✓</span>}
                             </span>
                             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorFor(p.count) }} />
@@ -640,7 +640,7 @@ function BreakdownList({
                 onClick={() => onToggle(r.key)}
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition ${sel ? "bg-brand/10 ring-1 ring-brand/30" : "hover:bg-gray-50"}`}
               >
-                <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border" style={{ borderColor: sel ? "#0369a1" : "#cbd5e1", background: sel ? "#0369a1" : "transparent" }}>
+                <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-xs border" style={{ borderColor: sel ? "#0369a1" : "#cbd5e1", background: sel ? "#0369a1" : "transparent" }}>
                   {sel && <span className="text-[9px] leading-none text-white">✓</span>}
                 </span>
                 <span className="min-w-0 flex-1">

@@ -204,14 +204,14 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
                       value={preview.sheet}
                       disabled={busy}
                       onChange={(e) => { const f = currentFile.current; if (f) void runPreview(f, e.target.value); }}
-                      className="rounded border px-1.5 py-0.5 text-[11px] text-gray-600"
+                      className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-600"
                       title="Switch sheet (re-runs the AI mapping)"
                     >
                       {(preview.sheet_names ?? []).map((s) => <option key={s} value={s}>📄 {s}</option>)}
                     </select>
                   )}
                 </div>
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${preview.ai ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-500"}`}>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${preview.ai ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-500"}`}>
                   {preview.ai ? `AI · ${Math.round(preview.confidence * 100)}%` : "heuristic"}
                 </span>
               </div>
@@ -223,7 +223,7 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
                     <select
                       value={mapping[f] || ""}
                       onChange={(e) => setMapping({ ...mapping, [f]: e.target.value })}
-                      className="min-w-0 flex-1 rounded border px-1.5 py-1 text-xs"
+                      className="min-w-0 flex-1 rounded-sm border px-1.5 py-1 text-xs"
                     >
                       <option value="">— none —</option>
                       {preview.columns.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -362,7 +362,7 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-xs">
             <span className="mb-1 block font-medium text-gray-600">Scope</span>
-            <select value={scopeKind} onChange={(e) => { setScopeKind(e.target.value as "workload" | "subscription"); setPlan(null); }} className="w-full rounded border px-2 py-1.5">
+            <select value={scopeKind} onChange={(e) => { setScopeKind(e.target.value as "workload" | "subscription"); setPlan(null); }} className="w-full rounded-sm border px-2 py-1.5">
               <option value="workload">Workload</option>
               <option value="subscription">Subscription</option>
             </select>
@@ -370,7 +370,7 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
           {scopeKind === "workload" ? (
             <label className="text-xs">
               <span className="mb-1 block font-medium text-gray-600">Workload</span>
-              <select value={workloadId} onChange={(e) => { setWorkloadId(e.target.value); setPlan(null); }} className="w-full rounded border px-2 py-1.5">
+              <select value={workloadId} onChange={(e) => { setWorkloadId(e.target.value); setPlan(null); }} className="w-full rounded-sm border px-2 py-1.5">
                 <option value="">Choose…</option>
                 {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
@@ -378,16 +378,16 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
           ) : (
             <label className="text-xs">
               <span className="mb-1 block font-medium text-gray-600">Subscription ID</span>
-              <input value={subscriptionId} onChange={(e) => { setSubscriptionId(e.target.value); setPlan(null); }} placeholder="GUID" className="w-full rounded border px-2 py-1.5" />
+              <input value={subscriptionId} onChange={(e) => { setSubscriptionId(e.target.value); setPlan(null); }} placeholder="GUID" className="w-full rounded-sm border px-2 py-1.5" />
             </label>
           )}
           <label className="text-xs">
             <span className="mb-1 block font-medium text-gray-600">Tag key</span>
-            <input value={tagKey} onChange={(e) => { setTagKey(e.target.value); setPlan(null); }} className="w-full rounded border px-2 py-1.5" />
+            <input value={tagKey} onChange={(e) => { setTagKey(e.target.value); setPlan(null); }} className="w-full rounded-sm border px-2 py-1.5" />
           </label>
           <label className="text-xs">
             <span className="mb-1 block font-medium text-gray-600">Tag value</span>
-            <select value={valueSource} onChange={(e) => { setValueSource(e.target.value as "display_name" | "email" | "custom"); setPlan(null); }} className="w-full rounded border px-2 py-1.5">
+            <select value={valueSource} onChange={(e) => { setValueSource(e.target.value as "display_name" | "email" | "custom"); setPlan(null); }} className="w-full rounded-sm border px-2 py-1.5">
               <option value="display_name">Owner display name</option>
               <option value="email">Owner email</option>
               <option value="custom">Custom value…</option>
@@ -397,7 +397,7 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
                 value={customValue}
                 onChange={(e) => { setCustomValue(e.target.value); setPlan(null); }}
                 placeholder="e.g. platform-team"
-                className="mt-1.5 w-full rounded border px-2 py-1.5"
+                className="mt-1.5 w-full rounded-sm border px-2 py-1.5"
               />
             )}
             {valueSource === "custom" && (
@@ -570,15 +570,15 @@ export function TagRevisionsPanel({ mode }: { mode: "ownership" | "tagintel" }) 
       ) : (
         // Cap the history height and scroll within — the list grows unbounded as changes accumulate,
         // so it must never push the rest of the page down. ~5 rows visible before scrolling.
-        <ul className="max-h-[11rem] divide-y overflow-y-auto">
+        <ul className="max-h-44 divide-y overflow-y-auto">
           {revs.map((r) => (
             <li key={r.id} className="px-4 py-1.5">
               <div className="flex items-center gap-2">
                 <button onClick={() => setOpenId(openId === r.id ? "" : r.id)} className="min-w-0 flex-1 text-left">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-xs font-medium text-gray-800">{r.description || "(tag change)"}</span>
-                    {r.status === "reverted" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">reverted</span>}
-                    {r.source.startsWith("revert") && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">revert</span>}
+                    {r.status === "reverted" && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">reverted</span>}
+                    {r.source.startsWith("revert") && <span className="rounded-sm bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">revert</span>}
                   </div>
                   <div className="text-[11px] text-gray-400">
                     {new Date(r.created_at).toLocaleString()} · {r.actor || "—"} · {r.resource_count} resource(s) · {r.applied} applied{r.failed ? `, ${r.failed} failed` : ""}

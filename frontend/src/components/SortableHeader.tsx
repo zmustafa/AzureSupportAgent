@@ -22,7 +22,7 @@ export function SortableHeader<K extends string>({
     : `Sort ${label} ascending`;
   return (
     <th className={className} aria-sort={active ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
-      <button type="button" onClick={() => onSort(column)} title={title} aria-label={title} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-sm font-medium hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${active ? "text-gray-900" : "text-gray-500"}`}>
+      <button type="button" onClick={() => onSort(column)} title={title} aria-label={title} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-xs font-medium hover:text-gray-900 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-brand/40 ${active ? "text-gray-900" : "text-gray-500"}`}>
         <span>{label}</span>
         <span aria-hidden="true" className={`text-[10px] ${active ? "text-brand" : "text-gray-400"}`}>{active ? (sortDirection === "asc" ? "↑" : "↓") : "↕"}</span>
       </button>

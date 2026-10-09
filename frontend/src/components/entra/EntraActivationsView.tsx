@@ -49,7 +49,7 @@ const ATTRIBUTION: Record<string, { label: string; chip: string; hint: string }>
 
 function Chip({ text, cls, title }: { text: string; cls: string; title?: string }) {
   return (
-    <span title={title} className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
+    <span title={title} className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
       {text}
     </span>
   );
@@ -264,7 +264,7 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search person, role, scope, reason…"
-          className="w-64 rounded border px-2 py-1 text-[13px]"
+          className="w-64 rounded-sm border px-2 py-1 text-[13px]"
         />
         {/* Buttons rather than a select: this is the switch a reviewer flips most often on
             this tab, and a dropdown hid two of the three planes behind a click. */}
@@ -279,13 +279,13 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
           ]}
         />
         <select value={tier} onChange={(e) => setTier(e.target.value)}
-                className="rounded border px-2 py-1 text-[13px]">
+                className="rounded-sm border px-2 py-1 text-[13px]">
           <option value="">Any tier</option>
           <option value="tier0">Tier-0 only</option>
           <option value="tier1">Tier-1 only</option>
         </select>
         <select value={days} onChange={(e) => setDays(Number(e.target.value))}
-                className="rounded border px-2 py-1 text-[13px]">
+                className="rounded-sm border px-2 py-1 text-[13px]">
           <option value={7}>Last 7 days</option>
           <option value={30}>Last 30 days</option>
           <option value={90}>Last 90 days</option>
@@ -448,7 +448,7 @@ function SourceBanner({ caps, ledger, lookback }: {
           read-only connection) made the banner claim the detail was missing while the
           table right below it displayed the reasons. */}
       {!caps.detail && (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           <span className="font-medium">Entra activation detail is unavailable.</span>{" "}
           Windows, roles and people are exact, but the reason each elevation was requested is
           blank because the PIM audit log is not readable. Grant{" "}
@@ -457,12 +457,12 @@ function SourceBanner({ caps, ledger, lookback }: {
         </div>
       )}
       {!caps.azure_requests && Boolean(caps.azure_reason) && (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           <span className="font-medium">Azure activations are not included.</span>{" "}
           {String(caps.azure_reason)}
         </div>
       )}
-      <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+      <div className="rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
         Every refresh appends to a local ledger, so this reaches further back than Microsoft
         keeps the data — Graph discards directory audits after 30 days.{" "}
         {total > 0
@@ -492,7 +492,7 @@ function SessionDrawer({ session, connectionId, onClose }: {
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={onClose}>
-      <div className="flex h-full w-[46rem] max-w-full flex-col bg-white shadow-xl"
+      <div className="flex h-full w-184 max-w-full flex-col bg-white shadow-xl"
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between border-b px-4 py-3">
           <div className="min-w-0">
@@ -516,7 +516,7 @@ function SessionDrawer({ session, connectionId, onClose }: {
                                                          : (session.status || "not granted")} />
           </div>
 
-          <div className="mb-3 rounded border bg-gray-50 p-2 text-[12px]">
+          <div className="mb-3 rounded-sm border bg-gray-50 p-2 text-[12px]">
             <div className="text-[11px] uppercase tracking-wide text-gray-400">Reason given</div>
             {session.justification_quality === "unknown"
               ? <div className="italic text-gray-500">
@@ -532,12 +532,12 @@ function SessionDrawer({ session, connectionId, onClose }: {
           </div>
 
           {q.isLoading && (
-            <div className="rounded border bg-white p-4 text-sm text-gray-500">
+            <div className="rounded-sm border bg-white p-4 text-sm text-gray-500">
               Reading the audit trail for this window…
             </div>
           )}
           {q.isError && (
-            <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-sm border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {formatError(q.error)}
             </div>
           )}
@@ -550,7 +550,7 @@ function SessionDrawer({ session, connectionId, onClose }: {
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border bg-white p-2">
+    <div className="rounded-sm border bg-white p-2">
       <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
       <div className="text-gray-800">{value}</div>
     </div>
@@ -588,7 +588,7 @@ function Actions({ data }: { data: EntraActivationActionsResult }) {
       </div>
 
       {/* The honest caveat. Without it this screen reads as an accusation. */}
-      <div className="mb-2 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600">
+      <div className="mb-2 rounded-sm border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600">
         Actions are what this principal did between{" "}
         {when(data.window?.start)} and {when(data.window?.end)} (±{data.window?.pad_minutes}min).
         {data.standing_entra_roles?.length
@@ -599,19 +599,19 @@ function Actions({ data }: { data: EntraActivationActionsResult }) {
       </div>
 
       {(data.notes || []).map((n: string, i: number) => (
-        <div key={i} className="mb-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+        <div key={i} className="mb-1 rounded-sm border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
           {n}
         </div>
       ))}
       {!actions.length && (
-        <div className="rounded border border-green-200 bg-green-50 p-3 text-[13px] text-green-900">
+        <div className="rounded-sm border border-green-200 bg-green-50 p-3 text-[13px] text-green-900">
           Nothing was recorded during this window. The role was activated and then went unused —
           worth asking whether the elevation was needed.
         </div>
       )}
 
       {actions.length > 0 && (
-        <div className="overflow-hidden rounded border">
+        <div className="overflow-hidden rounded-sm border">
           <table className="w-full text-[12px]">
             <thead className="bg-gray-50 text-left text-[10px] uppercase tracking-wide text-gray-500">
               <tr>

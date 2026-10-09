@@ -82,8 +82,8 @@ export function InvestigateLink({
       data-testid="investigate-link"
       className={
         compact
-          ? "shrink-0 rounded px-1 text-gray-400 hover:bg-brand/10 hover:text-brand"
-          : "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium text-brand hover:bg-brand/10"
+          ? "shrink-0 rounded-sm px-1 text-gray-400 hover:bg-brand/10 hover:text-brand"
+          : "inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs font-medium text-brand hover:bg-brand/10"
       }
     >
       🔍{compact ? "" : <span>{label ?? "Investigate"}</span>}

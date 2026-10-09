@@ -198,7 +198,7 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
           <select
             value={changeKind}
             onChange={(e) => { setChangeKind(e.target.value as typeof changeKind); setPolicyId(""); }}
-            className="rounded border px-2 py-1 text-sm"
+            className="rounded-sm border px-2 py-1 text-sm"
           >
             <option value="enable">Enable</option>
             <option value="disable">Disable</option>
@@ -208,7 +208,7 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
           <select
             value={policyId}
             onChange={(e) => setPolicyId(e.target.value)}
-            className="min-w-[22rem] rounded border px-2 py-1 text-sm"
+            className="min-w-88 rounded-sm border px-2 py-1 text-sm"
           >
             <option value="">Select a policy…</option>
             {candidates.map((p: EntraCaPolicy) => (
@@ -220,14 +220,14 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
           <button
             onClick={() => void run(false)}
             disabled={!policyId || running}
-            className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+            className="rounded-sm bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
           >
             {running ? "Simulating…" : "Simulate"}
           </button>
           <button
             onClick={() => void run(true)}
             disabled={!policyId || running}
-            className="rounded border px-3 py-1.5 text-sm font-medium text-gray-700 disabled:opacity-40"
+            className="rounded-sm border px-3 py-1.5 text-sm font-medium text-gray-700 disabled:opacity-40"
           >
             Simulate &amp; save
           </button>
@@ -265,7 +265,7 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
         </div>
       </div>
 
-      {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {error && <div className="rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
       {result && <SimulationResultCard result={result} />}
 
@@ -297,7 +297,7 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
                   </td>
                   <td className="px-2 py-1.5">
                     {s.break_glass_affected > 0 && (
-                      <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">
+                      <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">
                         {s.break_glass_affected} break-glass
                       </span>
                     )}
@@ -357,7 +357,7 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
       <div className="rounded-lg border bg-white p-3">
         <div className="mb-2 flex items-center gap-2">
           <span className="text-[13px] font-semibold text-gray-800">Impact</span>
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
+          <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
             {result.confidence_label}
           </span>
           <span className="text-xs text-gray-500">
@@ -366,7 +366,7 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
         </div>
         <div className="grid gap-2 md:grid-cols-5">
           {CATEGORY_META.map((c) => (
-            <div key={c.key} className="rounded border p-2" title={c.blurb}>
+            <div key={c.key} className="rounded-sm border p-2" title={c.blurb}>
               <div className={`text-lg font-semibold ${c.tone}`}>
                 {(result.counts[c.key] ?? 0).toLocaleString()}
               </div>
@@ -376,7 +376,7 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
         </div>
 
         {result.assumptions.mfa_unknown_principals > 0 && (
-          <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+          <div className="mt-2 rounded-sm bg-amber-50 px-2 py-1 text-xs text-amber-800">
             {result.assumptions.mfa_unknown_note}
           </div>
         )}
@@ -415,7 +415,7 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
                   <td className="px-3 py-1.5">
                     <span className="text-gray-900">{c.principal}</span>
                     {c.cohorts.includes("break_glass") && (
-                      <span className="ml-1 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700">break-glass</span>
+                      <span className="ml-1 rounded-sm bg-red-100 px-1 py-0.5 text-[10px] text-red-700">break-glass</span>
                     )}
                     {c.kind === "servicePrincipal" && (
                       <span className="ml-1 text-[10px] text-gray-400">workload</span>

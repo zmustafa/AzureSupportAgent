@@ -111,11 +111,11 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-[1px]" onClick={onClose}>
+    <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-[1px]" onClick={onClose}>
       <div className={`flex max-h-[82vh] w-full ${wide ? "max-w-2xl" : "max-w-lg"} flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-5 py-3">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100" aria-label="Close">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100" aria-label="Close">✕</button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm text-gray-700">{children}</div>
       </div>
@@ -135,7 +135,7 @@ function GlossaryModal({ onClose }: { onClose: () => void }) {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Search terms…"
-        className="mb-3 w-full rounded-lg border px-3 py-1.5 text-sm outline-none focus:border-brand/40"
+        className="mb-3 w-full rounded-lg border px-3 py-1.5 text-sm outline-hidden focus:border-brand/40"
         autoFocus
       />
       <dl className="space-y-3">
@@ -161,7 +161,7 @@ function ShortcutsModal({ onClose }: { onClose: () => void }) {
         <tbody>
           {SHORTCUTS.map((s) => (
             <tr key={s.keys} className="border-b last:border-0">
-              <td className="py-2 pr-4"><kbd className="rounded border bg-gray-50 px-2 py-0.5 text-xs">{s.keys}</kbd></td>
+              <td className="py-2 pr-4"><kbd className="rounded-sm border bg-gray-50 px-2 py-0.5 text-xs">{s.keys}</kbd></td>
               <td className="py-2 text-gray-600">{s.action}</td>
             </tr>
           ))}

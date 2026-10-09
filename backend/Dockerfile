@@ -12,6 +12,9 @@ RUN apt-get update \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
+    && /opt/az/bin/python3 -m pip install --no-cache-dir \
+        "cryptography>=50.0.0" "setuptools>=83.0.0" "PyJWT>=2.15.0" \
+        "urllib3>=2.8.0,<3" "oauthlib>=4.0.0,<5" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

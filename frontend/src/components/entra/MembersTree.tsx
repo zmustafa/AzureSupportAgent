@@ -39,7 +39,7 @@ const INVESTIGABLE = new Set(["user", "guest", "group", "servicePrincipal", "man
 type Loaded = Record<string, InvestigateTreeNode[]>;
 
 function Badge({ text, title, cls }: { text: string; title: string; cls: string }) {
-  return <span title={title} className={`rounded border px-1 py-0.5 text-[10px] ${cls}`}>{text}</span>;
+  return <span title={title} className={`rounded-sm border px-1 py-0.5 text-[10px] ${cls}`}>{text}</span>;
 }
 
 function Row({
@@ -68,7 +68,7 @@ function Row({
         data-testid="member-node"
         data-kind={node.kind}
         data-cycle={isCycle ? "true" : undefined}
-        className="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-gray-50"
+        className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-xs hover:bg-gray-50"
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
       >
         {node.expandable && !isCycle ? (
@@ -100,7 +100,7 @@ function Row({
                  cls="border-gray-200 bg-gray-100 text-gray-600" />
         )}
         {node.expandable && !isCycle && count !== undefined && (
-          <span className="shrink-0 rounded bg-gray-100 px-1 text-[10px] tabular-nums text-gray-600">
+          <span className="shrink-0 rounded-sm bg-gray-100 px-1 text-[10px] tabular-nums text-gray-600">
             {count}
           </span>
         )}
@@ -239,7 +239,7 @@ export function MembersTree({
   const tid = mode === "up" ? "memberships" : "members";
 
   return (
-    <div className="rounded border bg-gray-50/60 p-2" data-testid={`${tid}-tree`}>
+    <div className="rounded-sm border bg-gray-50/60 p-2" data-testid={`${tid}-tree`}>
       <div className="mb-2 flex flex-wrap items-center gap-2">
         {mode === "both" && (
           <button
@@ -247,7 +247,7 @@ export function MembersTree({
             onClick={() => void begin("down")}
             disabled={busy.size > 0}
             data-testid="members-load-down"
-            className="rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+            className="rounded-sm bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
           >
             {started && direction === "down" ? "Reload members" : "Show member tree"}
           </button>
@@ -261,8 +261,8 @@ export function MembersTree({
             ? "Read every group this principal belongs to, live from the directory — not just the ones that grant something."
             : "Which groups this group is itself a member of — where it inherits access from."}
           className={mode === "up"
-            ? "rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
-            : "rounded border bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"}
+            ? "rounded-sm bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+            : "rounded-sm border bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"}
         >
           {mode === "up"
             ? (started ? "Reload from directory" : "Read every group live")
@@ -286,7 +286,7 @@ export function MembersTree({
         </span>
       </div>
 
-      {err && <div className="rounded border border-rose-200 bg-rose-50 p-2 text-[11px] text-rose-800">{err}</div>}
+      {err && <div className="rounded-sm border border-rose-200 bg-rose-50 p-2 text-[11px] text-rose-800">{err}</div>}
 
       {started && !err && (
         <>
@@ -297,14 +297,14 @@ export function MembersTree({
                 : `Member of ${roots.length} ${transitive ? "group(s), nesting included" : "group(s) directly"}`}
             </span>
             {Object.entries(stats).map(([k, n]) => (
-              <span key={k} className="rounded bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
+              <span key={k} className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
                 {n} {KIND_LABEL[k] ?? k}
               </span>
             ))}
           </div>
 
           {notes.length > 0 && (
-            <ul className="mb-1 list-disc space-y-0.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 pl-6 text-[10px] text-amber-900">
+            <ul className="mb-1 list-disc space-y-0.5 rounded-sm border border-amber-200 bg-amber-50 px-2 py-1 pl-6 text-[10px] text-amber-900">
               {notes.map((n, i) => <li key={i}>{n}</li>)}
             </ul>
           )}
@@ -318,7 +318,7 @@ export function MembersTree({
                   : "This group is not nested inside any other group."}
             </div>
           ) : (
-            <div className="max-h-96 overflow-auto rounded border bg-white p-1">
+            <div className="max-h-96 overflow-auto rounded-sm border bg-white p-1">
               <div className="flex items-center gap-1.5 px-1 py-0.5 text-xs font-semibold text-gray-800">
                 <span className="w-4" />
                 <span aria-hidden="true">{KIND_GLYPH[rootKind] ?? KIND_GLYPH.unknown}</span>

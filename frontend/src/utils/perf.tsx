@@ -52,7 +52,7 @@ export function InlineSearch({ q, setQ, shown, total, placeholder, width = "w-64
 }) {
   return (
     <div className="flex items-center gap-2">
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder} className={`${width} rounded border px-2 py-1 text-sm`} />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder} className={`${width} rounded-sm border px-2 py-1 text-sm`} />
       {q && <button onClick={() => setQ("")} className="text-[11px] text-gray-400 hover:text-gray-600">✕ clear</button>}
       <span className="text-[11px] text-gray-400">{shown} / {total}</span>
     </div>

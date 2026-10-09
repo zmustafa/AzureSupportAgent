@@ -138,8 +138,8 @@ function Funnel({ c }: { c: EntraGuests["counts"] }) {
         {steps.map((s) => (
           <div key={s.label} className="flex items-center gap-2">
             <div className="w-24 shrink-0 text-[11px] text-gray-600">{s.label}</div>
-            <div className="h-4 min-w-0 flex-1 rounded bg-gray-100">
-              <div className="h-4 rounded bg-brand/70" style={{ width: `${(s.value / max) * 100}%` }} />
+            <div className="h-4 min-w-0 flex-1 rounded-sm bg-gray-100">
+              <div className="h-4 rounded-sm bg-brand/70" style={{ width: `${(s.value / max) * 100}%` }} />
             </div>
             <div className="w-16 shrink-0 text-right text-[11px] tabular-nums text-gray-800">
               {s.value.toLocaleString()}
@@ -273,8 +273,8 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
                 <span className={`w-28 shrink-0 ${CLASS_META[k]?.cls || ""}`}>
                   {CLASS_META[k]?.label || k}
                 </span>
-                <div className="h-3 min-w-0 flex-1 rounded bg-gray-100">
-                  <div className="h-3 rounded bg-brand/60"
+                <div className="h-3 min-w-0 flex-1 rounded-sm bg-gray-100">
+                  <div className="h-3 rounded-sm bg-brand/60"
                        style={{ width: `${(n / Math.max(1, c.invited)) * 100}%` }} />
                 </div>
                 <span className="w-12 shrink-0 text-right tabular-nums text-gray-700">
@@ -308,16 +308,16 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
           <>
             <input value={search} onChange={(e) => setSearch(e.target.value)}
                    placeholder="Search name, address or domain…"
-                   className="w-56 rounded border px-2 py-1 text-xs" />
+                   className="w-56 rounded-sm border px-2 py-1 text-xs" />
             <select value={life} onChange={(e) => setLife(e.target.value)}
-                    aria-label="Lifecycle" className="rounded border px-2 py-1 text-xs">
+                    aria-label="Lifecycle" className="rounded-sm border px-2 py-1 text-xs">
               <option value="">All lifecycle states</option>
               {Object.entries(LIFECYCLE_META).map(([k, m]) => (
                 <option key={k} value={k}>{m.label}</option>
               ))}
             </select>
             <select value={cls} onChange={(e) => setCls(e.target.value)}
-                    aria-label="Domain class" className="rounded border px-2 py-1 text-xs">
+                    aria-label="Domain class" className="rounded-sm border px-2 py-1 text-xs">
               <option value="">All domain classes</option>
               {Object.entries(CLASS_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
             </select>
@@ -327,7 +327,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
             </label>
             {dom && (
               <button onClick={() => setDom("")}
-                      className="rounded border px-2 py-1 text-xs text-gray-700 hover:bg-gray-50">
+                      className="rounded-sm border px-2 py-1 text-xs text-gray-700 hover:bg-gray-50">
                 {dom} ✕
               </button>
             )}
@@ -375,7 +375,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
                       </div>
                     </td>
                     <td className="px-2 py-1.5">
-                      <span className={`rounded px-1.5 py-0.5 ${m.cls}`} title={m.why}>{m.label}</span>
+                      <span className={`rounded-sm px-1.5 py-0.5 ${m.cls}`} title={m.why}>{m.label}</span>
                     </td>
                     <td className="px-2 py-1.5 tabular-nums text-gray-700" title={r.invited_at}>
                       {age(r.invited_days_ago, r.invited_at)}

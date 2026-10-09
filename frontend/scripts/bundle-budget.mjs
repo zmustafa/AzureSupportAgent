@@ -52,7 +52,17 @@ const chunks = js.map((name) => {
   };
 });
 
-const config = existsSync(BUDGET_FILE) ? JSON.parse(readFileSync(BUDGET_FILE, "utf8")) : {};
+let config;
+try {
+  config = JSON.parse(readFileSync(BUDGET_FILE, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+  if (!update) {
+    console.error(`No ${BUDGET_FILE}. Run with --update to create it.`);
+    process.exit(2);
+  }
+  config = {};
+}
 // Opt-in chunks are third-party code that is only fetched when a user explicitly asks for it
 // (e.g. mermaid's elk layout engine for `layout: elk` diagrams). They still count toward the
 // total, but are excluded from the largest-chunk check so they do not mask a regression in an
@@ -79,10 +89,6 @@ if (update) {
   process.exit(0);
 }
 
-if (!existsSync(BUDGET_FILE)) {
-  console.error(`No ${BUDGET_FILE}. Run with --update to create it.`);
-  process.exit(2);
-}
 const { budgets } = config;
 
 console.log(`\n  ${chunks.length} chunks, ${measured.totalRawKB} KB raw / ${Math.round(totalGzip / KB)} KB gzip\n`);

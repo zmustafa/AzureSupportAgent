@@ -92,7 +92,7 @@ export function SendToTicketMenu({ chatId }: { chatId: string | null }) {
                       >
                         <span>{ICON[c.type] ?? "🎫"}</span>
                         <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{c.label}</span>
+                        <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{c.label}</span>
                       </button>
                     </li>
                   ))}
@@ -108,7 +108,7 @@ export function SendToTicketMenu({ chatId }: { chatId: string | null }) {
                 The <b>entire conversation</b> (start to finish) will be sent to <b>{stage.conn.name}</b> ({stage.conn.label}) as a new ticket — included in the body <b>and</b> attached as a PDF transcript.
               </p>
               <div className="mt-3 flex justify-end gap-2">
-                <button onClick={() => setStage({ kind: "menu" })} className="rounded border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Back</button>
+                <button onClick={() => setStage({ kind: "menu" })} className="rounded-sm border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Back</button>
                 <button onClick={() => void send(stage.conn)} className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-dark">Create ticket</button>
               </div>
             </div>
@@ -137,7 +137,7 @@ export function SendToTicketMenu({ chatId }: { chatId: string | null }) {
                     <button
                       onClick={() => { void navigator.clipboard.writeText(stage.result.number!); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                       title="Copy ticket number"
-                      className="rounded border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+                      className="rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
                     >
                       {copied ? "✓ Copied" : "Copy"}
                     </button>
@@ -155,7 +155,7 @@ export function SendToTicketMenu({ chatId }: { chatId: string | null }) {
                     : null}
               </div>
               <div className="mt-3 flex justify-end">
-                <button onClick={close} className="rounded border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Done</button>
+                <button onClick={close} className="rounded-sm border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Done</button>
               </div>
             </div>
           )}
@@ -163,9 +163,9 @@ export function SendToTicketMenu({ chatId }: { chatId: string | null }) {
           {stage.kind === "error" && (
             <div className="p-3">
               <div className="text-sm font-medium text-red-700">Ticket creation failed</div>
-              <p className="mt-1 break-words text-xs text-red-600">{stage.message}</p>
+              <p className="mt-1 wrap-break-word text-xs text-red-600">{stage.message}</p>
               <div className="mt-3 flex justify-end gap-2">
-                <button onClick={() => setStage({ kind: "menu" })} className="rounded border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Back</button>
+                <button onClick={() => setStage({ kind: "menu" })} className="rounded-sm border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Back</button>
                 <button onClick={() => void send(stage.conn)} className="rounded-lg bg-gray-900 px-3 py-1 text-xs font-semibold text-white">Retry</button>
               </div>
             </div>

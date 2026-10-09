@@ -33,7 +33,7 @@ function ScopeNodeRow({
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded px-1 py-1 text-xs ${selected ? "bg-brand/10 font-medium text-brand" : "text-gray-700 hover:bg-gray-100"}`}
+        className={`flex items-center gap-1 rounded-sm px-1 py-1 text-xs ${selected ? "bg-brand/10 font-medium text-brand" : "text-gray-700 hover:bg-gray-100"}`}
         style={{ paddingLeft: depth * 14 + 4 }}
       >
         {isMg ? (

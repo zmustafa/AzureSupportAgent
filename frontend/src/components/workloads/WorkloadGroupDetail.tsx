@@ -32,7 +32,7 @@ const TONE_CLS: Record<Tone, string> = {
 };
 
 function Chip({ tone, children }: { tone: Tone; children: React.ReactNode }) {
-  return <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${TONE_CLS[tone]}`}>{children}</span>;
+  return <span className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${TONE_CLS[tone]}`}>{children}</span>;
 }
 
 const bandTone = (band?: string): Tone =>
@@ -172,7 +172,7 @@ function DriftMatrix({
                         {c > 0 ? (
                           <span className="text-gray-800">{c}</span>
                         ) : (
-                          <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-500">missing</span>
+                          <span className="rounded-sm bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-500">missing</span>
                         )}
                       </td>
                     );
@@ -222,7 +222,7 @@ function SignalMatrix({
                         {typeof v === "number" ? (
                           <span className="text-gray-800">{v}</span>
                         ) : (
-                          <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-500">none</span>
+                          <span className="rounded-sm bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-500">none</span>
                         )}
                       </td>
                     );
@@ -574,13 +574,13 @@ export function WorkloadGroupDetailPanel() {
             <div className="flex w-fit items-center gap-0.5 rounded-lg border bg-gray-50 p-0.5 text-xs">
               <button
                 onClick={() => setTab("members")}
-                className={tab === "members" ? "rounded-md bg-white px-3 py-1 font-medium text-gray-800 shadow-sm" : "rounded-md px-3 py-1 text-gray-500 hover:text-gray-700"}
+                className={tab === "members" ? "rounded-md bg-white px-3 py-1 font-medium text-gray-800 shadow-xs" : "rounded-md px-3 py-1 text-gray-500 hover:text-gray-700"}
               >
                 Members
               </button>
               <button
                 onClick={() => setTab("compare")}
-                className={tab === "compare" ? "rounded-md bg-white px-3 py-1 font-medium text-gray-800 shadow-sm" : "rounded-md px-3 py-1 text-gray-500 hover:text-gray-700"}
+                className={tab === "compare" ? "rounded-md bg-white px-3 py-1 font-medium text-gray-800 shadow-xs" : "rounded-md px-3 py-1 text-gray-500 hover:text-gray-700"}
               >
                 ⚖️ Compare environments
               </button>

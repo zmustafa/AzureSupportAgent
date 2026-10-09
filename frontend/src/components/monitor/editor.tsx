@@ -85,11 +85,11 @@ export function WidgetEditor({
             <input
               value={draft.title}
               onChange={(e) => patch({ title: e.target.value })}
-              className="mt-0.5 w-full rounded border-0 p-0 text-lg font-semibold text-gray-900 focus:ring-0"
+              className="mt-0.5 w-full rounded-sm border-0 p-0 text-lg font-semibold text-gray-900 focus:ring-0"
               placeholder="Widget title"
             />
           </div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         {/* Live preview */}
@@ -273,11 +273,11 @@ function ThresholdsEditor({ value, onChange }: { value: Threshold[]; onChange: (
     <div className="space-y-1.5">
       {value.map((t, i) => (
         <div key={i} className="flex items-center gap-1.5">
-          <select value={t.op} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, op: e.target.value } : x)))} className="rounded border border-gray-200 px-1.5 py-1 text-xs">
+          <select value={t.op} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, op: e.target.value } : x)))} className="rounded-sm border border-gray-200 px-1.5 py-1 text-xs">
             {[">", ">=", "<", "<=", "="].map((o) => <option key={o}>{o}</option>)}
           </select>
-          <input type="number" value={t.value} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, value: Number(e.target.value) } : x)))} className="w-20 rounded border border-gray-200 px-1.5 py-1 text-xs" />
-          <select value={t.color} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)))} className="rounded border border-gray-200 px-1.5 py-1 text-xs">
+          <input type="number" value={t.value} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, value: Number(e.target.value) } : x)))} className="w-20 rounded-sm border border-gray-200 px-1.5 py-1 text-xs" />
+          <select value={t.color} onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)))} className="rounded-sm border border-gray-200 px-1.5 py-1 text-xs">
             {["red", "amber", "green"].map((c) => <option key={c}>{c}</option>)}
           </select>
           <button onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">✕</button>
@@ -433,7 +433,7 @@ export function AiWidgetModal({ onAdd, onClose }: { onAdd: (w: MonitorWidget) =>
           {busy ? "Generating…" : "Generate"}
         </button>
       </div>
-      {error && <div className="mt-2 rounded bg-red-50 p-2 text-xs text-red-600">{error}</div>}
+      {error && <div className="mt-2 rounded-sm bg-red-50 p-2 text-xs text-red-600">{error}</div>}
       {preview && (
         <div className="mt-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Preview · {preview.type}</div>
@@ -524,7 +524,7 @@ export function BuildFromWorkloadModal({ onCreated, onClose }: { onCreated: (das
           {busy && !suggestions ? "Analyzing…" : "Suggest widgets"}
         </button>
       </div>
-      {error && <div className="mt-2 rounded bg-red-50 p-2 text-xs text-red-600">{error}</div>}
+      {error && <div className="mt-2 rounded-sm bg-red-50 p-2 text-xs text-red-600">{error}</div>}
       {suggestions && (
         <div className="mt-3">
           <div className="mb-1.5 flex items-center gap-2 text-xs text-gray-500">
@@ -584,7 +584,7 @@ function Modal({ title, children, onClose, wide }: { title: string; children: Re
       <div className={`w-full ${wide ? "max-w-2xl" : "max-w-lg"} rounded-2xl bg-white p-5 shadow-2xl`} onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
         {children}
       </div>

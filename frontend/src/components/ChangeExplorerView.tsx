@@ -110,7 +110,7 @@ function shortType(t: string): string { return (t || "").split("/").slice(1).joi
 
 function RiskChip({ label, score }: { label: string; score?: number }) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${RISK_BG[label] || "bg-gray-100 text-gray-600"}`}>
+    <span className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${RISK_BG[label] || "bg-gray-100 text-gray-600"}`}>
       {label}{score !== undefined ? ` ${score}` : ""}
     </span>
   );
@@ -496,22 +496,22 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
             />
           </div>
           <label className="text-xs text-gray-500">Scope
-            <select value={scopeMode} onChange={(e) => { setScopeMode(e.target.value); setConfirmTenant(false); }} className="mt-0.5 block rounded border px-2 py-1 text-sm">
+            <select value={scopeMode} onChange={(e) => { setScopeMode(e.target.value); setConfirmTenant(false); }} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm">
               <option value="workload">Workload only</option>
               <option value="workload_dependencies">Workload + dependencies</option>
               <option value="tenant">Tenant-wide</option>
             </select>
           </label>
           <label className="flex h-[29px] cursor-pointer select-none items-center gap-1.5 self-end text-xs text-gray-600" title="AI analysis is the slowest phase. Leave off for a fast deterministic run; you can run AI later from the result, or it runs automatically when you open a change record.">
-            <input type="checkbox" checked={runAi} onChange={(e) => setRunAi(e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-300" />
+            <input type="checkbox" checked={runAi} onChange={(e) => setRunAi(e.target.checked)} className="h-3.5 w-3.5 rounded-sm border-gray-300" />
             <span>✨ Perform AI analysis</span>
           </label>
           <button onClick={() => analyze()} disabled={analyzing} className="self-end rounded-lg bg-gray-900 px-4 py-1.5 text-sm text-white disabled:opacity-50">
             {analyzing ? "Analyzing…" : "⚡ Analyze Changes"}
           </button>
         </div>
-        {err && <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
-        {active?.error && <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{active.error}</div>}
+        {err && <div className="mt-2 rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
+        {active?.error && <div className="mt-2 rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{active.error}</div>}
 
         {/* Tenant-wide confirmation — this scope scans every subscription, so confirm yes/no first. */}
         {confirmTenant && !analyzing && (
@@ -521,8 +521,8 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
               <b>Tenant-wide scan.</b> This queries Resource Graph &amp; the Activity Log across <b>every subscription</b> in the tenant — it can take a while and pull a large number of changes. Run it?
             </span>
             <div className="ml-auto flex gap-2">
-              <button onClick={() => setConfirmTenant(false)} className="rounded border border-amber-300 px-3 py-1 text-xs text-amber-700 hover:bg-amber-100">No, cancel</button>
-              <button onClick={() => analyze(true)} className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700">Yes, run tenant-wide</button>
+              <button onClick={() => setConfirmTenant(false)} className="rounded-sm border border-amber-300 px-3 py-1 text-xs text-amber-700 hover:bg-amber-100">No, cancel</button>
+              <button onClick={() => analyze(true)} className="rounded-sm bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700">Yes, run tenant-wide</button>
             </div>
           </div>
         )}
@@ -656,7 +656,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
               <>
               {/* ✨ Ask AI — natural-language change search ("show me all VMs modified yesterday").
                   Composes with the manual filters below by narrowing to the matched change ids. */}
-              <div className="mb-3 rounded-xl border bg-gradient-to-br from-violet-50 to-white p-3">
+              <div className="mb-3 rounded-xl border bg-linear-to-br from-violet-50 to-white p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-base">✨</span>
                   <span className="text-sm font-medium text-gray-800">Ask AI</span>
@@ -687,7 +687,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                     {aiRes.in_window === false ? (
                       <>
-                        <span className="rounded bg-amber-100 px-2 py-0.5 font-medium text-amber-700">⚠ {aiRes.suggested_window?.label ?? "that window"} isn’t in the loaded run</span>
+                        <span className="rounded-sm bg-amber-100 px-2 py-0.5 font-medium text-amber-700">⚠ {aiRes.suggested_window?.label ?? "that window"} isn’t in the loaded run</span>
                         <button onClick={rescanSuggested} className="rounded-lg bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700">↻ Analyze {fmtWindow(aiRes.suggested_window)}</button>
                       </>
                     ) : (
@@ -697,7 +697,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                         {aiRes.explanation && <span className="text-gray-500">{aiRes.explanation}</span>}
                       </>
                     )}
-                    <button onClick={clearAi} className="rounded border px-2 py-0.5 text-gray-500 hover:bg-white">✕ clear</button>
+                    <button onClick={clearAi} className="rounded-sm border px-2 py-0.5 text-gray-500 hover:bg-white">✕ clear</button>
                   </div>
                 )}
               </div>
@@ -706,7 +706,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                 <Filter label="Category" value={fCat} setValue={setFCat} options={run.facets.categories} />
                 <Filter label="Actor" value={fActor} setValue={setFActor} options={run.facets.actors} />
                 <Filter label="Type" value={fType} setValue={setFType} options={run.facets.resource_types} fmt={shortType} />
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="rounded border px-2 py-1 text-sm" />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="rounded-sm border px-2 py-1 text-sm" />
                 <span className="text-[11px] text-gray-400">{filtered.length} / {events.length}</span>
                 <PerspectiveBar
                   current={{ fRisk, fCat, fActor, fType, search }}
@@ -762,7 +762,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
 
 function Filter({ label, value, setValue, options, fmt }: { label: string; value: string; setValue: (v: string) => void; options: string[]; fmt?: (s: string) => string }) {
   return (
-    <select value={value} onChange={(e) => setValue(e.target.value)} className="rounded border px-2 py-1 text-xs">
+    <select value={value} onChange={(e) => setValue(e.target.value)} className="rounded-sm border px-2 py-1 text-xs">
       <option value="">{label}: all</option>
       {options.map((o) => <option key={o} value={o}>{fmt ? fmt(o) : o}</option>)}
     </select>
@@ -790,7 +790,7 @@ function PerspectiveBar({ current, onApply }: { current: Perspective; onApply: (
   }
   return (
     <div className="flex flex-wrap items-center gap-1">
-      <button onClick={save} title="Save the current filters as a named perspective" className="rounded border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">💾 Save view</button>
+      <button onClick={save} title="Save the current filters as a named perspective" className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">💾 Save view</button>
       {saved.map((s) => (
         <span key={s.name} className="inline-flex items-center gap-0.5 rounded-full border bg-white px-1.5 py-0.5 text-[11px]">
           <button onClick={() => onApply(s.p)} className="text-gray-700 hover:text-brand">⭐ {s.name}</button>
@@ -883,17 +883,17 @@ function HistoryGrid({ runs, trashed, currentRunId, onLoad, onDelete, onRestore,
         <tbody>
           {rows.slice(0, 12).map((r) => (
             <tr key={r.runId} className={`border-t ${r.runId === currentRunId ? "bg-brand/5" : "hover:bg-gray-50"}`}>
-              <td className="px-3 py-1.5 font-medium text-gray-700">{r.workloadName}{r.demo && <span className="ml-1 rounded bg-gray-100 px-1 text-[9px] text-gray-500">demo</span>}</td>
+              <td className="px-3 py-1.5 font-medium text-gray-700">{r.workloadName}{r.demo && <span className="ml-1 rounded-sm bg-gray-100 px-1 text-[9px] text-gray-500">demo</span>}</td>
               <td className="px-2 text-gray-500">{r.scopeMode.replace("_", " + ")}</td>
               <td className="px-2 text-[10px] text-gray-500">
                 {fmtShort(r.startTime)} → {fmtShort(r.endTime)}
-                <span className="ml-1 rounded bg-gray-100 px-1 text-[9px] text-gray-500">{fmtDuration(r.startTime, r.endTime)}</span>
+                <span className="ml-1 rounded-sm bg-gray-100 px-1 text-[9px] text-gray-500">{fmtDuration(r.startTime, r.endTime)}</span>
               </td>
               <td className="px-2 text-right tabular-nums">{r.totalChanges}</td>
               <td className="px-2">
-                {r.criticalCount > 0 && <span className="mr-0.5 rounded bg-red-100 px-1 text-[9px] text-red-700">{r.criticalCount}C</span>}
-                {r.highCount > 0 && <span className="mr-0.5 rounded bg-orange-100 px-1 text-[9px] text-orange-700">{r.highCount}H</span>}
-                {r.mediumCount > 0 && <span className="rounded bg-amber-100 px-1 text-[9px] text-amber-700">{r.mediumCount}M</span>}
+                {r.criticalCount > 0 && <span className="mr-0.5 rounded-sm bg-red-100 px-1 text-[9px] text-red-700">{r.criticalCount}C</span>}
+                {r.highCount > 0 && <span className="mr-0.5 rounded-sm bg-orange-100 px-1 text-[9px] text-orange-700">{r.highCount}H</span>}
+                {r.mediumCount > 0 && <span className="rounded-sm bg-amber-100 px-1 text-[9px] text-amber-700">{r.mediumCount}M</span>}
               </td>
               <td className="px-2 text-[10px] text-gray-500">
                 {fmtShort(showTrash ? (r.deleted_at || "") : r.completedAt)}
@@ -904,19 +904,19 @@ function HistoryGrid({ runs, trashed, currentRunId, onLoad, onDelete, onRestore,
                   confirmPurge === r.runId ? (
                     <span className="inline-flex items-center gap-1">
                       <span className="text-[9px] text-red-600">Delete forever?</span>
-                      <button onClick={() => { onPurge(r.runId); setConfirmPurge(""); }} className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] text-white">Yes</button>
-                      <button onClick={() => setConfirmPurge("")} className="rounded border px-1.5 py-0.5 text-[10px] text-gray-500">No</button>
+                      <button onClick={() => { onPurge(r.runId); setConfirmPurge(""); }} className="rounded-sm bg-red-600 px-1.5 py-0.5 text-[10px] text-white">Yes</button>
+                      <button onClick={() => setConfirmPurge("")} className="rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-500">No</button>
                     </span>
                   ) : (
                     <>
-                      <button onClick={() => onRestore(r.runId)} className="rounded border px-1.5 py-0.5 text-[10px] text-emerald-700 hover:bg-emerald-50">Restore</button>
-                      <button onClick={() => setConfirmPurge(r.runId)} className="ml-1 rounded border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-red-600" title="Delete permanently">Delete forever</button>
+                      <button onClick={() => onRestore(r.runId)} className="rounded-sm border px-1.5 py-0.5 text-[10px] text-emerald-700 hover:bg-emerald-50">Restore</button>
+                      <button onClick={() => setConfirmPurge(r.runId)} className="ml-1 rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-red-600" title="Delete permanently">Delete forever</button>
                     </>
                   )
                 ) : (
                   <>
-                    <button onClick={() => onLoad(r.runId)} className="rounded border px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/5">{r.runId === currentRunId ? "Loaded" : "Load"}</button>
-                    <button onClick={() => onDelete(r.runId)} className="ml-1 rounded border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-red-600" title="Move to trash">🗑</button>
+                    <button onClick={() => onLoad(r.runId)} className="rounded-sm border px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/5">{r.runId === currentRunId ? "Loaded" : "Load"}</button>
+                    <button onClick={() => onDelete(r.runId)} className="ml-1 rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-red-600" title="Move to trash">🗑</button>
                   </>
                 )}
               </td>
@@ -1057,7 +1057,7 @@ function SummaryTab({ run }: { run: ChangeAnalysisRun }) {
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-3">
-          <div className="rounded-xl border bg-gradient-to-br from-violet-50 to-white p-4">
+          <div className="rounded-xl border bg-linear-to-br from-violet-50 to-white p-4">
             <div className="text-sm font-medium text-gray-800">Plain-English summary</div>
             <p className="mt-1 text-sm text-gray-700">{run.summary}</p>
           </div>
@@ -1131,11 +1131,11 @@ function TimelineTab({ events, onSelect, onNarrow, analyzing }: { events: Change
         <div className="relative space-y-2 border-l-2 border-gray-100 pl-4">
           {shown.map((e) => (
             <button key={e.changeId} onClick={() => onSelect(e)} className="block w-full rounded-lg border bg-white p-2 text-left hover:bg-gray-50">
-              <div className="absolute -left-[7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[e.riskLabel] }} />
+              <div className="absolute left-[-7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[e.riskLabel] }} />
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs tabular-nums text-gray-400">{fmtTime(e.eventTime)}</span>
                 <RiskChip label={e.riskLabel} score={e.riskScore} />
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{e.category}</span>
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{e.category}</span>
                 <span className="text-sm font-medium text-gray-800">{e.resourceName}</span>
                 <span className="text-[11px] text-gray-400">{e.actorDisplay || e.actor}</span>
               </div>
@@ -1184,7 +1184,7 @@ function TimelineSlicer({
   function setHi(t: number) { onChange([lo, Math.max(t, lo)]); }
 
   return (
-    <div className="rounded-xl border bg-white p-3 shadow-sm">
+    <div className="rounded-xl border bg-white p-3 shadow-xs">
       {/* Dynamic popover — appears above the slider when a sub-window is brushed. Re-runs the
           WHOLE analysis scoped to that window (a real new search, not just a client filter). */}
       <div className="relative h-9">
@@ -1213,9 +1213,9 @@ function TimelineSlicer({
           {([
             ["1h", hourMs], ["6h", 6 * hourMs], ["24h", dayMs], ["7d", 7 * dayMs],
           ] as const).map(([lbl, ms]) => (
-            <button key={lbl} onClick={() => onChange([Math.max(minTs, maxTs - ms), maxTs])} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">{lbl}</button>
+            <button key={lbl} onClick={() => onChange([Math.max(minTs, maxTs - ms), maxTs])} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">{lbl}</button>
           ))}
-          <button onClick={() => onChange(null)} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">All</button>
+          <button onClick={() => onChange(null)} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">All</button>
         </div>
       </div>
       {/* histogram */}
@@ -1239,7 +1239,7 @@ function TimelineSlicer({
             );
           })}
         </div>
-        <div className="pointer-events-none absolute inset-y-0 rounded bg-brand/10" style={{ left: `${pct(lo)}%`, right: `${100 - pct(hi)}%` }} />
+        <div className="pointer-events-none absolute inset-y-0 rounded-sm bg-brand/10" style={{ left: `${pct(lo)}%`, right: `${100 - pct(hi)}%` }} />
       </div>
       {/* dual range */}
       <div className="relative mt-1 h-4">
@@ -1311,10 +1311,10 @@ function OperationsTab({ run, onSelect }: { run: ChangeAnalysisRun; onSelect: (e
           <button onClick={() => toggle(op.operationId)} className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left hover:bg-gray-50">
             <span className="text-gray-400">{open.has(op.operationId) ? "▾" : "▸"}</span>
             <RiskChip label={op.highestRiskLabel} score={op.highestRiskScore} />
-            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">{op.verb}</span>
+            <span className="rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">{op.verb}</span>
             <span className="text-sm font-medium text-gray-800">{op.actor}</span>
             <span className="text-[11px] text-gray-500">{op.changeCount} change{op.changeCount === 1 ? "" : "s"} · {op.resourceCount} resource{op.resourceCount === 1 ? "" : "s"}</span>
-            {op.securityFlagCount > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🛡️ {op.securityFlagCount}</span>}
+            {op.securityFlagCount > 0 && <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🛡️ {op.securityFlagCount}</span>}
             <span className="ml-auto text-[11px] tabular-nums text-gray-400">{fmtTime(op.startTime)}</span>
           </button>
           {open.has(op.operationId) && (
@@ -1369,11 +1369,11 @@ function NarrativeTab({ run, onSelect }: { run: ChangeAnalysisRun; onSelect: (e:
         {beats.map((b, i) => (
           <button key={i} onClick={() => { const e = eventsById.get(b.changeIds[0]); if (e) onSelect(e); }}
             className="block w-full rounded-lg border bg-white p-2 text-left hover:bg-gray-50">
-            <div className="absolute -left-[7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[b.riskLabel] }} />
+            <div className="absolute left-[-7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[b.riskLabel] }} />
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs tabular-nums text-gray-400">{fmtTime(b.time)}</span>
               <RiskChip label={b.riskLabel} score={b.riskScore} />
-              {b.securityFlagCount > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🛡️ {b.securityFlagCount}</span>}
+              {b.securityFlagCount > 0 && <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🛡️ {b.securityFlagCount}</span>}
             </div>
             <div className="mt-0.5 text-[13px] text-gray-700">{b.text}</div>
           </button>
@@ -1464,13 +1464,13 @@ function CompareTab({ run, history }: { run: ChangeAnalysisRun; history: ChangeR
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3">
         <span className="text-sm font-medium text-gray-700">Compare current run with a baseline:</span>
-        <select value={otherId} onChange={(e) => setOtherId(e.target.value)} className="rounded border px-2 py-1 text-sm">
+        <select value={otherId} onChange={(e) => setOtherId(e.target.value)} className="rounded-sm border px-2 py-1 text-sm">
           <option value="">Select a baseline run…</option>
           {others.map((h) => <option key={h.runId} value={h.runId}>{fmtTime(h.startTime)} → {fmtTime(h.endTime)} · {h.totalChanges} changes</option>)}
         </select>
         <button onClick={go} disabled={!otherId || busy} className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "Comparing…" : "Compare"}</button>
       </div>
-      {err && <div className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
+      {err && <div className="rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
       {result && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1537,7 +1537,7 @@ function ResourceHistoryDrawer({ run, resourceId, onClose, onSelect }: {
         <div className="relative space-y-2 border-l-2 border-gray-100 px-4 pb-6 pl-6">
           {evs.map((e) => (
             <button key={e.changeId} onClick={() => onSelect(e)} className="block w-full rounded-lg border bg-white p-2 text-left hover:bg-gray-50">
-              <div className="absolute -left-[7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[e.riskLabel] }} />
+              <div className="absolute left-[-7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[e.riskLabel] }} />
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] tabular-nums text-gray-400">{fmtTime(e.eventTime)}</span>
                 <RiskChip label={e.riskLabel} score={e.riskScore} />
@@ -1601,12 +1601,12 @@ function RiskTab({ run, onSelect }: { run: ChangeAnalysisRun; onSelect: (e: Chan
               <div className="flex flex-wrap items-center gap-2">
                 <RiskChip label={e.riskLabel} score={e.riskScore} />
                 <span className="text-sm font-medium text-gray-800">{e.resourceName}</span>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{e.category}</span>
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{e.category}</span>
               </div>
               <div className="mt-0.5 text-[12px] text-gray-600">{e.whyRisk}</div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {e.riskFactors.map((f, i) => (
-                  <span key={i} className={`rounded px-1.5 py-0.5 text-[10px] ${f.delta >= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
+                  <span key={i} className={`rounded-sm px-1.5 py-0.5 text-[10px] ${f.delta >= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
                     {f.label} {f.delta >= 0 ? "+" : ""}{f.delta}
                   </span>
                 ))}
@@ -1661,7 +1661,7 @@ function ResourcesTab({ run, onSelectResource }: { run: ChangeAnalysisRun; onSel
 function TabSearch({ q, setQ, shown, total, placeholder }: { q: string; setQ: (v: string) => void; shown: number; total: number; placeholder: string }) {
   return (
     <div className="flex items-center gap-2">
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder} className="w-72 rounded border px-2 py-1 text-sm" />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder} className="w-72 rounded-sm border px-2 py-1 text-sm" />
       {q && <button onClick={() => setQ("")} className="text-[11px] text-gray-400 hover:text-gray-600">✕ clear</button>}
       <span className="text-[11px] text-gray-400">{shown} / {total}</span>
     </div>
@@ -1681,7 +1681,7 @@ const ACTOR_KIND_STYLE: Record<string, { label: string; cls: string }> = {
 
 function ActorKindBadge({ kind }: { kind: string }) {
   const s = ACTOR_KIND_STYLE[kind] || ACTOR_KIND_STYLE.Unknown;
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${s.cls}`}>{s.label}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${s.cls}`}>{s.label}</span>;
 }
 
 // True when the displayed actor name is still a raw object-id (GUID) rather than a resolved name.
@@ -1719,7 +1719,7 @@ function ActorsTab({ run }: { run: ChangeAnalysisRun }) {
                 <tr key={a.actorId || a.actor} className="border-t align-top">
                   <td className="px-3 py-1.5">
                     <div className={`font-medium ${raw ? "font-mono text-[11px] text-gray-500" : "text-gray-800"}`} title={a.actorId || a.actor}>
-                      {a.actor}{raw && <span className="ml-1 rounded bg-gray-100 px-1 text-[9px] uppercase text-gray-400">unresolved id</span>}
+                      {a.actor}{raw && <span className="ml-1 rounded-sm bg-gray-100 px-1 text-[9px] uppercase text-gray-400">unresolved id</span>}
                     </div>
                     {a.onBehalfOf && a.onBehalfOf.length > 0 && (
                       <div className="text-[10px] text-gray-400">on behalf of {a.onBehalfOf.join(", ")}</div>
@@ -1816,7 +1816,7 @@ function ImpactTab({ run }: { run: ChangeAnalysisRun }) {
           <div className="mt-2 flex flex-wrap gap-1">
             {[...new Set(evs.map((e) => e.resourceName))].map((n) => {
               const top = evs.filter((e) => e.resourceName === n).sort((a, b) => b.riskScore - a.riskScore)[0];
-              return <span key={n} className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] text-gray-600"><span className="h-2 w-2 rounded-full" style={{ background: RISK_COLOR[top.riskLabel] }} />{n}</span>;
+              return <span key={n} className="flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-600"><span className="h-2 w-2 rounded-full" style={{ background: RISK_COLOR[top.riskLabel] }} />{n}</span>;
             })}
           </div>
         </div>
@@ -1866,7 +1866,7 @@ function ExportTab({ run }: { run: ChangeAnalysisRun }) {
           {Object.entries(queries).map(([k, v]) => (
             <div key={k} className="rounded-xl border bg-white p-3">
               <div className="mb-1 text-[11px] font-medium uppercase text-gray-500">{k}</div>
-              <pre className="max-h-48 overflow-auto rounded bg-gray-900 p-2 text-[11px] text-emerald-300">{v}</pre>
+              <pre className="max-h-48 overflow-auto rounded-sm bg-gray-900 p-2 text-[11px] text-emerald-300">{v}</pre>
             </div>
           ))}
         </div>
@@ -1920,15 +1920,15 @@ function ChangeDrawer({ event: e, runId, aiPending, pinned, note, onTogglePin, o
           <div className="mt-2 flex flex-wrap items-center gap-1">
             {onTogglePin && (
               <button onClick={onTogglePin} title={pinned ? "Unpin from case file" : "Pin to case file"}
-                className={`rounded border px-1.5 py-0.5 text-[11px] ${pinned ? "border-amber-300 bg-amber-50 text-amber-700" : "text-gray-500 hover:bg-gray-50"}`}>
+                className={`rounded-sm border px-1.5 py-0.5 text-[11px] ${pinned ? "border-amber-300 bg-amber-50 text-amber-700" : "text-gray-500 hover:bg-gray-50"}`}>
                 {pinned ? "📌 Pinned" : "📌 Pin"}
               </button>
             )}
             {onInvestigate && (
               <button onClick={onInvestigate} title="Open a Deep Investigation seeded with this change"
-                className="rounded border border-violet-300 bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 hover:bg-violet-100">🔎 Investigate</button>
+                className="rounded-sm border border-violet-300 bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 hover:bg-violet-100">🔎 Investigate</button>
             )}
-            <button onClick={shareLink} title="Copy a shareable link to this change" className="rounded border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">🔗 Copy link</button>
+            <button onClick={shareLink} title="Copy a shareable link to this change" className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">🔗 Copy link</button>
           </div>
           <div className="mt-2 flex gap-1 border-b">
             {tabBtn("summary", "Summary")}
@@ -1954,7 +1954,7 @@ function ChangeDrawer({ event: e, runId, aiPending, pinned, note, onTogglePin, o
             <Field label="Possible impact">{e.possibleImpact}</Field>
             <Field label="Why this risk score">{e.whyRisk}</Field>
             <div className="flex flex-wrap gap-1">
-              {e.riskFactors.map((f, i) => <span key={i} className={`rounded px-1.5 py-0.5 text-[10px] ${f.delta >= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>{f.label} {f.delta >= 0 ? "+" : ""}{f.delta}</span>)}
+              {e.riskFactors.map((f, i) => <span key={i} className={`rounded-sm px-1.5 py-0.5 text-[10px] ${f.delta >= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>{f.label} {f.delta >= 0 ? "+" : ""}{f.delta}</span>)}
             </div>
             <div className="grid grid-cols-2 gap-2 text-[12px]">
               <KV k="Category" v={e.category} /><KV k="Confidence" v={e.confidence} />
@@ -1969,8 +1969,8 @@ function ChangeDrawer({ event: e, runId, aiPending, pinned, note, onTogglePin, o
             {onSaveNote && (
               <Field label="Investigator note">
                 <textarea value={noteDraft} onChange={(ev) => setNoteDraft(ev.target.value)} rows={2}
-                  placeholder="Add a note for the case file…" className="w-full rounded border px-2 py-1 text-xs" />
-                <button onClick={() => onSaveNote(noteDraft)} className="mt-1 rounded bg-gray-900 px-2 py-1 text-[11px] text-white hover:bg-gray-800">Save note</button>
+                  placeholder="Add a note for the case file…" className="w-full rounded-sm border px-2 py-1 text-xs" />
+                <button onClick={() => onSaveNote(noteDraft)} className="mt-1 rounded-sm bg-gray-900 px-2 py-1 text-[11px] text-white hover:bg-gray-800">Save note</button>
               </Field>
             )}
           </>}
@@ -1986,16 +1986,16 @@ function ChangeDrawer({ event: e, runId, aiPending, pinned, note, onTogglePin, o
             {e.rollbackHint && (
               <Field label="Inspect / revert (read-only — copy & run yourself)">
                 <div className="relative">
-                  <pre className="overflow-x-auto rounded bg-gray-900 p-2 pr-16 text-[10px] leading-relaxed text-amber-200">{e.rollbackHint}</pre>
+                  <pre className="overflow-x-auto rounded-sm bg-gray-900 p-2 pr-16 text-[10px] leading-relaxed text-amber-200">{e.rollbackHint}</pre>
                   <button onClick={() => void navigator.clipboard?.writeText(e.rollbackHint ?? "")}
-                    className="absolute right-1 top-1 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-gray-700">⧉ Copy</button>
+                    className="absolute right-1 top-1 rounded-sm border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-gray-700">⧉ Copy</button>
                 </div>
               </Field>
             )}
           </>}
           {section === "raw" && (
             rawLoading ? <Skeleton rows={6} />
-            : <pre className="max-h-[70vh] overflow-auto rounded bg-gray-900 p-2 text-[10px] text-emerald-300">{JSON.stringify(raw ?? {}, null, 2)}</pre>
+            : <pre className="max-h-[70vh] overflow-auto rounded-sm bg-gray-900 p-2 text-[10px] text-emerald-300">{JSON.stringify(raw ?? {}, null, 2)}</pre>
           )}
         </div>
       </div>
@@ -2010,7 +2010,7 @@ const SEC_SEV_STYLE: Record<string, string> = {
   low: "bg-blue-100 text-blue-700 border-blue-300",
 };
 function SecFlagChip({ flag }: { flag: { code: string; label: string; severity: string } }) {
-  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${SEC_SEV_STYLE[flag.severity] || "bg-gray-100 text-gray-600 border-gray-300"}`}>{flag.label}</span>;
+  return <span className={`rounded-sm border px-1.5 py-0.5 text-[10px] font-medium ${SEC_SEV_STYLE[flag.severity] || "bg-gray-100 text-gray-600 border-gray-300"}`}>{flag.label}</span>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

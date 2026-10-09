@@ -183,19 +183,19 @@ function FieldPopover({
           <button
             onClick={() => onStep(-1, draft)}
             disabled={saving || !!error}
-            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+            className="rounded-sm p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
             title="Previous field"
             aria-label="Previous field"
           >↤</button>
           <button
             onClick={() => onStep(1, draft)}
             disabled={saving || !!error}
-            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+            className="rounded-sm p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
             title="Next field"
             aria-label="Next field"
           >↦</button>
         </div>
-        <button onClick={onClose} aria-label="Close" className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100">✕</button>
+        <button onClick={onClose} aria-label="Close" className="shrink-0 rounded-sm p-0.5 text-gray-400 hover:bg-gray-100">✕</button>
       </div>
       {meta?.label && <div className="mb-1.5 text-[11px] text-gray-400">{meta.label}{meta.placeholder ? ` · e.g. ${meta.placeholder}` : ""}</div>}
       <FieldInput
@@ -575,7 +575,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
               title={filled ? `${field.label}: ${field.value} — click to edit` : `Click to pick or type: ${field.label}`}
               aria-label={filled ? `Edit field ${field.label}, current value ${field.value}` : `Fill field: ${field.label}`}
               className={
-                "km-field mx-0.5 inline-flex items-center gap-1 rounded-md border-2 px-1.5 py-0.5 align-baseline text-[12px] font-medium transition focus:outline-none focus:border-red-400 focus:bg-red-50 focus:text-red-700 focus:ring-2 focus:ring-red-300 " +
+                "km-field mx-0.5 inline-flex items-center gap-1 rounded-md border-2 px-1.5 py-0.5 align-baseline text-[12px] font-medium transition focus:outline-hidden focus:border-red-400 focus:bg-red-50 focus:text-red-700 focus:ring-2 focus:ring-red-300 " +
                 (active ? "km-active-field " : "") +
                 (filled
                   ? "border-gray-300 bg-white text-gray-800 hover:border-red-300 hover:bg-red-50"
@@ -823,7 +823,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                   key={m}
                   onClick={() => { setMode(m); if (m === "fill") setFillScope(""); }}
                   aria-label={m === "fill" ? "Guided fill mode" : `${m} mode`}
-                  className={`rounded px-2 py-0.5 ${mode === m ? "bg-brand/10 font-medium text-brand" : "text-gray-500 hover:bg-gray-100"}`}
+                  className={`rounded-sm px-2 py-0.5 ${mode === m ? "bg-brand/10 font-medium text-brand" : "text-gray-500 hover:bg-gray-100"}`}
                 >
                   {m === "read" ? "Read" : m === "fill" ? `✍️ Fill${prog.open ? ` (${prog.open})` : ""}` : "Edit"}
                 </button>
@@ -956,15 +956,15 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                 ) : diffMode ? (
                   <div className="overflow-hidden rounded-xl border">
                     <div className="flex items-center gap-3 border-b bg-gray-50 px-3 py-1.5 text-[11px] text-gray-500">
-                      <span><span className="rounded bg-red-100 px-1 text-red-700">− this revision</span></span>
-                      <span><span className="rounded bg-green-100 px-1 text-green-700">+ current version</span></span>
+                      <span><span className="rounded-sm bg-red-100 px-1 text-red-700">− this revision</span></span>
+                      <span><span className="rounded-sm bg-green-100 px-1 text-green-700">+ current version</span></span>
                       <span className="ml-auto">{diffRows.filter((r) => r.type !== "same").length} changed line(s)</span>
                     </div>
                     <pre className="max-h-[70vh] overflow-auto bg-white p-0 text-[12px] leading-relaxed">
                       {diffRows.map((r, idx) => (
                         <div
                           key={idx}
-                          className={`whitespace-pre-wrap break-words px-3 ${r.type === "add" ? "bg-green-50 text-green-800" : r.type === "del" ? "bg-red-50 text-red-800" : "text-gray-600"}`}
+                          className={`whitespace-pre-wrap wrap-break-word px-3 ${r.type === "add" ? "bg-green-50 text-green-800" : r.type === "del" ? "bg-red-50 text-red-800" : "text-gray-600"}`}
                         >
                           <span className="mr-2 select-none text-gray-300">{r.type === "add" ? "+" : r.type === "del" ? "−" : " "}</span>{r.text || " "}
                         </div>
@@ -1001,7 +1001,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                     onChange={(e) => setDraftTitle(e.target.value)}
                     placeholder={`Know-Me — ${workloadName}`}
                     aria-label="Document title"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-lg font-bold text-gray-900 focus:border-brand focus:outline-none"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-lg font-bold text-gray-900 focus:border-brand focus:outline-hidden"
                     autoFocus
                   />
                   <input
@@ -1009,7 +1009,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                     onChange={(e) => setDraftDesc(e.target.value)}
                     placeholder="Optional one-line description (helps tell multiple drafts apart)"
                     aria-label="Document description"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-brand focus:outline-hidden"
                   />
                   <div className="flex items-center gap-2">
                     <button onClick={() => void commitMeta()} disabled={saving} className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50">Save</button>
@@ -1040,22 +1040,22 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                             onClick={() => { setFillScope(s.key); setMode("fill"); }}
                             disabled={!!regenKey}
                             title={`Fill this section's ${sectionOpen} open field${sectionOpen === 1 ? "" : "s"} with AI assistance`}
-                            className="flex items-center gap-1 rounded border border-brand/30 bg-brand/5 px-1.5 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50"
+                            className="flex items-center gap-1 rounded-sm border border-brand/30 bg-brand/5 px-1.5 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50"
                           >
                             ✍️ Fill <span className="rounded-full bg-brand/15 px-1 text-[9px] tabular-nums">{sectionOpen}</span>
                           </button>
                         )}
-                        <button onClick={() => void regenSection(s.key)} disabled={!!regenKey} aria-label={`Regenerate section ${s.label} with AI`} title="Regenerate this section with AI" className="rounded border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white disabled:opacity-50">
+                        <button onClick={() => void regenSection(s.key)} disabled={!!regenKey} aria-label={`Regenerate section ${s.label} with AI`} title="Regenerate this section with AI" className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white disabled:opacity-50">
                           {regenKey === s.key ? <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand border-t-transparent align-middle" /> : "✨"}
                         </button>
-                        <button onClick={() => setEditSection(s)} disabled={!!regenKey} aria-label={`Edit section ${s.label}`} title="Edit this section" className="rounded border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white disabled:opacity-50">✏️</button>
+                        <button onClick={() => setEditSection(s)} disabled={!!regenKey} aria-label={`Edit section ${s.label}`} title="Edit this section" className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white disabled:opacity-50">✏️</button>
                         {/* Live regenerate status popup, anchored to this section's ✨ button. */}
                         {regenKey === s.key && (
                           <div className="absolute right-0 top-full z-30 mt-1.5 w-80 rounded-xl border border-brand/20 bg-white p-2.5 text-left shadow-xl">
                             <div className="flex items-center gap-2 border-b border-brand/10 pb-1.5 text-[12px] font-medium text-brand">
                               <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                               <span>Regenerating “{s.label}”…</span>
-                              <button onClick={cancelRegen} className="ml-auto rounded border border-brand/30 px-1.5 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/5">Cancel</button>
+                              <button onClick={cancelRegen} className="ml-auto rounded-sm border border-brand/30 px-1.5 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/5">Cancel</button>
                             </div>
                             <ol className="mt-1.5 max-h-48 space-y-0.5 overflow-y-auto">
                               {regenSteps.map((st, i) => {
@@ -1156,7 +1156,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                       <button
                         onClick={(e) => { e.stopPropagation(); void restoreRev(r.id); }}
                         title="Restore this version as the new current version"
-                        className="ml-auto rounded border border-amber-300 bg-white px-1.5 py-0.5 font-medium text-amber-700 opacity-0 transition hover:bg-amber-100 group-hover:opacity-100"
+                        className="ml-auto rounded-sm border border-amber-300 bg-white px-1.5 py-0.5 font-medium text-amber-700 opacity-0 transition hover:bg-amber-100 group-hover:opacity-100"
                       >↩ Restore</button>
                     </div>
                   </div>
@@ -1341,7 +1341,7 @@ function BuildFromWorkloadModal({ onClose, onBuilt }: { onClose: () => void; onB
               value={wlId}
               onChange={(e) => setWlId(e.target.value)}
               disabled={state === "running"}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none disabled:bg-gray-50"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden disabled:bg-gray-50"
             >
               <option value="">Select a workload…</option>
               {workloads.map((w) => (
@@ -1662,7 +1662,7 @@ export function KnowMeIndex() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search workloads…"
               aria-label="Search Know-Me documents"
-              className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+              className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
             />
             {q && <button onClick={() => setQ("")} className="text-[11px] text-gray-400 hover:text-gray-700">✕ clear</button>}
             <span className="shrink-0 text-[11px] text-gray-400">{groups.length} of {totalGroups}</span>
@@ -1671,7 +1671,7 @@ export function KnowMeIndex() {
               onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
               aria-label="Filter by status"
               title="Filter documents by lifecycle status"
-              className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-2 text-sm text-gray-600 focus:border-brand-dark focus:outline-none"
+              className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-2 text-sm text-gray-600 focus:border-brand-dark focus:outline-hidden"
             >
               <option value="all">All statuses</option>
               <option value="published">Published</option>

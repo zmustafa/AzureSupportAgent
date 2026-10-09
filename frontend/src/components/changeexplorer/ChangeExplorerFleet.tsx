@@ -201,13 +201,13 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
             <div className="flex items-center rounded-md border bg-gray-50 p-0.5 text-xs" title="Fast = deterministic only (quick). AI = adds the AI enrichment pass (narrative + sharper risk), slower.">
               <button
                 onClick={() => setRunAi(false)}
-                className={`rounded px-2 py-0.5 ${!runAi ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
+                className={`rounded-sm px-2 py-0.5 ${!runAi ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}
               >
                 ⚡ Fast
               </button>
               <button
                 onClick={() => setRunAi(true)}
-                className={`rounded px-2 py-0.5 ${runAi ? "bg-white font-medium text-brand shadow-sm" : "text-gray-500"}`}
+                className={`rounded-sm px-2 py-0.5 ${runAi ? "bg-white font-medium text-brand shadow-xs" : "text-gray-500"}`}
               >
                 ✨ AI
               </button>
@@ -281,7 +281,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
                       ) : queued ? (
                         <span className="text-[11px] text-gray-400">queued</span>
                       ) : err ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700" title={err}>⚠ failed</span>
+                        <span className="inline-flex items-center gap-1 rounded-sm bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700" title={err}>⚠ failed</span>
                       ) : r.has_runs ? (
                         <span className="font-semibold tabular-nums text-gray-800">{r.total_changes}</span>
                       ) : (
@@ -305,7 +305,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
                       )}
                     </td>
                     <td className="px-2 py-1.5">
-                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
+                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
                     </td>
                   </tr>
                 );

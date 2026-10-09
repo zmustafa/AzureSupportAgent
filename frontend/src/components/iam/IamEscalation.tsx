@@ -39,15 +39,15 @@ const MIN_LEGIBLE_ZOOM = 0.35;
 function PathRow({ p, onSelect }: { p: IamEscalationPath; onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded border bg-white p-2">
+    <div className="rounded-sm border bg-white p-2">
       <button type="button" onClick={() => { setOpen((v) => !v); onSelect(p.from); }} className="w-full text-left">
         <div className="flex items-baseline gap-2">
-          <span className="rounded bg-red-100 px-1.5 text-[10px] font-semibold text-red-800">
+          <span className="rounded-sm bg-red-100 px-1.5 text-[10px] font-semibold text-red-800">
             {p.length} hop{p.length === 1 ? "" : "s"}
           </span>
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">{p.fromLabel}</span>
           <span
-            className="rounded px-1 text-[10px] uppercase"
+            className="rounded-sm px-1 text-[10px] uppercase"
             style={{ color: CONF_COLOUR[p.min_confidence] }}
             title="The weakest link in the chain — a path is only as trustworthy as its least certain hop."
           >
@@ -109,7 +109,7 @@ function CacheStrip({ connectionId, computing }: { connectionId: string | null; 
         type="button"
         onClick={() => rebuild.mutate()}
         disabled={rebuild.isPending || computing}
-        className="ml-auto rounded border border-gray-300 px-1.5 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50"
+        className="ml-auto rounded-sm border border-gray-300 px-1.5 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50"
         title="Recompute from the access data already collected. Does not call Azure."
       >
         {rebuild.isPending ? "Rebuilding…" : "↻ Rebuild"}
@@ -137,7 +137,7 @@ function ComputingNotice({ connectionId }: { connectionId: string | null }) {
 
   const typical = meta.data?.entries.find((e) => e.key === "escalation")?.duration_seconds ?? null;
   return (
-    <div className="rounded border bg-white p-3">
+    <div className="rounded-sm border bg-white p-3">
       <div className="text-sm text-gray-700">
         Computing the escalation graph… <b className="tabular-nums">{elapsed}s</b>
       </div>
@@ -147,7 +147,7 @@ function ComputingNotice({ connectionId }: { connectionId: string | null }) {
           : "No previous build to estimate from. The result is cached, so later visits are instant until the access data changes."}
       </p>
       {typical ? (
-        <div className="mt-2 h-1 w-full overflow-hidden rounded bg-gray-200">
+        <div className="mt-2 h-1 w-full overflow-hidden rounded-sm bg-gray-200">
           <div
             className="h-full bg-sky-400 transition-[width] duration-1000"
             style={{ width: `${Math.min(100, Math.round((elapsed / typical) * 100))}%` }}
@@ -311,7 +311,7 @@ export function EscalationTab() {
             value={minConfidence}
             onChange={(e) => setMinConfidence(e.target.value)}
             aria-label="Minimum confidence"
-            className="ml-auto rounded border border-gray-300 px-1.5 py-0.5 text-xs"
+            className="ml-auto rounded-sm border border-gray-300 px-1.5 py-0.5 text-xs"
           >
             <option value="low">All confidence</option>
             <option value="medium">Medium and up</option>
@@ -331,7 +331,7 @@ export function EscalationTab() {
               managed identities showing an empty list reads as an all-clear on exactly the
               thing the reader came to check. */}
           {(g?.limitations?.length ?? 0) > 0 && (
-            <div className="rounded border border-amber-300 bg-amber-50 p-2">
+            <div className="rounded-sm border border-amber-300 bg-amber-50 p-2">
               <div className="mb-1 text-[11px] font-semibold text-amber-900">
                 What this map cannot see
               </div>
@@ -344,7 +344,7 @@ export function EscalationTab() {
           )}
 
           {g && g.paths.length === 0 && (
-            <div className="rounded border bg-white p-3 text-xs text-gray-600">
+            <div className="rounded-sm border bg-white p-3 text-xs text-gray-600">
               No escalation path to full control was found in what was collected. Check the
               limitations above before reading that as an all-clear.
             </div>
@@ -370,7 +370,7 @@ export function EscalationTab() {
         <div ref={containerRef} className="absolute inset-0" />
         <div className="absolute right-2 top-2 flex items-center gap-2">
           <label
-            className="flex items-center gap-1 rounded border bg-white px-2 py-1 text-xs text-gray-700 shadow-sm"
+            className="flex items-center gap-1 rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 shadow-xs"
             title="Show only the nodes and edges that lie on a route to full control. Off shows every detected capability, which on a large tenant is a hairball."
           >
             <input type="checkbox" checked={pathsOnly} onChange={(e) => setPathsOnly(e.target.checked)} />
@@ -379,7 +379,7 @@ export function EscalationTab() {
           {selected && (
             <button
               onClick={() => setSelected("")}
-              className="rounded border bg-white px-2 py-1 text-xs text-gray-700 shadow-sm hover:bg-gray-50"
+              className="rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 shadow-xs hover:bg-gray-50"
             >
               Clear highlight
             </button>

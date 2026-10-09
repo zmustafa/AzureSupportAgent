@@ -265,7 +265,7 @@ export function TelemetryReferenceEditor() {
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span className="text-gray-500">v{ref?.version ?? 0} · {Object.keys(draft).length} types · {Object.values(draft).reduce((a, t) => a + t.categories.length, 0)} categories</span>
-          {dirty && <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">● Unsaved</span>}
+          {dirty && <span className="rounded-sm bg-amber-100 px-2 py-0.5 text-amber-700">● Unsaved</span>}
           <button onClick={openWs} className="rounded-md border bg-white px-2.5 py-1.5 hover:bg-gray-50">Approved workspaces</button>
           <button onClick={() => setShowHistory(true)} className="rounded-md border bg-white px-2.5 py-1.5 hover:bg-gray-50">History</button>
           <button onClick={openRaw} className="rounded-md border bg-white px-2.5 py-1.5 hover:bg-gray-50">Advanced: JSON</button>
@@ -280,7 +280,7 @@ export function TelemetryReferenceEditor() {
         {/* Left */}
         <div className="flex w-72 shrink-0 flex-col border-r bg-white">
           <div className="border-b p-2">
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter types…" className="w-full rounded border px-2 py-1.5 text-xs" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter types…" className="w-full rounded-sm border px-2 py-1.5 text-xs" />
             <button onClick={() => setAddTypeOpen(true)} className="mt-2 w-full rounded-md border bg-white px-2 py-1.5 text-xs font-medium hover:bg-gray-50">+ Add resource type</button>
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
@@ -294,7 +294,7 @@ export function TelemetryReferenceEditor() {
                     <span className="block truncate font-medium text-gray-800">{spec.display || t}</span>
                     <span className="block truncate font-mono text-[10px] text-gray-400">{t}</span>
                   </span>
-                  {used > 0 && <span className="rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700" title={`${used} resource(s) in your workloads`}>{used}↗</span>}
+                  {used > 0 && <span className="rounded-sm bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700" title={`${used} resource(s) in your workloads`}>{used}↗</span>}
                   <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{spec.categories.length}</span>
                 </button>
               );
@@ -311,7 +311,7 @@ export function TelemetryReferenceEditor() {
             <>
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <div className="min-w-0">
-                  <input value={cur.display} onChange={(e) => mutate((d) => { if (d[selected]) d[selected].display = e.target.value; })} className="rounded border px-2 py-1 text-sm font-semibold" />
+                  <input value={cur.display} onChange={(e) => mutate((d) => { if (d[selected]) d[selected].display = e.target.value; })} className="rounded-sm border px-2 py-1 text-sm font-semibold" />
                   <div className="mt-0.5 font-mono text-[11px] text-gray-400">{selected}{usageByType[selected] ? ` · used by ${usageByType[selected]} resource(s)` : ""}</div>
                 </div>
                 <div className="ml-auto flex gap-2">
@@ -320,9 +320,9 @@ export function TelemetryReferenceEditor() {
                   <button onClick={() => deleteType(selected)} className="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50">Remove type</button>
                 </div>
               </div>
-              <input value={cur.note} onChange={(e) => mutate((d) => { if (d[selected]) d[selected].note = e.target.value; })} placeholder="Note / guidance shown in the UI" className="mb-3 w-full rounded border px-2 py-1.5 text-xs" />
+              <input value={cur.note} onChange={(e) => mutate((d) => { if (d[selected]) d[selected].note = e.target.value; })} placeholder="Note / guidance shown in the UI" className="mb-3 w-full rounded-sm border px-2 py-1.5 text-xs" />
 
-              {cur.categories.length === 0 && <div className="rounded border bg-white p-4 text-center text-xs text-gray-400">No categories — add one from the catalog.</div>}
+              {cur.categories.length === 0 && <div className="rounded-sm border bg-white p-4 text-center text-xs text-gray-400">No categories — add one from the catalog.</div>}
 
               {TELEMETRY_GROUPS.map((grp) =>
                 catsByGroup[grp]?.length ? (
@@ -355,7 +355,7 @@ export function TelemetryReferenceEditor() {
               {telemetryCatalogFor(selected).map((c) => {
                 const already = (cur.categories || []).some((x) => x.key === c.key);
                 return (
-                  <button key={c.key} onClick={() => addCatalog(c)} disabled={already} className="flex w-full items-center gap-2 rounded border bg-white px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-40">
+                  <button key={c.key} onClick={() => addCatalog(c)} disabled={already} className="flex w-full items-center gap-2 rounded-sm border bg-white px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-40">
                     <span className="inline-block h-2 w-2 rounded-full" style={{ background: TELEMETRY_GROUP_COLOR[c.group] }} />
                     <span className="font-medium text-gray-800">{c.name}</span>
                     <span className="font-mono text-[11px] text-gray-400">{c.key}</span>
@@ -374,8 +374,8 @@ export function TelemetryReferenceEditor() {
       {wsOpen && (
         <Modal title="Approved Log Analytics Workspaces" onClose={closeWs}>
           <p className="mb-2 text-xs text-gray-500">Diagnostic settings shipping to a workspace not on this list are flagged as destination <b>drift</b>. One workspace resource id per line; empty = drift detection off.</p>
-          <textarea value={approvedDraft} onChange={(e) => { setApprovedDraft(e.target.value); setApprovedDraftDirty(true); }} spellCheck={false} className="h-40 w-full rounded border p-2 font-mono text-[11px]" placeholder="/subscriptions/.../workspaces/prod-law" />
-          <div className="mt-2 flex flex-wrap items-center gap-2 rounded border bg-gray-50 p-2">
+          <textarea value={approvedDraft} onChange={(e) => { setApprovedDraft(e.target.value); setApprovedDraftDirty(true); }} spellCheck={false} className="h-40 w-full rounded-sm border p-2 font-mono text-[11px]" placeholder="/subscriptions/.../workspaces/prod-law" />
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-sm border bg-gray-50 p-2">
             <ConnectionScopePicker value={workspaceConnectionId} onChange={changeWorkspaceConnection} align="left" />
             <button
               onClick={() => void discoveredWsQ.refetch()}
@@ -410,7 +410,7 @@ export function TelemetryReferenceEditor() {
 
       {showRaw && (
         <Modal title="Advanced — raw JSON (the types map)" onClose={() => setShowRaw(false)} wide>
-          <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} spellCheck={false} className="h-[60vh] w-full rounded border bg-gray-900 p-3 font-mono text-[11px] text-gray-100" />
+          <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} spellCheck={false} className="h-[60vh] w-full rounded-sm border bg-gray-900 p-3 font-mono text-[11px] text-gray-100" />
           <div className="mt-2 flex justify-end gap-2">
             <button onClick={() => setShowRaw(false)} className="rounded-md border px-3 py-1.5 text-sm">Cancel</button>
             <button onClick={applyRaw} className="rounded-md bg-brand px-3 py-1.5 text-sm text-white">Apply to draft</button>
@@ -423,11 +423,11 @@ export function TelemetryReferenceEditor() {
           <div className="space-y-1 text-xs">
             {(revsQ.data?.revisions ?? []).length === 0 && <p className="text-gray-400">No revisions yet.</p>}
             {(revsQ.data?.revisions ?? []).map((r) => (
-              <div key={r.id} className="flex items-center gap-2 rounded border bg-white px-2 py-1.5">
+              <div key={r.id} className="flex items-center gap-2 rounded-sm border bg-white px-2 py-1.5">
                 <span className="font-medium">v{r.version}</span><span className="text-gray-500">{r.reason}</span>
                 <span className="text-gray-400">{r.type_count} types · {r.category_count} categories</span>
                 <span className="ml-auto text-gray-400">{r.by}</span>
-                <button onClick={() => { void restore(r.id); setShowHistory(false); }} disabled={busy} className="rounded border px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50">Restore</button>
+                <button onClick={() => { void restore(r.id); setShowHistory(false); }} disabled={busy} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50">Restore</button>
               </div>
             ))}
           </div>
@@ -447,37 +447,37 @@ function CatCard({ cat, editing, onToggleEdit, onChange, onDelete, onDuplicate }
         <button onClick={onToggleEdit} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-800">{cat.name}</span>
-            <span className="rounded border bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500">{cat.kind}</span>
-            {!cat.recommended && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">optional</span>}
+            <span className="rounded-sm border bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500">{cat.kind}</span>
+            {!cat.recommended && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">optional</span>}
           </div>
           <div className="mt-0.5 font-mono text-[11px] text-gray-400">{cat.key}</div>
           {cat.why && <div className="mt-0.5 text-[11px] text-gray-500">{cat.why}</div>}
         </button>
         <div className="flex shrink-0 gap-1">
-          <button onClick={onToggleEdit} className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-gray-50">{editing ? "Done" : "Edit"}</button>
-          <button onClick={onDuplicate} className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-gray-50" title="Duplicate">⧉</button>
-          <button onClick={onDelete} className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50" title="Delete">✕</button>
+          <button onClick={onToggleEdit} className="rounded-sm border px-1.5 py-0.5 text-[11px] hover:bg-gray-50">{editing ? "Done" : "Edit"}</button>
+          <button onClick={onDuplicate} className="rounded-sm border px-1.5 py-0.5 text-[11px] hover:bg-gray-50" title="Duplicate">⧉</button>
+          <button onClick={onDelete} className="rounded-sm border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50" title="Delete">✕</button>
         </div>
       </div>
       {editing && (
         <div className="grid grid-cols-2 gap-2 border-t bg-gray-50 p-3 text-xs sm:grid-cols-3">
           <label className="col-span-2 sm:col-span-3"><span className="text-gray-500">Name</span>
-            <input value={cat.name} onChange={(e) => onChange({ name: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1" /></label>
+            <input value={cat.name} onChange={(e) => onChange({ name: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1" /></label>
           <label className="col-span-2"><span className="text-gray-500">Category key (Azure diagnostic category)</span>
-            <input value={cat.key} onChange={(e) => onChange({ key: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1 font-mono" /></label>
+            <input value={cat.key} onChange={(e) => onChange({ key: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono" /></label>
           <label><span className="text-gray-500">Kind</span>
-            <select value={cat.kind} onChange={(e) => onChange({ kind: e.target.value as TelemetryCategory["kind"] })} className="mt-0.5 w-full rounded border px-2 py-1">
+            <select value={cat.kind} onChange={(e) => onChange({ kind: e.target.value as TelemetryCategory["kind"] })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
               {TELEMETRY_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
             </select></label>
           <label className="col-span-2 sm:col-span-1"><span className="text-gray-500">Group</span>
-            <select value={cat.group} onChange={(e) => onChange({ group: e.target.value as TelemetryCategory["group"] })} className="mt-0.5 w-full rounded border px-2 py-1">
+            <select value={cat.group} onChange={(e) => onChange({ group: e.target.value as TelemetryCategory["group"] })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
               {TELEMETRY_GROUPS.map((g) => <option key={g} value={g}>{g}</option>)}
             </select></label>
           <label className="col-span-2 flex items-center gap-2 sm:col-span-3">
             <input type="checkbox" checked={cat.recommended} onChange={(e) => onChange({ recommended: e.target.checked })} />
             <span className="text-gray-600">Recommended (counts toward coverage; audit/security groups flag amber when missing)</span></label>
           <label className="col-span-2 sm:col-span-3"><span className="text-gray-500">Why it matters</span>
-            <textarea value={cat.why} onChange={(e) => onChange({ why: e.target.value })} rows={2} className="mt-0.5 w-full rounded border px-2 py-1" /></label>
+            <textarea value={cat.why} onChange={(e) => onChange({ why: e.target.value })} rows={2} className="mt-0.5 w-full rounded-sm border px-2 py-1" /></label>
         </div>
       )}
     </div>
@@ -494,7 +494,7 @@ function AddTypeModal({ existing, onClose, onAdd }: { existing: RefTypes; onClos
         <div className="mb-1 text-xs font-medium text-gray-500">Pick a known type</div>
         <div className="max-h-48 space-y-1 overflow-auto">
           {known.map((k) => (
-            <button key={k.type} onClick={() => onAdd(k.type, k.label)} className="flex w-full items-center gap-2 rounded border bg-white px-2 py-1.5 text-left text-xs hover:bg-gray-50">
+            <button key={k.type} onClick={() => onAdd(k.type, k.label)} className="flex w-full items-center gap-2 rounded-sm border bg-white px-2 py-1.5 text-left text-xs hover:bg-gray-50">
               <span className="font-medium text-gray-800">{k.label}</span><span className="font-mono text-[10px] text-gray-400">{k.type}</span>
             </button>
           ))}
@@ -503,8 +503,8 @@ function AddTypeModal({ existing, onClose, onAdd }: { existing: RefTypes; onClos
       </div>
       <div className="border-t pt-3">
         <div className="mb-1 text-xs font-medium text-gray-500">…or a custom ARM type</div>
-        <input value={armType} onChange={(e) => setArmType(e.target.value)} placeholder="microsoft.provider/resourcetype" className="mb-1 w-full rounded border px-2 py-1.5 font-mono text-xs" />
-        <input value={display} onChange={(e) => setDisplay(e.target.value)} placeholder="Display name" className="mb-2 w-full rounded border px-2 py-1.5 text-xs" />
+        <input value={armType} onChange={(e) => setArmType(e.target.value)} placeholder="microsoft.provider/resourcetype" className="mb-1 w-full rounded-sm border px-2 py-1.5 font-mono text-xs" />
+        <input value={display} onChange={(e) => setDisplay(e.target.value)} placeholder="Display name" className="mb-2 w-full rounded-sm border px-2 py-1.5 text-xs" />
         <button onClick={() => onAdd(armType, display)} disabled={!armType.trim()} className="rounded-md bg-brand px-3 py-1.5 text-xs text-white disabled:opacity-50">Add type</button>
       </div>
     </Modal>
@@ -517,7 +517,7 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
       <div className={`flex max-h-[85vh] w-full ${wide ? "max-w-3xl" : "max-w-md"} flex-col rounded-lg bg-white shadow-xl`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <h3 className="text-sm font-semibold">{title}</h3>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
         <div className="overflow-auto p-4">{children}</div>
       </div>

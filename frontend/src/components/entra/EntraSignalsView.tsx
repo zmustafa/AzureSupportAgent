@@ -41,7 +41,7 @@ const TABS: { id: Tab; label: string }[] = [
 function SampledBanner({ sampled }: { sampled: boolean }) {
   if (!sampled) return null;
   return (
-    <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+    <div className="mb-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
       <span className="font-semibold">These numbers are a sample.</span> The sign-in window hit
       its row cap, so counts below are lower bounds and proportions are approximate. Shorten the
       lookback window below and re-collect for exact figures over a shorter period.
@@ -186,7 +186,7 @@ function LookbackControl({ lookback, sampled, onRecollect }: {
       <select
         value={days}
         onChange={(e) => setDays(Number(e.target.value))}
-        className="rounded border px-2 py-1 text-[12px]"
+        className="rounded-sm border px-2 py-1 text-[12px]"
         title="A shorter window is the only lever against the row cap. Sign-ins are counted at collection time, so a change takes effect on the next collection."
       >
         {choices.map((d) => (
@@ -197,7 +197,7 @@ function LookbackControl({ lookback, sampled, onRecollect }: {
         <button
           onClick={() => void apply()}
           disabled={saving || (!pending && !sampled && !staleWindow)}
-          className="rounded border border-brand bg-brand px-2 py-1 text-[12px] font-medium text-white disabled:opacity-40"
+          className="rounded-sm border border-brand bg-brand px-2 py-1 text-[12px] font-medium text-white disabled:opacity-40"
           title={pending
             ? `Save ${days}-day window and re-collect sign-ins`
             : "Re-collect sign-ins over this window"}
@@ -421,14 +421,14 @@ function AuthMethodsTab({ connectionId }: { connectionId: string | null }) {
       {/* Before the numbers, not after: a registration gap that is really "the provider's
           MFA is invisible to Entra" has to be understood before the chart is read. */}
       <FederationNote fabric={d.identity_fabric} context="auth-methods" />
-      <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+      <div className="rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
         The administrator row is the number that matters. Tenant-wide coverage of{" "}
         {pct(d.overall.registered, d.overall.total)}% means nothing while{" "}
         {adminGap === 0 ? "no administrator is" : `${adminGap} administrator${adminGap === 1 ? " is" : "s are"}`}{" "}
         unregistered.
       </div>
       {d.unreported > 0 && (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           {d.unreported.toLocaleString()} enabled user
           {d.unreported === 1 ? "" : "s"} of {d.enabled_total.toLocaleString()} are absent from the
           registration report and are excluded from every figure below — the report lags newly
@@ -457,7 +457,7 @@ function AuthMethodsTab({ connectionId }: { connectionId: string | null }) {
             {d.gap.map((u) => (
               <div key={u.id} className="flex items-center gap-2 border-b py-1 text-[13px] last:border-b-0">
                 {u.privileged && (
-                  <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                  <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
                     privileged
                   </span>
                 )}
@@ -822,16 +822,16 @@ function RiskyUsersTab({ connectionId }: { connectionId: string | null }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search user or UPN…"
-          className="w-56 rounded border px-2 py-1 text-[13px]"
+          className="w-56 rounded-sm border px-2 py-1 text-[13px]"
         />
         <select value={level} onChange={(e) => setLevel(e.target.value)}
-                className="rounded border px-2 py-1 text-[13px]">
+                className="rounded-sm border px-2 py-1 text-[13px]">
           <option value="">Any level</option>
           <option value="high">High</option><option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
         <select value={state} onChange={(e) => setState(e.target.value)}
-                className="rounded border px-2 py-1 text-[13px]">
+                className="rounded-sm border px-2 py-1 text-[13px]">
           <option value="">Any state</option>
           <option value="atRisk">At risk</option>
           <option value="confirmedCompromised">Confirmed compromised</option>
@@ -882,7 +882,7 @@ function RiskyUsersTab({ connectionId }: { connectionId: string | null }) {
                 <td className="px-3 py-1.5">
                   <div className="flex items-center gap-1.5">
                     {u.privileged && (
-                      <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                      <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
                         privileged
                       </span>
                     )}
@@ -999,7 +999,7 @@ function PatternsTab({ connectionId }: { connectionId: string | null }) {
   return (
     <div className="space-y-4 p-4">
       <SampledBanner sampled={d.sampled} />
-      <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+      <div className="rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
         These are counting rules, not predictions. Each result states the exact rule that
         produced it and carries the raw counts, so you can verify the claim rather than
         trust it.

@@ -105,7 +105,7 @@ export default function App() {
             className="hidden items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs text-white/80 hover:bg-white/20 sm:flex"
           >
             <span>⌕ Search</span>
-            <kbd className="rounded bg-white/20 px-1 text-[10px]">⌘K</kbd>
+            <kbd className="rounded-sm bg-white/20 px-1 text-[10px]">⌘K</kbd>
           </button>
           <HelpMenu />
           <ContextDocumentationHelp pathname={location.pathname} />
@@ -133,16 +133,16 @@ export default function App() {
             )
           ) : null}
           <span
-            className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70"
+            className="rounded-sm bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70"
             title={`Azure Support Agent ${APP_VERSION}`}
           >
             {APP_VERSION_DISPLAY}
           </span>
-          <Link to="/dashboard" className="hidden rounded px-2 py-1 hover:bg-white/10 lg:inline-block">
+          <Link to="/dashboard" className="hidden rounded-sm px-2 py-1 hover:bg-white/10 lg:inline-block">
             Dashboard
           </Link>
           {canAccess(user, adminRequirement(undefined)) && (
-            <Link to="/admin" className="hidden rounded px-2 py-1 hover:bg-white/10 lg:inline-block">
+            <Link to="/admin" className="hidden rounded-sm px-2 py-1 hover:bg-white/10 lg:inline-block">
               Settings
             </Link>
           )}

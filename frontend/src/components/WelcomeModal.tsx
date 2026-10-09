@@ -71,7 +71,7 @@ export function WelcomeModal() {
 
   return (
     <div
-      className="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-[1px]"
+      className="fixed inset-0 z-65 flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-[1px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="welcome-modal-title"
@@ -83,7 +83,7 @@ export function WelcomeModal() {
       }}
     >
       <div ref={dialogRef} className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
-        <div className="bg-gradient-to-br from-brand/10 to-violet-50 px-6 py-5">
+        <div className="bg-linear-to-br from-brand/10 to-violet-50 px-6 py-5">
           <div className="flex items-center gap-3">
             <span className="text-3xl" aria-hidden>🤖</span>
             <div>
@@ -138,7 +138,7 @@ export function WelcomeModal() {
 
           <div className="flex items-center justify-between pt-1">
             <a href={DOCS_LINKS.userGuide} target="_blank" rel="noreferrer" className="text-xs text-brand hover:underline">Read the User Guide →</a>
-            <button ref={closeRef} onClick={dismiss} className="rounded-md px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand/40">Skip for now</button>
+            <button ref={closeRef} onClick={dismiss} className="rounded-md px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-hidden focus:ring-2 focus:ring-brand/40">Skip for now</button>
           </div>
         </div>
       </div>

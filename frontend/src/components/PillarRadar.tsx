@@ -120,7 +120,7 @@ export function PillarRadar({
         <ul className="min-w-[120px] flex-1 space-y-1.5">
           {axes.map((a) => (
             <li key={a.key} className="flex items-center gap-2 text-xs">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: a.color }} />
+              <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: a.color }} />
               <span className="min-w-0 flex-1 truncate text-gray-600">{a.label}</span>
               <span className="shrink-0 font-semibold tabular-nums" style={{ color: scoreHex(a.value) }}>
                 {a.value ?? "—"}

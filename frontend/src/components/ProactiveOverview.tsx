@@ -44,7 +44,7 @@ export function ProactiveOverviewPanel() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search proactive tools…"
-            className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+            className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
           />
         </div>
 
@@ -63,7 +63,7 @@ export function ProactiveOverviewPanel() {
                   <Link
                     key={i.id}
                     to={i.to}
-                    className="group flex items-start gap-3 rounded-xl border bg-white p-4 transition hover:border-brand-dark/40 hover:shadow-sm"
+                    className="group flex items-start gap-3 rounded-xl border bg-white p-4 transition hover:border-brand-dark/40 hover:shadow-xs"
                   >
                     <span className="text-xl leading-none">{i.icon}</span>
                     <span className="min-w-0">

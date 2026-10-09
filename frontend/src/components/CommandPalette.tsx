@@ -114,7 +114,7 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-black/40 px-4 pt-[12vh] backdrop-blur-[1px]"
+      className="fixed inset-0 z-60 flex items-start justify-center bg-black/40 px-4 pt-[12vh] backdrop-blur-[1px]"
       onClick={() => setOpen(false)}
     >
       <div
@@ -129,10 +129,10 @@ export function CommandPalette() {
             onChange={(e) => { setQuery(e.target.value); setActive(0); }}
             onKeyDown={onKeyDown}
             placeholder="Search pages and actions…"
-            className="w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
+            className="w-full bg-transparent text-sm outline-hidden placeholder:text-gray-400"
             aria-label="Command palette search"
           />
-          <kbd className="rounded border bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-400">Esc</kbd>
+          <kbd className="rounded-sm border bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-400">Esc</kbd>
         </div>
         <div ref={listRef} className="max-h-[50vh] overflow-y-auto py-1">
           {items.length === 0 ? (
@@ -153,7 +153,7 @@ export function CommandPalette() {
                   >
                     <span className="text-base" aria-hidden>{d.icon}</span>
                     <span className="min-w-0 flex-1 truncate">{d.label}</span>
-                    {d.adminOnly && <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">admin</span>}
+                    {d.adminOnly && <span className="shrink-0 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">admin</span>}
                   </button>
                 ))}
               </div>
@@ -161,7 +161,7 @@ export function CommandPalette() {
           )}
         </div>
         <div className="flex items-center justify-between border-t bg-gray-50 px-4 py-2 text-[11px] text-gray-400">
-          <span><kbd className="rounded border bg-white px-1">↑</kbd> <kbd className="rounded border bg-white px-1">↓</kbd> to navigate · <kbd className="rounded border bg-white px-1">↵</kbd> to open</span>
+          <span><kbd className="rounded-sm border bg-white px-1">↑</kbd> <kbd className="rounded-sm border bg-white px-1">↓</kbd> to navigate · <kbd className="rounded-sm border bg-white px-1">↵</kbd> to open</span>
           <span>Command Palette</span>
         </div>
       </div>

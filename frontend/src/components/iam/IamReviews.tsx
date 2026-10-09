@@ -56,17 +56,17 @@ function CampaignCard({ c, onOpen }: { c: IamCampaign; onOpen: (id: string) => v
     <button
       type="button"
       onClick={() => onOpen(c.id)}
-      className="w-full rounded border bg-white p-3 text-left hover:bg-gray-50"
+      className="w-full rounded-sm border bg-white p-3 text-left hover:bg-gray-50"
     >
       <div className="flex items-baseline gap-2">
-        <span className={`rounded px-1.5 text-[10px] font-semibold uppercase ${STATUS_CLASS[c.status] ?? "bg-gray-100"}`}>
+        <span className={`rounded-sm px-1.5 text-[10px] font-semibold uppercase ${STATUS_CLASS[c.status] ?? "bg-gray-100"}`}>
           {c.status}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">{c.name}</span>
         {c.attestation_only && (
           <span
             data-testid="attestation-label"
-            className="rounded bg-amber-100 px-1 text-[10px] text-amber-900"
+            className="rounded-sm bg-amber-100 px-1 text-[10px] text-amber-900"
             title="Principals reviewed their own access. Self-review is not independent certification."
           >
             self-attestation
@@ -107,22 +107,22 @@ function ItemRow({
   });
 
   return (
-    <div className={`rounded border bg-white ${item.changed_since_baseline ? "border-amber-400" : ""}`}>
+    <div className={`rounded-sm border bg-white ${item.changed_since_baseline ? "border-amber-400" : ""}`}>
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-baseline gap-2 px-3 py-2 text-left hover:bg-gray-50">
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">{item.principalName}</span>
         <span className="shrink-0 text-[11px] text-gray-600">{item.roleName}</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-gray-500" title={item.scope}>{item.scopeName || item.scope}</span>
         {item.decision ? (
-          <span className="shrink-0 rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">{item.decision}</span>
+          <span className="shrink-0 rounded-sm bg-emerald-100 px-1 text-[10px] text-emerald-800">{item.decision}</span>
         ) : (
-          <span className="shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-600">undecided</span>
+          <span className="shrink-0 rounded-sm bg-gray-100 px-1 text-[10px] text-gray-600">undecided</span>
         )}
       </button>
       {open && (
         <div className="space-y-2 border-t px-3 py-2">
           {/* Re-presented, never silently updated. */}
           {item.changed_since_baseline && (
-            <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
+            <div className="rounded-sm border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
               This access changed since the campaign baseline. Any earlier decision was cleared —
               it was made about a different grant. Record a reason with your new decision.
             </div>
@@ -155,7 +155,7 @@ function ItemRow({
               onChange={(e) => setReason(e.target.value)}
               placeholder="Reason (required if this item was re-presented)"
               aria-label="Decision reason"
-              className="min-w-0 flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs"
+              className="min-w-0 flex-1 rounded-sm border border-gray-300 px-1.5 py-1 text-xs"
             />
             {["approve", "revoke", "reduce", "needs_info"].map((d) => (
               <button
@@ -163,7 +163,7 @@ function ItemRow({
                 type="button"
                 onClick={() => decide.mutate(d)}
                 disabled={decide.isPending}
-                className="rounded border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 {d}
               </button>
@@ -203,30 +203,30 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b bg-white px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-2">
-          <button type="button" onClick={onBack} className="rounded border bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50">
+          <button type="button" onClick={onBack} className="rounded-sm border bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50">
             ← All reviews
           </button>
           <span className="text-sm font-semibold text-gray-800">{c?.name}</span>
-          {c && <span className={`rounded px-1.5 text-[10px] font-semibold uppercase ${STATUS_CLASS[c.status] ?? ""}`}>{c.status}</span>}
+          {c && <span className={`rounded-sm px-1.5 text-[10px] font-semibold uppercase ${STATUS_CLASS[c.status] ?? ""}`}>{c.status}</span>}
           {c?.attestation_only && (
-            <span data-testid="attestation-label" className="rounded bg-amber-100 px-1 text-[10px] text-amber-900">
+            <span data-testid="attestation-label" className="rounded-sm bg-amber-100 px-1 text-[10px] text-amber-900">
               self-attestation — not independent certification
             </span>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-1">
             {c?.status === "draft" && (
-              <button type="button" onClick={() => activate.mutate()} className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50">Activate</button>
+              <button type="button" onClick={() => activate.mutate()} className="rounded-sm border bg-white px-2 py-1 text-xs hover:bg-gray-50">Activate</button>
             )}
             {c?.status === "active" && (
               <>
-                <button type="button" onClick={() => refresh.mutate()} className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50" title="Re-check every item against the current snapshot and re-present anything that moved.">
+                <button type="button" onClick={() => refresh.mutate()} className="rounded-sm border bg-white px-2 py-1 text-xs hover:bg-gray-50" title="Re-check every item against the current snapshot and re-present anything that moved.">
                   Re-check
                 </button>
-                <button type="button" onClick={() => complete.mutate()} className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50">Complete</button>
+                <button type="button" onClick={() => complete.mutate()} className="rounded-sm border bg-white px-2 py-1 text-xs hover:bg-gray-50">Complete</button>
               </>
             )}
             {(c?.status === "completed" || c?.status === "expired") && (
-              <button type="button" onClick={() => evidence.mutate()} className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50">
+              <button type="button" onClick={() => evidence.mutate()} className="rounded-sm border bg-white px-2 py-1 text-xs hover:bg-gray-50">
                 Export evidence
               </button>
             )}
@@ -259,10 +259,10 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
         <div className="w-96 shrink-0 overflow-auto border-l bg-gray-50 p-3">
           <div className="mb-1 text-[11px] font-semibold uppercase text-gray-500">Remediation</div>
           <div className="flex items-center gap-1">
-            <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="Artifact format" className="rounded border border-gray-300 px-1.5 py-0.5 text-xs">
+            <select value={format} onChange={(e) => setFormat(e.target.value)} aria-label="Artifact format" className="rounded-sm border border-gray-300 px-1.5 py-0.5 text-xs">
               {["az", "powershell", "bicep", "terraform"].map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
-            <button type="button" onClick={() => remediate.mutate()} className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50">
+            <button type="button" onClick={() => remediate.mutate()} className="rounded-sm border bg-white px-2 py-1 text-xs hover:bg-gray-50">
               Generate
             </button>
           </div>
@@ -276,7 +276,7 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
               <div className="mt-2 text-[11px] text-gray-600">
                 {bundle.action_count} action(s), ordered: group-derived access first, then broadest scope first.
               </div>
-              <pre data-testid="remediation-script" className="mt-1 max-h-[50vh] overflow-auto rounded border bg-white p-2 text-[10px] leading-tight text-gray-800">
+              <pre data-testid="remediation-script" className="mt-1 max-h-[50vh] overflow-auto rounded-sm border bg-white p-2 text-[10px] leading-tight text-gray-800">
                 {bundle.script}
               </pre>
             </>
@@ -329,12 +329,12 @@ export function ReviewsTab() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Campaign name"
             aria-label="Campaign name"
-            className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-xs"
+            className="min-w-0 flex-1 rounded-sm border border-gray-300 px-2 py-1 text-xs"
           />
-          <select value={selectorIndex} onChange={(e) => setSelectorIndex(Number(e.target.value))} aria-label="What to certify" className="rounded border border-gray-300 px-1.5 py-1 text-xs">
+          <select value={selectorIndex} onChange={(e) => setSelectorIndex(Number(e.target.value))} aria-label="What to certify" className="rounded-sm border border-gray-300 px-1.5 py-1 text-xs">
             {SELECTORS.map((s, i) => <option key={s.label} value={i}>{s.label}</option>)}
           </select>
-          <select value={strategy} onChange={(e) => setStrategy(e.target.value)} aria-label="Reviewer strategy" className="rounded border border-gray-300 px-1.5 py-1 text-xs">
+          <select value={strategy} onChange={(e) => setStrategy(e.target.value)} aria-label="Reviewer strategy" className="rounded-sm border border-gray-300 px-1.5 py-1 text-xs">
             <option value="owner">Reviewed by the scope owner</option>
             <option value="manager">Reviewed by the principal's manager</option>
             <option value="self">Self-attestation (not certification)</option>
@@ -343,7 +343,7 @@ export function ReviewsTab() {
             type="button"
             onClick={() => create.mutate()}
             disabled={!name.trim() || create.isPending}
-            className="rounded border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             Create
           </button>
@@ -354,7 +354,7 @@ export function ReviewsTab() {
       <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
         {q.isLoading && <div className="text-sm text-gray-500">Loading…</div>}
         {q.data && q.data.campaigns.length === 0 && (
-          <div className="rounded border bg-white p-3 text-xs text-gray-600">
+          <div className="rounded-sm border bg-white p-3 text-xs text-gray-600">
             No campaigns yet. A campaign certifies a specific snapshot, so the answer to "who had
             this access, and who signed it off" stays available after the estate has moved on.
           </div>

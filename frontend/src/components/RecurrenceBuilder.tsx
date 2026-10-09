@@ -144,7 +144,7 @@ export function RecurrenceBuilder({ value, onChange }: { value: string; onChange
             <div className="flex flex-wrap gap-1">
               {Array.from({ length: 24 }, (_, h) => h).map((h) => (
                 <button key={h} type="button" onClick={() => patch({ hours: toggleIn(s.hours, h) })}
-                  className={`rounded border px-1.5 py-0.5 text-[10px] ${s.hours.includes(h) ? "border-brand bg-brand/10 text-brand" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>{String(h).padStart(2, "0")}</button>
+                  className={`rounded-sm border px-1.5 py-0.5 text-[10px] ${s.hours.includes(h) ? "border-brand bg-brand/10 text-brand" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>{String(h).padStart(2, "0")}</button>
               ))}
             </div>
           </div>
@@ -153,7 +153,7 @@ export function RecurrenceBuilder({ value, onChange }: { value: string; onChange
 
       <div className="flex items-center gap-2 text-[11px] text-gray-500">
         <span>Cron:</span>
-        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-gray-700">{buildCron(s)}</code>
+        <code className="rounded-sm bg-white px-1.5 py-0.5 font-mono text-gray-700">{buildCron(s)}</code>
       </div>
     </div>
   );

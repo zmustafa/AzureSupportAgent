@@ -87,7 +87,7 @@ export function CapabilityMatrixPanel() {
                 type="checkbox"
                 checked={live}
                 onChange={(e) => setLive(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-gray-300"
+                className="h-3.5 w-3.5 rounded-sm border-gray-300"
               />
               Verify live
             </label>
@@ -113,7 +113,7 @@ export function CapabilityMatrixPanel() {
         ) : q.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             Couldn&apos;t load the capability matrix. You may not have the{" "}
-            <code className="rounded bg-red-100 px-1">connections.read</code> permission, or the
+            <code className="rounded-sm bg-red-100 px-1">connections.read</code> permission, or the
             backend is unreachable.
             <button onClick={() => q.refetch()} className="ml-2 underline">Retry</button>
           </div>
@@ -170,10 +170,10 @@ export function CapabilityMatrixPanel() {
                         <div className="flex items-center gap-1.5">
                           <span className="truncate font-medium text-gray-900">{conn.display_name}</span>
                           {conn.is_default && (
-                            <span className="rounded bg-blue-100 px-1 text-[10px] font-medium text-blue-700">default</span>
+                            <span className="rounded-sm bg-blue-100 px-1 text-[10px] font-medium text-blue-700">default</span>
                           )}
                           {conn.disabled && (
-                            <span className="rounded bg-gray-100 px-1 text-[10px] font-medium text-gray-500">disabled</span>
+                            <span className="rounded-sm bg-gray-100 px-1 text-[10px] font-medium text-gray-500">disabled</span>
                           )}
                         </div>
                         <div className="mt-0.5 text-[11px] text-gray-500">

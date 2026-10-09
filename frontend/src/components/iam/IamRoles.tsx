@@ -25,7 +25,7 @@ export function RolesTab() {
   if (q.isLoading) return <div className="p-4"><Skeleton rows={10} /></div>;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-4">
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search roles / principals…" className="mb-3 w-72 rounded border px-2 py-1 text-sm" />
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search roles / principals…" className="mb-3 w-72 rounded-sm border px-2 py-1 text-sm" />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-lg border bg-white">
           <div className="border-b px-3 py-2 text-sm font-semibold text-gray-800">Role definitions ({fr.length}{fr.length !== roleDefs.length ? ` of ${roleDefs.length}` : ""})</div>
@@ -38,7 +38,7 @@ export function RolesTab() {
               <div className="grid grid-cols-[1.6fr_1fr_auto] items-center gap-2 border-b px-3 py-1.5 text-sm last:border-0">
                 <span className="truncate font-medium text-gray-800">{String(r.roleName ?? "")}</span>
                 <span className="truncate text-gray-500">{String(r.roleCategory ?? "")}</span>
-                <span>{r.roleIsPrivileged ? <span className="rounded bg-red-100 px-1.5 text-[10px] text-red-700">privileged</span> : null}</span>
+                <span>{r.roleIsPrivileged ? <span className="rounded-sm bg-red-100 px-1.5 text-[10px] text-red-700">privileged</span> : null}</span>
               </div>
             )}
           />

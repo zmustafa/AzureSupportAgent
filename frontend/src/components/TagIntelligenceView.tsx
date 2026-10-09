@@ -136,13 +136,13 @@ function CopyBtn({ text, label = "Copy" }: { text: string; label?: string }) {
   return (
     <button
       onClick={() => { void navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1200); }}
-      className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+      className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
     >{done ? "✓ Copied" : label}</button>
   );
 }
 
 function Chip({ kind }: { kind: string }) {
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONF_STYLE[kind] || "bg-gray-100 text-gray-600"}`}>{kind}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONF_STYLE[kind] || "bg-gray-100 text-gray-600"}`}>{kind}</span>;
 }
 
 function NotLoaded({ onLoad, onLoadCache, busy }: { onLoad?: () => void; onLoadCache?: () => void; busy?: boolean }) {
@@ -307,7 +307,7 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
           </div>
         </div>
         {scanErr && (
-          <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{scanErr}</div>
+          <div className="mt-2 rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{scanErr}</div>
         )}
         {/* Tab strip */}
         <div className="mt-3 flex flex-wrap gap-1">
@@ -328,7 +328,7 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
             viewport even when the user has scrolled down — e.g. to the Remediate apply controls. */}
         {scanning && enabled && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-start justify-center bg-white/60 backdrop-blur-[1px]">
-            <div className="mt-24 flex items-center gap-2 rounded-full border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 shadow-sm">
+            <div className="mt-24 flex items-center gap-2 rounded-full border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 shadow-xs">
               <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
               Refreshing…
             </div>
@@ -456,7 +456,7 @@ function AskConsole({ sel, registerPrefill }: { sel: TagScopeSel; registerPrefil
   }
   const suggestions = ["show all tag keys", "values for Environment", "resources missing Owner", "untagged resources", "high-cardinality tags", "VMs missing Owner tag", "storage accounts without Environment=prod"];
   return (
-    <div className="rounded-xl border bg-gradient-to-br from-violet-50 to-white p-4">
+    <div className="rounded-xl border bg-linear-to-br from-violet-50 to-white p-4">
       <div className="flex items-center gap-2">
         <span className="text-base">✨</span>
         <span className="text-sm font-medium text-gray-800">Ask about your tags</span>
@@ -494,7 +494,7 @@ function AskConsole({ sel, registerPrefill }: { sel: TagScopeSel; registerPrefil
                 {res.source === "ai" && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-medium text-violet-700">✨ AI-generated</span>}
                 <CopyBtn text={res.generated_query} />
               </div>
-              <pre className="overflow-auto rounded bg-gray-900 p-2 text-[11px] text-emerald-300">{res.generated_query}</pre>
+              <pre className="overflow-auto rounded-sm bg-gray-900 p-2 text-[11px] text-emerald-300">{res.generated_query}</pre>
             </div>
           )}
         </div>
@@ -568,7 +568,7 @@ function AskResultTable({ data, questionKind }: { data: unknown[]; questionKind?
   const gridTemplate = cols.map((c) => (c === "id" || c === "resourceId" ? "minmax(160px,2fr)" : "minmax(80px,1fr)")).join(" ");
   const renderCell = (o: Record<string, unknown>, c: string) => (
     c === "category"
-      ? <span className="rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: CAT_COLORS[String(o[c])] || "#64748b" }}>{cell(o[c])}</span>
+      ? <span className="rounded-sm px-1.5 py-0.5 text-[10px] text-white" style={{ background: CAT_COLORS[String(o[c])] || "#64748b" }}>{cell(o[c])}</span>
       : cell(o[c])
   );
 
@@ -576,11 +576,11 @@ function AskResultTable({ data, questionKind }: { data: unknown[]; questionKind?
     <div className="mt-2">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <InlineSearch q={q} setQ={setQ} shown={filtered.length} total={objs.length} placeholder="Filter rows…" width="w-48" />
-        <button onClick={() => { void navigator.clipboard.writeText(toCsv()); }} className="rounded border px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">Copy CSV</button>
-        <button onClick={download} className="rounded border px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">⬇ CSV</button>
+        <button onClick={() => { void navigator.clipboard.writeText(toCsv()); }} className="rounded-sm border px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">Copy CSV</button>
+        <button onClick={download} className="rounded-sm border px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">⬇ CSV</button>
       </div>
       {virtualize ? (
-        <div className="rounded border">
+        <div className="rounded-sm border">
           <div className="grid gap-x-2 border-b bg-gray-50 px-2 py-1.5 text-[10px] uppercase text-gray-400" style={{ gridTemplateColumns: gridTemplate }}>
             {cols.map((c) => <div key={c} className={isNumCol(c) ? "text-right" : ""}>{fmtHeader(c)}</div>)}
           </div>
@@ -594,7 +594,7 @@ function AskResultTable({ data, questionKind }: { data: unknown[]; questionKind?
           )} />
         </div>
       ) : (
-        <div className="max-h-64 overflow-auto rounded border">
+        <div className="max-h-64 overflow-auto rounded-sm border">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-gray-50 text-left text-[10px] uppercase text-gray-400">
               <tr>{cols.map((c) => <th key={c} className={`px-2 py-1.5 ${isNumCol(c) ? "text-right" : ""}`}>{fmtHeader(c)}</th>)}</tr>
@@ -665,7 +665,7 @@ function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
             <div className="flex items-center gap-2">
               {allKeyOps.length > 0 && (
                 <button onClick={() => fix(`Normalize ${keyClusters.length} duplicate tag key(s)`, "Rename casing/separator variants to their canonical key (from Tag Hygiene).", allKeyOps)}
-                  className="rounded border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10" title="Build a change-set that renames every duplicate key variant to its canonical key">🔧 Fix all</button>
+                  className="rounded-sm border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10" title="Build a change-set that renames every duplicate key variant to its canonical key">🔧 Fix all</button>
               )}
               <span className="text-[11px] text-gray-400">{keyClusters.length} clusters</span>
             </div>
@@ -681,13 +681,13 @@ function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
                   <span className="ml-auto text-[11px] text-gray-400">{c.affected} resources</span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {c.members.map((m) => <span key={m} className={`rounded px-1.5 py-0.5 text-[11px] ${m === c.canonical ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500 line-through"}`}>{m} ({c.counts[m]})</span>)}
+                  {c.members.map((m) => <span key={m} className={`rounded-sm px-1.5 py-0.5 text-[11px] ${m === c.canonical ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500 line-through"}`}>{m} ({c.counts[m]})</span>)}
                 </div>
                 <div className="mt-1 flex items-center gap-2">
                   <p className="text-[11px] text-gray-400">{c.reason}</p>
                   {ops.length > 0 && (
                     <button onClick={() => fix(`Normalize key '${c.canonical}'`, `Rename ${ops.length} variant key(s) to '${c.canonical}' (from Tag Hygiene).`, ops)}
-                      className="ml-auto rounded border px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5" title={`Rename ${ops.map((o) => o.key).join(", ")} → ${c.canonical} in the Remediate tab`}>🔧 Fix</button>
+                      className="ml-auto rounded-sm border px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5" title={`Rename ${ops.map((o) => o.key).join(", ")} → ${c.canonical} in the Remediate tab`}>🔧 Fix</button>
                   )}
                 </div>
               </div>
@@ -703,7 +703,7 @@ function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
             <div className="flex items-center gap-2">
               {allValueOps.length > 0 && (
                 <button onClick={() => fix(`Normalize values for ${valueClusters.length} key(s)`, "Normalize value variants to their canonical value (from Tag Hygiene).", allValueOps)}
-                  className="rounded border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10" title="Build a change-set that normalizes every value variant to its canonical value">🔧 Fix all</button>
+                  className="rounded-sm border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10" title="Build a change-set that normalizes every value variant to its canonical value">🔧 Fix all</button>
               )}
               <span className="text-[11px] text-gray-400">{valueClusters.length} keys</span>
             </div>
@@ -717,14 +717,14 @@ function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
                   <span className="text-sm font-medium text-gray-800">{c.key}</span>
                   {ops.length > 0 && (
                     <button onClick={() => fix(`Normalize values for '${c.key}'`, `Normalize ${ops.length} value variant(s) on '${c.key}' (from Tag Hygiene).`, ops)}
-                      className="ml-auto rounded border px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5" title={`Normalize value variants on ${c.key} in the Remediate tab`}>🔧 Fix</button>
+                      className="ml-auto rounded-sm border px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5" title={`Normalize value variants on ${c.key} in the Remediate tab`}>🔧 Fix</button>
                   )}
                 </div>
                 {c.variants.map((v, j) => (
                   <div key={j} className="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
-                    {v.members.map((m) => <span key={m} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-500">{m}</span>)}
+                    {v.members.map((m) => <span key={m} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-500">{m}</span>)}
                     <span className="text-gray-400">→</span>
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700">{v.canonical}</span>
+                    <span className="rounded-sm bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700">{v.canonical}</span>
                     <span className="ml-auto text-gray-400">{v.affected}</span>
                   </div>
                 ))}
@@ -739,7 +739,7 @@ function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
       <div className="rounded-xl border bg-white">
         <div className="flex items-center justify-between border-b px-4 py-2">
           <span className="text-sm font-medium text-gray-700">Canonical tag catalog</span>
-          <button onClick={seed} disabled={seeding} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50">{seeding ? "Seeding…" : "✨ Seed from discovered keys"}</button>
+          <button onClick={seed} disabled={seeding} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50">{seeding ? "Seeding…" : "✨ Seed from discovered keys"}</button>
         </div>
         {catalog.length === 0 ? (
           <p className="p-4 text-center text-xs text-gray-400">No catalog entries yet. Seed from your discovered keys to define a standard.</p>
@@ -751,9 +751,9 @@ function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
                 {catalog.map((e: TagCatalogEntry) => (
                   <tr key={e.id} className="border-t">
                     <td className="px-4 py-1.5 font-medium text-gray-800">{e.canonical}</td>
-                    <td className="px-2"><span className="rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: CAT_COLORS[e.category] }}>{e.category}</span></td>
+                    <td className="px-2"><span className="rounded-sm px-1.5 py-0.5 text-[10px] text-white" style={{ background: CAT_COLORS[e.category] }}>{e.category}</span></td>
                     <td className="px-2 text-[11px] text-gray-500">{e.aliases.join(", ") || "—"}</td>
-                    <td className="px-2">{e.required ? <span className="rounded bg-blue-100 px-1.5 text-[10px] text-blue-700">required</span> : <span className="text-gray-300">—</span>}</td>
+                    <td className="px-2">{e.required ? <span className="rounded-sm bg-blue-100 px-1.5 text-[10px] text-blue-700">required</span> : <span className="text-gray-300">—</span>}</td>
                     <td className="px-2 text-[11px] text-gray-500">{e.scope}</td>
                     <td className="px-2 text-right"><button onClick={async () => { await api.tagintelCatalogDelete(e.id); void qc.invalidateQueries({ queryKey: ["tagintel", "catalog"] }); }} className="text-[11px] text-gray-400 hover:text-red-600">Remove</button></td>
                   </tr>
@@ -862,12 +862,12 @@ function CoverageTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) 
           {(d.missing_one ?? []).map((g) => (
             <div key={g.key} className="px-4 py-2">
               <div className="flex items-center gap-2">
-                <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">+ {g.key}</span>
+                <span className="rounded-sm bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">+ {g.key}</span>
                 <span className="text-sm text-gray-600">{g.count} resources need only this tag</span>
                 <Link to="/tagintel/remediate" className="ml-auto text-[11px] text-brand hover:underline">Send to Remediate →</Link>
               </div>
               <div className="mt-1 flex flex-wrap gap-1">
-                {g.resources.slice(0, 8).map((r) => <span key={r.id} className="truncate rounded bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-500" title={r.id}>{r.name}</span>)}
+                {g.resources.slice(0, 8).map((r) => <span key={r.id} className="truncate rounded-sm bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-500" title={r.id}>{r.name}</span>)}
                 {g.count > 8 && <span className="text-[11px] text-gray-400">+{g.count - 8} more</span>}
               </div>
             </div>
@@ -937,7 +937,7 @@ function CostTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
         <div className="rounded-xl border bg-white p-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-medium text-gray-700">Cost by</span>
-            <select value={dimension} onChange={(e) => setDimension(e.target.value)} className="rounded border px-2 py-1 text-xs">
+            <select value={dimension} onChange={(e) => setDimension(e.target.value)} className="rounded-sm border px-2 py-1 text-xs">
               <optgroup label="Structural">
                 <option value="workload">Workload</option>
                 <option value="subscription">Subscription</option>
@@ -1054,9 +1054,9 @@ function DriftTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
           <div className="rounded-xl border bg-white p-4">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium text-gray-700">Compare</span>
-              <select value={base} onChange={(e) => setBase(e.target.value)} className="rounded border px-2 py-1 text-xs">{snaps.map((s) => <option key={s.id} value={s.id}>{new Date(s.taken_at).toLocaleString()}</option>)}</select>
+              <select value={base} onChange={(e) => setBase(e.target.value)} className="rounded-sm border px-2 py-1 text-xs">{snaps.map((s) => <option key={s.id} value={s.id}>{new Date(s.taken_at).toLocaleString()}</option>)}</select>
               <span className="text-gray-400">→</span>
-              <select value={head} onChange={(e) => setHead(e.target.value)} className="rounded border px-2 py-1 text-xs">{snaps.map((s) => <option key={s.id} value={s.id}>{new Date(s.taken_at).toLocaleString()}</option>)}</select>
+              <select value={head} onChange={(e) => setHead(e.target.value)} className="rounded-sm border px-2 py-1 text-xs">{snaps.map((s) => <option key={s.id} value={s.id}>{new Date(s.taken_at).toLocaleString()}</option>)}</select>
             </div>
             {diff && !diff.error && (
               <>
@@ -1114,10 +1114,10 @@ function DriftDetail({ diff, which, onClose }: { diff: TagDriftDiff; which: "add
         <div className="space-y-2">
           {(diff.added_key_details ?? []).length === 0 ? <p className="text-xs text-gray-400">No keys were added.</p> :
             (diff.added_key_details ?? []).map((g) => (
-              <div key={g.key} className="rounded border bg-white p-2">
-                <div className="flex items-center gap-2"><span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">+ {g.key}</span><span className="text-[11px] text-gray-500">added to {g.count} resource(s)</span></div>
+              <div key={g.key} className="rounded-sm border bg-white p-2">
+                <div className="flex items-center gap-2"><span className="rounded-sm bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">+ {g.key}</span><span className="text-[11px] text-gray-500">added to {g.count} resource(s)</span></div>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {g.resources.slice(0, 24).map((r) => <span key={r.id} title={r.id} className="truncate rounded bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600">{r.name || r.id.split("/").pop()}</span>)}
+                  {g.resources.slice(0, 24).map((r) => <span key={r.id} title={r.id} className="truncate rounded-sm bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600">{r.name || r.id.split("/").pop()}</span>)}
                   {g.count > 24 && <span className="text-[11px] text-gray-400">+{g.count - 24} more</span>}
                 </div>
               </div>
@@ -1129,10 +1129,10 @@ function DriftDetail({ diff, which, onClose }: { diff: TagDriftDiff; which: "add
         <div className="space-y-2">
           {(diff.removed_key_details ?? []).length === 0 ? <p className="text-xs text-gray-400">No keys were removed.</p> :
             (diff.removed_key_details ?? []).map((g) => (
-              <div key={g.key} className="rounded border bg-white p-2">
-                <div className="flex items-center gap-2"><span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">− {g.key}</span><span className="text-[11px] text-gray-500">removed from {g.count} resource(s)</span></div>
+              <div key={g.key} className="rounded-sm border bg-white p-2">
+                <div className="flex items-center gap-2"><span className="rounded-sm bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">− {g.key}</span><span className="text-[11px] text-gray-500">removed from {g.count} resource(s)</span></div>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {g.resources.slice(0, 24).map((r) => <span key={r.id} title={r.id} className="truncate rounded bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600">{r.name || r.id.split("/").pop()}</span>)}
+                  {g.resources.slice(0, 24).map((r) => <span key={r.id} title={r.id} className="truncate rounded-sm bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600">{r.name || r.id.split("/").pop()}</span>)}
                   {g.count > 24 && <span className="text-[11px] text-gray-400">+{g.count - 24} more</span>}
                 </div>
               </div>
@@ -1141,7 +1141,7 @@ function DriftDetail({ diff, which, onClose }: { diff: TagDriftDiff; which: "add
       )}
 
       {which === "values" && (
-        <div className="max-h-72 overflow-auto rounded border bg-white">
+        <div className="max-h-72 overflow-auto rounded-sm border bg-white">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-gray-50 text-left text-[10px] uppercase text-gray-400"><tr><th className="px-2 py-1.5">Resource</th><th className="px-2">Key</th><th className="px-2">Before</th><th className="px-2">After</th></tr></thead>
             <tbody>
@@ -1170,12 +1170,12 @@ function DriftDetail({ diff, which, onClose }: { diff: TagDriftDiff; which: "add
           <div className="max-h-72 space-y-1 overflow-auto">
             {(diff.changed_resources ?? []).length === 0 ? <p className="text-xs text-gray-400">No resources changed.</p> :
               (diff.changed_resources ?? []).map((r) => (
-                <div key={r.id} className="rounded border bg-white p-2" title={r.id}>
+                <div key={r.id} className="rounded-sm border bg-white p-2" title={r.id}>
                   <div className="text-sm font-medium text-gray-800">{r.name || r.id.split("/").pop()}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
-                    {r.added.map((a, i) => <span key={`a${i}`} className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">+ {a.key}{a.to !== undefined ? `=${String(a.to)}` : ""}</span>)}
-                    {r.removed.map((a, i) => <span key={`r${i}`} className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">− {a.key}</span>)}
-                    {r.changed.map((a, i) => <span key={`c${i}`} className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">{a.key}: {String(a.from)} → {String(a.to)}</span>)}
+                    {r.added.map((a, i) => <span key={`a${i}`} className="rounded-sm bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">+ {a.key}{a.to !== undefined ? `=${String(a.to)}` : ""}</span>)}
+                    {r.removed.map((a, i) => <span key={`r${i}`} className="rounded-sm bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">− {a.key}</span>)}
+                    {r.changed.map((a, i) => <span key={`c${i}`} className="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">{a.key}: {String(a.from)} → {String(a.to)}</span>)}
                   </div>
                 </div>
               ))}
@@ -1252,7 +1252,7 @@ function PolicyTab() {
                   <div className="flex gap-1">
                     {["", "audit", "inherit", "append", "deny"].map((eff) => (
                       <button key={eff} onClick={() => setSelections((s) => ({ ...s, [tag]: eff }))}
-                        className={`rounded px-2 py-1 text-[11px] ${(selections[tag] || "") === eff ? (eff === "deny" ? "bg-red-600 text-white" : "bg-brand text-white") : "border text-gray-500 hover:bg-gray-50"}`}>
+                        className={`rounded-sm px-2 py-1 text-[11px] ${(selections[tag] || "") === eff ? (eff === "deny" ? "bg-red-600 text-white" : "bg-brand text-white") : "border text-gray-500 hover:bg-gray-50"}`}>
                         {eff || "none"}
                       </button>
                     ))}
@@ -1268,11 +1268,11 @@ function PolicyTab() {
       {gen && (
         <div className="rounded-xl border bg-white p-4">
           <div className="flex items-center justify-between"><span className="text-sm font-medium text-gray-700">{gen.definitions.length} definitions + initiative</span><Link to="/policy/rollout" onClick={() => handoffToRollout(gen)} className="text-[11px] text-brand hover:underline">Open Rollout Planner →</Link></div>
-          {gen.warnings.map((w, i) => <div key={i} className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">⚠ {w}</div>)}
+          {gen.warnings.map((w, i) => <div key={i} className="mt-2 rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">⚠ {w}</div>)}
           <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {gen.definitions.map((def) => (
               <button key={def.name} onClick={() => setView(def)} className="rounded-lg border p-2 text-left hover:bg-gray-50">
-                <div className="flex items-center gap-1"><span className={`rounded px-1.5 py-0.5 text-[10px] text-white ${def._effect === "deny" ? "bg-red-600" : def._effect === "modify" ? "bg-amber-600" : "bg-blue-600"}`}>{def._effect}</span><span className="truncate text-xs font-medium text-gray-700">{def._tag}</span></div>
+                <div className="flex items-center gap-1"><span className={`rounded-sm px-1.5 py-0.5 text-[10px] text-white ${def._effect === "deny" ? "bg-red-600" : def._effect === "modify" ? "bg-amber-600" : "bg-blue-600"}`}>{def._effect}</span><span className="truncate text-xs font-medium text-gray-700">{def._tag}</span></div>
                 <div className="mt-1 truncate text-[11px] text-gray-400">{def.name}</div>
               </button>
             ))}
@@ -1280,7 +1280,7 @@ function PolicyTab() {
           {view && (
             <div className="mt-3">
               <div className="mb-1 flex items-center gap-2"><span className="text-[11px] font-medium text-gray-500">{view.name}.json</span><CopyBtn text={JSON.stringify(view.properties, null, 2)} /></div>
-              <pre className="max-h-72 overflow-auto rounded bg-gray-900 p-2 text-[11px] text-emerald-300">{JSON.stringify(view.properties, null, 2)}</pre>
+              <pre className="max-h-72 overflow-auto rounded-sm bg-gray-900 p-2 text-[11px] text-emerald-300">{JSON.stringify(view.properties, null, 2)}</pre>
             </div>
           )}
         </div>
@@ -1420,9 +1420,9 @@ function ChangeSetLibrary({ changesets, groups, loadedId, onLoad, onNew, onChang
     <div className="rounded-xl border bg-white">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <span className="text-sm font-medium text-gray-700">📚 Change-set library</span>
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{changesets.length} set(s) · {groups.length} group(s)</span>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, label, tag key…" className="ml-auto w-56 rounded border px-2 py-1 text-xs" />
-        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="rounded border px-2 py-1 text-xs">
+        <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{changesets.length} set(s) · {groups.length} group(s)</span>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, label, tag key…" className="ml-auto w-56 rounded-sm border px-2 py-1 text-xs" />
+        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="rounded-sm border px-2 py-1 text-xs">
           <option value="">All groups</option>
           {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           <option value="__ungrouped">Ungrouped</option>
@@ -1431,14 +1431,14 @@ function ChangeSetLibrary({ changesets, groups, loadedId, onLoad, onNew, onChang
           ref={fileRef} type="file" accept="application/json,.json" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFile(f); e.target.value = ""; }}
         />
-        <button onClick={() => fileRef.current?.click()} disabled={ioBusy === "import"} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50" title="Import change-sets from a JSON file (added, never overwritten)">
+        <button onClick={() => fileRef.current?.click()} disabled={ioBusy === "import"} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50" title="Import change-sets from a JSON file (added, never overwritten)">
           {ioBusy === "import" ? "Importing…" : "⤓ Import"}
         </button>
-        <button onClick={() => void exportLibrary()} disabled={ioBusy === "export" || changesets.length === 0} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50" title={groupFilter ? "Export the filtered change-sets to a JSON file" : "Export all change-sets to a JSON file"}>
+        <button onClick={() => void exportLibrary()} disabled={ioBusy === "export" || changesets.length === 0} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50" title={groupFilter ? "Export the filtered change-sets to a JSON file" : "Export all change-sets to a JSON file"}>
           {ioBusy === "export" ? "Exporting…" : "⤒ Export"}
         </button>
-        <button onClick={() => setGroupForm({ name: "", color: GROUP_COLOR_KEYS[groups.length % GROUP_COLOR_KEYS.length] })} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">+ Group</button>
-        <button onClick={onNew} className="rounded border border-brand/40 bg-brand/5 px-2 py-1 text-[11px] text-brand hover:bg-brand/10">+ New change-set</button>
+        <button onClick={() => setGroupForm({ name: "", color: GROUP_COLOR_KEYS[groups.length % GROUP_COLOR_KEYS.length] })} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">+ Group</button>
+        <button onClick={onNew} className="rounded-sm border border-brand/40 bg-brand/5 px-2 py-1 text-[11px] text-brand hover:bg-brand/10">+ New change-set</button>
       </div>
 
       {ioMsg && (
@@ -1514,16 +1514,16 @@ function ChangeSetCard({ cs, groups, loaded, busy, onLoad, onEdit, onDuplicate, 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="truncate text-sm font-medium text-gray-800">{cs.name}</span>
-            {loaded && <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand">loaded</span>}
+            {loaded && <span className="rounded-sm bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand">loaded</span>}
             {Object.entries(breakdown).map(([t, n]) => (
-              <span key={t} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{n} {OP_TYPE_LABEL[t] ?? t}</span>
+              <span key={t} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{n} {OP_TYPE_LABEL[t] ?? t}</span>
             ))}
           </div>
           {cs.description && <div className="truncate text-[11px] text-gray-500">{cs.description}</div>}
           <div className="truncate text-[11px] text-gray-400">{cs.operations.map(opLabel).join(" · ")}</div>
           {(cs.affected_keys?.length ?? 0) > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
-              {(cs.affected_keys ?? []).slice(0, 6).map((k) => <span key={k} className="rounded bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500">{k}</span>)}
+              {(cs.affected_keys ?? []).slice(0, 6).map((k) => <span key={k} className="rounded-sm bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500">{k}</span>)}
             </div>
           )}
           {(cs.labels?.length ?? 0) > 0 && (
@@ -1539,21 +1539,21 @@ function ChangeSetCard({ cs, groups, loaded, busy, onLoad, onEdit, onDuplicate, 
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1">
-        <button onClick={onLoad} className="rounded border px-2 py-1 text-[11px] text-brand hover:bg-brand/5">Load</button>
-        <button onClick={onEdit} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">Edit</button>
-        <button onClick={onDuplicate} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">Duplicate</button>
-        <select value={cs.group_id || ""} onChange={(e) => onMove(e.target.value)} className="rounded border px-1.5 py-1 text-[11px] text-gray-600" title="Move to group">
+        <button onClick={onLoad} className="rounded-sm border px-2 py-1 text-[11px] text-brand hover:bg-brand/5">Load</button>
+        <button onClick={onEdit} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">Edit</button>
+        <button onClick={onDuplicate} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">Duplicate</button>
+        <select value={cs.group_id || ""} onChange={(e) => onMove(e.target.value)} className="rounded-sm border px-1.5 py-1 text-[11px] text-gray-600" title="Move to group">
           <option value="">Ungrouped</option>
           {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
         {confirmDel ? (
           <span className="ml-auto flex items-center gap-1">
             <span className="text-[10px] text-red-600">Delete?</span>
-            <button onClick={onDelete} className="rounded bg-red-600 px-2 py-1 text-[11px] text-white">Yes</button>
-            <button onClick={() => setConfirmDel(false)} className="rounded border px-2 py-1 text-[11px] text-gray-500">No</button>
+            <button onClick={onDelete} className="rounded-sm bg-red-600 px-2 py-1 text-[11px] text-white">Yes</button>
+            <button onClick={() => setConfirmDel(false)} className="rounded-sm border px-2 py-1 text-[11px] text-gray-500">No</button>
           </span>
         ) : (
-          <button onClick={() => setConfirmDel(true)} className="ml-auto rounded border px-2 py-1 text-[11px] text-gray-400 hover:text-red-600">Delete</button>
+          <button onClick={() => setConfirmDel(true)} className="ml-auto rounded-sm border px-2 py-1 text-[11px] text-gray-400 hover:text-red-600">Delete</button>
         )}
       </div>
     </div>
@@ -1574,15 +1574,15 @@ function GroupEditor({ form, onClose, onSaved }: { form: Partial<TagChangeSetGro
   return (
     <div className="flex flex-wrap items-center gap-2 border-b bg-gray-50 px-4 py-2">
       <span className="text-[11px] font-medium text-gray-600">{form.id ? "Edit group" : "New group"}</span>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Group name (e.g. Ownership baseline)" className="w-56 rounded border px-2 py-1 text-sm" />
-      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description (optional)" className="w-48 rounded border px-2 py-1 text-xs" />
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Group name (e.g. Ownership baseline)" className="w-56 rounded-sm border px-2 py-1 text-sm" />
+      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description (optional)" className="w-48 rounded-sm border px-2 py-1 text-xs" />
       <div className="flex items-center gap-1">
         {GROUP_COLOR_KEYS.map((k) => (
           <button key={k} onClick={() => setColor(k)} title={k} className={`h-5 w-5 rounded-full ${GROUP_COLORS[k].dot} ${color === k ? "ring-2 ring-offset-1 ring-gray-400" : ""}`} />
         ))}
       </div>
       <button onClick={save} disabled={busy || !name.trim()} className="rounded-lg bg-gray-900 px-3 py-1 text-xs text-white disabled:opacity-50">{busy ? "Saving…" : "Save group"}</button>
-      <button onClick={onClose} className="rounded border px-2 py-1 text-xs text-gray-500">Cancel</button>
+      <button onClick={onClose} className="rounded-sm border px-2 py-1 text-xs text-gray-500">Cancel</button>
     </div>
   );
 }
@@ -1619,15 +1619,15 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
         </div>
         <div className="space-y-3 p-4">
           <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-xs text-gray-500">Name<input value={name} onChange={(e) => setName(e.target.value)} className="mt-0.5 block w-full rounded border px-2 py-1 text-sm" /></label>
+            <label className="text-xs text-gray-500">Name<input value={name} onChange={(e) => setName(e.target.value)} className="mt-0.5 block w-full rounded-sm border px-2 py-1 text-sm" /></label>
             <label className="text-xs text-gray-500">Group
-              <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="mt-0.5 block w-full rounded border px-2 py-1 text-sm">
+              <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="mt-0.5 block w-full rounded-sm border px-2 py-1 text-sm">
                 <option value="">Ungrouped</option>
                 {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </label>
           </div>
-          <label className="block text-xs text-gray-500">Description<input value={desc} onChange={(e) => setDesc(e.target.value)} className="mt-0.5 block w-full rounded border px-2 py-1 text-sm" /></label>
+          <label className="block text-xs text-gray-500">Description<input value={desc} onChange={(e) => setDesc(e.target.value)} className="mt-0.5 block w-full rounded-sm border px-2 py-1 text-sm" /></label>
           <div>
             <div className="text-xs text-gray-500">Labels</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-1">
@@ -1637,7 +1637,7 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
                 </span>
               ))}
               <input value={labelInput} onChange={(e) => setLabelInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLabel(); } }}
-                placeholder="add label + Enter" className="w-32 rounded border px-2 py-1 text-[11px]" />
+                placeholder="add label + Enter" className="w-32 rounded-sm border px-2 py-1 text-[11px]" />
             </div>
           </div>
 
@@ -1648,9 +1648,9 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
                 const incomplete = opIncompleteReason(op);
                 return (
                 <div key={i} className={`flex flex-wrap items-end gap-2 rounded-lg border bg-gray-50/50 p-2 ${incomplete ? "border-amber-300 bg-amber-50/40" : ""}`}>
-                  <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
+                  <span className="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
                   <label className="text-xs text-gray-500">Operation
-                    <select value={op.type} onChange={(e) => patchOp(i, { type: e.target.value as TagRemediationOp["type"] })} className="mt-0.5 block rounded border px-2 py-1 text-sm">
+                    <select value={op.type} onChange={(e) => patchOp(i, { type: e.target.value as TagRemediationOp["type"] })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm">
                       <option value="add_tag">Add tag (if missing)</option>
                       <option value="set_tag">Set tag (overwrite)</option>
                       <option value="rename_key">Rename key</option>
@@ -1658,26 +1658,26 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
                       <option value="remove_key">Remove key (delete)</option>
                     </select>
                   </label>
-                  <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Owner" /></label>
-                  {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. owner" /></label>}
-                  {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. team-a" /></label>}
-                  {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Production" /></label></>}
-                  <button onClick={() => setOps(ops.length > 1 ? ops.filter((_, idx) => idx !== i) : ops)} disabled={ops.length === 1} className="rounded border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30">✕</button>
+                  <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. Owner" /></label>
+                  {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. owner" /></label>}
+                  {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. team-a" /></label>}
+                  {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. Production" /></label></>}
+                  <button onClick={() => setOps(ops.length > 1 ? ops.filter((_, idx) => idx !== i) : ops)} disabled={ops.length === 1} className="rounded-sm border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30">✕</button>
                   {incomplete && <span className="w-full text-[11px] font-medium text-amber-600">⚠ {incomplete} — this operation will be skipped.</span>}
                 </div>
                 );
               })}
             </div>
-            <button onClick={() => setOps([...ops, { ...EMPTY_OP }])} className="mt-2 rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
+            <button onClick={() => setOps([...ops, { ...EMPTY_OP }])} className="mt-2 rounded-sm border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
           </div>
 
           {/* Live before→after transformation preview (symbolic — the drawer has no dry-run plan). */}
           <ChangeSetFlow ops={ops} />
 
-          {err && <div className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
+          {err && <div className="rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
           <div className="flex items-center gap-2">
             <button onClick={save} disabled={busy} className="rounded-lg bg-gray-900 px-4 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "Saving…" : "💾 Save changes"}</button>
-            <button onClick={onClose} className="rounded border px-3 py-1.5 text-sm text-gray-600">Cancel</button>
+            <button onClick={onClose} className="rounded-sm border px-3 py-1.5 text-sm text-gray-600">Cancel</button>
           </div>
         </div>
       </div>
@@ -1727,7 +1727,7 @@ function GenerateTab({ sel, loaded }: { sel: TagScopeSel; loaded: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border bg-gradient-to-br from-violet-50 to-white p-4">
+      <div className="rounded-xl border bg-linear-to-br from-violet-50 to-white p-4">
         <div className="flex items-center gap-2">
           <span className="text-base">✨</span>
           <span className="text-sm font-medium text-gray-800">AI Tag Generator</span>
@@ -1773,10 +1773,10 @@ function GenerateTab({ sel, loaded }: { sel: TagScopeSel; loaded: boolean }) {
             <ul className="divide-y">
               {ops.map((op, i) => (
                 <li key={i} className="flex items-start gap-3 px-4 py-2.5">
-                  <span className="mt-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
+                  <span className="mt-0.5 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">{OP_TYPE_LABEL[op.type] ?? op.type}</span>
+                      <span className="rounded-sm bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">{OP_TYPE_LABEL[op.type] ?? op.type}</span>
                       <span className="font-mono text-xs text-gray-800">{opLabel(op)}</span>
                       {typeof op.match_count === "number" && (
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${op.match_count > 0 ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-400"}`}>{op.match_count} res</span>
@@ -1784,7 +1784,7 @@ function GenerateTab({ sel, loaded }: { sel: TagScopeSel; loaded: boolean }) {
                     </div>
                     {op.rationale && <div className="mt-0.5 text-[11px] text-gray-500">{op.rationale}</div>}
                   </div>
-                  <button onClick={() => removeOp(i)} className="rounded border px-2 py-1 text-xs text-gray-400 hover:text-red-600" title="Drop this operation">✕</button>
+                  <button onClick={() => removeOp(i)} className="rounded-sm border px-2 py-1 text-xs text-gray-400 hover:text-red-600" title="Drop this operation">✕</button>
                 </li>
               ))}
             </ul>
@@ -1992,8 +1992,8 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-gray-700">{loadedId ? "Edit change-set" : "Build a change-set"}</span>
           <span className="text-[11px] text-gray-400">(dry-run — no writes)</span>
-          <input value={csName} onChange={(e) => setCsName(e.target.value)} placeholder="Change-set name (e.g. Baseline ownership tags)" className="ml-auto w-64 rounded border px-2 py-1 text-sm" />
-          <input value={csDesc} onChange={(e) => setCsDesc(e.target.value)} placeholder="Description (optional)" className="w-56 rounded border px-2 py-1 text-sm" />
+          <input value={csName} onChange={(e) => setCsName(e.target.value)} placeholder="Change-set name (e.g. Baseline ownership tags)" className="ml-auto w-64 rounded-sm border px-2 py-1 text-sm" />
+          <input value={csDesc} onChange={(e) => setCsDesc(e.target.value)} placeholder="Description (optional)" className="w-56 rounded-sm border px-2 py-1 text-sm" />
           <button onClick={saveSet} disabled={saving || !csName.trim() || !canRun} className="rounded-lg border border-brand/40 bg-brand/5 px-3 py-1.5 text-sm text-brand disabled:opacity-50">{saving ? "Saving…" : loadedId ? "💾 Update" : "💾 Save change-set"}</button>
         </div>
 
@@ -2006,9 +2006,9 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
             const resCount = (op.type === "set_tag" || op.type === "add_tag") ? censusCount(op.key, op.value) : null;
             return (
             <div key={i} onMouseEnter={() => setHoverOp(i)} onMouseLeave={() => setHoverOp(null)} className={`flex flex-wrap items-end gap-2 rounded-lg border bg-gray-50/50 p-2 transition ${incomplete ? "border-amber-300 bg-amber-50/40" : isDup ? "border-orange-200" : ""} ${hoverOp === i ? "ring-2 ring-brand/30" : ""}`}>
-              <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
+              <span className="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
               <label className="text-xs text-gray-500">Operation
-                <select value={op.type} onChange={(e) => patchOp(i, { type: e.target.value as TagRemediationOp["type"] })} className="mt-0.5 block rounded border px-2 py-1 text-sm">
+                <select value={op.type} onChange={(e) => patchOp(i, { type: e.target.value as TagRemediationOp["type"] })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm">
                   <option value="add_tag">Add tag (if missing)</option>
                   <option value="set_tag">Set tag (overwrite)</option>
                   <option value="rename_key">Rename key</option>
@@ -2016,16 +2016,16 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
                   <option value="remove_key">Remove key (delete)</option>
                 </select>
               </label>
-              <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Owner" /></label>
-              {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. owner" /></label>}
-              {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. team-a" /></label>}
-              {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Production" /></label></>}
+              <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. Owner" /></label>
+              {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. owner" /></label>}
+              {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. team-a" /></label>}
+              {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" placeholder="e.g. Production" /></label></>}
               {/* Badges: duplicate-key + how many resources currently carry this key=value */}
               <div className="flex items-center gap-1.5 self-center">
                 {isDup && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700" title={`This key appears in ${dupCount} operations`}>⧉ dup ×{dupCount}</span>}
                 {resCount !== null && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${resCount > 0 ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-400"}`} title={resCount > 0 ? `${resCount} resource(s) currently have ${op.key}=${op.value}` : `No resource currently has ${op.key}=${op.value}`}>{resCount} res</span>}
               </div>
-              <button onClick={() => removeOp(i)} disabled={ops.length === 1} className="self-center rounded border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30" title="Remove pair">✕</button>
+              <button onClick={() => removeOp(i)} disabled={ops.length === 1} className="self-center rounded-sm border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30" title="Remove pair">✕</button>
               {incomplete && <span className="w-full text-[11px] font-medium text-amber-600">⚠ {incomplete} — this operation will be skipped.</span>}
             </div>
             );
@@ -2038,9 +2038,9 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
         </div>
 
         <div className="mt-2 flex items-center gap-2">
-          <button onClick={addOp} className="rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
-          <button onClick={loadCurrentTags} disabled={!loaded || prefillCount === 0} title={!loaded ? "Load a scope first" : `Prefill ${prefillCount} key=value pair(s) from the current estate (duplicates included — remove/dedup before running)`} className="rounded border px-2 py-1 text-xs text-brand hover:bg-brand/5 disabled:opacity-40">⤓ Load current tags{prefillCount > 0 ? ` (${prefillCount})` : ""}</button>
-          <button onClick={clearOps} disabled={ops.length === 1 && !ops[0].key && !ops[0].value} title="Remove every operation from this change-set" className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">🗑 Clear all</button>
+          <button onClick={addOp} className="rounded-sm border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
+          <button onClick={loadCurrentTags} disabled={!loaded || prefillCount === 0} title={!loaded ? "Load a scope first" : `Prefill ${prefillCount} key=value pair(s) from the current estate (duplicates included — remove/dedup before running)`} className="rounded-sm border px-2 py-1 text-xs text-brand hover:bg-brand/5 disabled:opacity-40">⤓ Load current tags{prefillCount > 0 ? ` (${prefillCount})` : ""}</button>
+          <button onClick={clearOps} disabled={ops.length === 1 && !ops[0].key && !ops[0].value} title="Remove every operation from this change-set" className="rounded-sm border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">🗑 Clear all</button>
           <span className="text-[11px] text-gray-400">{validOps.length} valid operation(s)</span>
           {ops.length > validOps.length && <span className="text-[11px] font-medium text-amber-600">· {ops.length - validOps.length} incomplete (skipped)</span>}
           <button onClick={preview} disabled={busy || !canRun} className="ml-auto rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "…" : "Preview (dry-run)"}</button>
@@ -2051,10 +2051,10 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
         <div className="rounded-xl border bg-white">
           <div className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
             <span className="text-sm font-medium text-gray-700">Preview</span>
-            <span className="rounded bg-gray-100 px-2 py-0.5 text-xs">{plan.count} resources</span>
-            {(plan.overwrites ?? 0) > 0 && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">⚠ {plan.overwrites} overwrite value(s)</span>}
+            <span className="rounded-sm bg-gray-100 px-2 py-0.5 text-xs">{plan.count} resources</span>
+            {(plan.overwrites ?? 0) > 0 && <span className="rounded-sm bg-amber-100 px-2 py-0.5 text-xs text-amber-700">⚠ {plan.overwrites} overwrite value(s)</span>}
             <span className="text-[11px] text-gray-400">{plan.subscription_count} subscription(s)</span>
-            {!plan.count && <span className="rounded bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500" title="Every targeted resource already matches the desired tags, so there is nothing to generate or apply.">Nothing to apply — already up to date</span>}
+            {!plan.count && <span className="rounded-sm bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500" title="Every targeted resource already matches the desired tags, so there is nothing to generate or apply.">Nothing to apply — already up to date</span>}
             <label className="ml-auto flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={approved} onChange={(e) => { setApproved(e.target.checked); setConfirmRun(false); }} /> I approve applying these tag changes</label>
             {/* Generate scripts is read-only review text — it does NOT require the approval checkbox
                 (you generate scripts precisely to review BEFORE deciding to apply). Only a non-empty
@@ -2068,8 +2068,8 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
             <div className="flex flex-wrap items-center gap-2 border-b bg-red-50 px-4 py-2">
               <span className="text-xs text-red-700">⚠ This writes tags to <b>{plan.count}</b> live Azure resource(s){(plan.overwrites ?? 0) > 0 ? ` and overwrites ${plan.overwrites} existing value(s)` : ""}. This cannot be auto-undone (a rollback script is available under Generate scripts). Continue?</span>
               <div className="ml-auto flex gap-2">
-                <button onClick={() => setConfirmRun(false)} className="rounded border px-2 py-1 text-xs text-gray-600 hover:bg-white">Cancel</button>
-                <button onClick={applyChanges} className="rounded bg-red-600 px-3 py-1 text-xs text-white">Yes, apply to Azure</button>
+                <button onClick={() => setConfirmRun(false)} className="rounded-sm border px-2 py-1 text-xs text-gray-600 hover:bg-white">Cancel</button>
+                <button onClick={applyChanges} className="rounded-sm bg-red-600 px-3 py-1 text-xs text-white">Yes, apply to Azure</button>
               </div>
             </div>
           )}
@@ -2079,7 +2079,7 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
               <tbody>
                 {(plan.items ?? []).slice(0, 100).map((it) => (
                   <tr key={it.id} className="border-t align-top">
-                    <td className="px-4 py-1.5 text-gray-700">{it.name}{it.overwrite && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-700">overwrite</span>}</td>
+                    <td className="px-4 py-1.5 text-gray-700">{it.name}{it.overwrite && <span className="ml-1 rounded-sm bg-amber-100 px-1 text-[10px] text-amber-700">overwrite</span>}</td>
                     <td className="px-2 text-[11px] text-gray-400">{Object.entries(it.before).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}</td>
                     <td className="px-2 text-[11px] text-emerald-700">{Object.entries(it.after).map(([k, v]) => `${k}=${v}`).join(", ")}</td>
                   </tr>
@@ -2099,8 +2099,8 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
               {applying ? "Applying tag changes…" : applyResult?.blocked ? "Apply blocked" : "Apply complete"}
             </span>
             {!applyResult?.blocked && <>
-              <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">{applyCounts.applied} applied</span>
-              {applyCounts.failed > 0 && <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">{applyCounts.failed} failed</span>}
+              <span className="rounded-sm bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">{applyCounts.applied} applied</span>
+              {applyCounts.failed > 0 && <span className="rounded-sm bg-red-100 px-2 py-0.5 text-xs text-red-700">{applyCounts.failed} failed</span>}
               <span className="text-[11px] text-gray-400">of {applyCounts.total}{applyStart?.connection ? ` · ${applyStart.connection}` : ""} · live writes to Azure</span>
               {applyCounts.total > 0 && (
                 <span className="ml-auto text-[11px] tabular-nums text-gray-400">{Math.round(((applyCounts.applied + applyCounts.failed) / Math.max(1, applyCounts.total)) * 100)}%</span>
@@ -2163,11 +2163,11 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-gray-700">Generated scripts</span>
             {(["powershell", "azcli", "arg", "rollback"] as const).map((t) => (
-              <button key={t} onClick={() => setScriptTab(t)} className={`rounded px-2 py-1 text-[11px] ${scriptTab === t ? "bg-brand text-white" : "border text-gray-500 hover:bg-gray-50"}`}>{t}</button>
+              <button key={t} onClick={() => setScriptTab(t)} className={`rounded-sm px-2 py-1 text-[11px] ${scriptTab === t ? "bg-brand text-white" : "border text-gray-500 hover:bg-gray-50"}`}>{t}</button>
             ))}
             <CopyBtn text={scripts.scripts[scriptTab]} />
           </div>
-          <pre className="max-h-72 overflow-auto rounded bg-gray-900 p-3 text-[11px] text-emerald-300">{scripts.scripts[scriptTab]}</pre>
+          <pre className="max-h-72 overflow-auto rounded-sm bg-gray-900 p-3 text-[11px] text-emerald-300">{scripts.scripts[scriptTab]}</pre>
         </div>
       )}
     </div>

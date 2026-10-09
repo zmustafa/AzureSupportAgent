@@ -49,7 +49,7 @@ export function PageIntro({
           onClick={dismiss}
           title="Dismiss"
           aria-label="Dismiss"
-          className="shrink-0 rounded p-1 text-gray-400 hover:bg-white hover:text-gray-600"
+          className="shrink-0 rounded-sm p-1 text-gray-400 hover:bg-white hover:text-gray-600"
         >
           ✕
         </button>

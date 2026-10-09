@@ -25,7 +25,7 @@ function ResultTable({ rows }: { rows: Record<string, unknown>[] }) {
   if (!rows.length) return <div className="px-3 py-2 text-xs text-gray-400">No rows.</div>;
   const cols = Object.keys(rows[0]);
   return (
-    <div className="max-h-72 overflow-auto rounded border">
+    <div className="max-h-72 overflow-auto rounded-sm border">
       <table className="w-full text-[12px]">
         <thead className="sticky top-0 bg-gray-50 text-left text-gray-500">
           <tr>{cols.map((c) => <th key={c} className="px-2 py-1 font-medium">{c}</th>)}</tr>
@@ -63,7 +63,7 @@ function CorrelationTimeline({ tl }: { tl: TeleIntelTimeline }) {
   };
   return (
     <div className="overflow-x-auto">
-      <svg width={W} height={H} className="rounded border bg-white">
+      <svg width={W} height={H} className="rounded-sm border bg-white">
         {series.map((s) => {
           const vals = pts.map((p) => Number(p[s.key] ?? 0));
           const max = Math.max(1, ...vals);
@@ -85,7 +85,7 @@ function CorrelationTimeline({ tl }: { tl: TeleIntelTimeline }) {
       <div className="mt-1 flex flex-wrap gap-3 text-[11px]">
         {series.map((s) => (
           <span key={s.key} className="flex items-center gap-1">
-            <span className="inline-block h-2 w-3 rounded" style={{ background: s.color }} /> {s.label}
+            <span className="inline-block h-2 w-3 rounded-sm" style={{ background: s.color }} /> {s.label}
           </span>
         ))}
         <span className="flex items-center gap-1 text-emerald-700">⚙ deploy/config change</span>
@@ -431,10 +431,10 @@ export function TelemetryIntelligencePanel() {
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <span className="text-[11px] font-medium uppercase text-gray-500">Generated KQL (editable — transparency)</span>
-                    <button onClick={rerunKql} disabled={asking} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">▶ Run</button>
+                    <button onClick={rerunKql} disabled={asking} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">▶ Run</button>
                   </div>
                   <textarea value={askKql} onChange={(e) => setAskKql(e.target.value)} spellCheck={false} rows={Math.min(8, Math.max(3, askKql.split("\n").length))}
-                    className="w-full rounded border bg-gray-900 p-2 font-mono text-[11px] text-gray-100" />
+                    className="w-full rounded-sm border bg-gray-900 p-2 font-mono text-[11px] text-gray-100" />
                 </div>
               )}
               {askRows.length > 0 && <ResultTable rows={askRows} />}
@@ -479,7 +479,7 @@ export function TelemetryIntelligencePanel() {
               <div className="mt-3 space-y-2">
                 <div className="text-[11px] font-medium uppercase text-gray-500">Cited evidence (every claim links to its query)</div>
                 {(triage.evidence ?? []).map((e, i) => (
-                  <details key={i} className="rounded border">
+                  <details key={i} className="rounded-sm border">
                     <summary className="cursor-pointer px-2 py-1 text-xs text-gray-700">{e.label} {e.ok ? "" : "⚠"} <span className="text-gray-400">({e.rows.length} rows)</span></summary>
                     <pre className="overflow-auto border-t bg-gray-900 p-2 text-[10px] text-gray-100">{e.kql}</pre>
                     <div className="border-t"><ResultTable rows={e.rows} /></div>
@@ -516,8 +516,8 @@ export function TelemetryIntelligencePanel() {
             ) : (
               <div className="space-y-1.5">
                 {smartQ.data!.items.map((it, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded border px-2 py-1.5 text-sm">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${SEV_TONE[it.severity] || SEV_TONE.info}`}>{it.severity}</span>
+                  <div key={i} className="flex items-center gap-2 rounded-sm border px-2 py-1.5 text-sm">
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${SEV_TONE[it.severity] || SEV_TONE.info}`}>{it.severity}</span>
                     <span className="text-gray-800">{it.display_name}</span>
                     <span className="ml-auto text-[11px] text-gray-400">{it.components.length} component(s)</span>
                   </div>
@@ -539,7 +539,7 @@ export function TelemetryIntelligencePanel() {
                 <div className="mt-2 text-[11px] text-gray-500">Total ~{txn.total_ms}ms · failing step: <b>{txn.failing_step || "none"}</b></div>
                 <div className="mt-2 space-y-1">
                   {txn.spans.map((s, i) => (
-                    <div key={i} className={`flex items-center gap-2 rounded border px-2 py-1 text-[12px] ${s.failed ? "border-red-200 bg-red-50" : ""}`}>
+                    <div key={i} className={`flex items-center gap-2 rounded-sm border px-2 py-1 text-[12px] ${s.failed ? "border-red-200 bg-red-50" : ""}`}>
                       <span className="w-20 shrink-0 text-gray-400">{s.kind}</span>
                       <span className="text-gray-800">{s.name}</span>
                       {s.target && <span className="text-gray-400">→ {s.target}</span>}
@@ -558,8 +558,8 @@ export function TelemetryIntelligencePanel() {
             <div className="mb-2 text-sm font-semibold text-gray-900">⚡ Code Optimizations <span className="text-[11px] font-normal text-gray-400">(Profiler-based .NET)</span></div>
             <div className="space-y-1.5">
               {codeOptQ.data!.items.map((it, i) => (
-                <div key={i} className="flex items-center gap-2 rounded border px-2 py-1.5 text-sm">
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{it.type}</span>
+                <div key={i} className="flex items-center gap-2 rounded-sm border px-2 py-1.5 text-sm">
+                  <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{it.type}</span>
                   <span className="text-gray-800">{it.issue}</span>
                   <span className="ml-auto text-[11px] text-gray-400">{it.impact}</span>
                 </div>

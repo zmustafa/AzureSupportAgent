@@ -127,7 +127,7 @@ function ChartTooltip({
   if (!active || !payload || !payload.length) return null;
   const u = unit ? ` ${unit}` : "";
   return (
-    <div className="rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-xs shadow-md backdrop-blur">
+    <div className="rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-xs shadow-md backdrop-blur-sm">
       <div className="mb-1 font-medium text-gray-700">{fmtFullTime(label)}</div>
       {payload.map((row, i) => (
         <div key={i} className="flex items-center gap-2 text-gray-600">
@@ -180,7 +180,7 @@ function PieTooltip({
   const pct = total > 0 ? ((val / total) * 100).toFixed(1) : "";
   const u = unit ? ` ${unit}` : "";
   return (
-    <div className="rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-xs shadow-md backdrop-blur">
+    <div className="rounded-lg border border-gray-200 bg-white/95 px-3 py-2 text-xs shadow-md backdrop-blur-sm">
       <span className="font-medium text-gray-700">{row.name}</span>
       <span className="ml-2 font-semibold text-gray-800">
         {fmtVal(val)}
@@ -210,8 +210,8 @@ function ChartTypeToggle({ value, onChange }: { value: ChartKind; onChange: (k: 
           type="button"
           onClick={() => onChange(k)}
           className={
-            "rounded px-2 py-0.5 text-[11px] font-medium transition " +
-            (active === k ? "bg-white text-brand shadow-sm" : "text-gray-500 hover:text-gray-700")
+            "rounded-sm px-2 py-0.5 text-[11px] font-medium transition " +
+            (active === k ? "bg-white text-brand shadow-xs" : "text-gray-500 hover:text-gray-700")
           }
           aria-pressed={active === k}
         >
@@ -234,7 +234,7 @@ function Frame({
   children: React.ReactNode;
 }) {
   return (
-    <div className="my-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+    <div className="my-3 rounded-xl border border-gray-200 bg-white p-3 shadow-xs">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           {title && <div className="px-1 text-sm font-semibold text-gray-800">{title}</div>}

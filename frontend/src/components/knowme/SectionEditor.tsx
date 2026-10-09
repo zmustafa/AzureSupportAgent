@@ -56,7 +56,7 @@ const TBtn = ({ on, active, title, children }: { on: () => void; active?: boolea
     title={title}
     onMouseDown={(e) => e.preventDefault()}
     onClick={on}
-    className={`rounded px-2 py-1 text-xs font-medium ${active ? "bg-brand/10 text-brand" : "text-gray-600 hover:bg-gray-100"}`}
+    className={`rounded-sm px-2 py-1 text-xs font-medium ${active ? "bg-brand/10 text-brand" : "text-gray-600 hover:bg-gray-100"}`}
   >
     {children}
   </button>
@@ -225,9 +225,9 @@ export function SectionEditor({
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <span className="text-sm font-semibold text-gray-800">✏️ Edit — {section.label}</span>
           <div className="ml-3 flex rounded-lg border p-0.5 text-xs">
-            <button onClick={() => setMode("visual")} className={`rounded px-2 py-0.5 ${mode === "visual" ? "bg-brand/10 text-brand" : "text-gray-500"}`}>Visual</button>
-            <button onClick={() => setMode("markdown")} className={`rounded px-2 py-0.5 ${mode === "markdown" ? "bg-brand/10 text-brand" : "text-gray-500"}`}>Markdown</button>
-            <button onClick={() => setMode("preview")} className={`rounded px-2 py-0.5 ${mode === "preview" ? "bg-brand/10 text-brand" : "text-gray-500"}`}>Preview</button>
+            <button onClick={() => setMode("visual")} className={`rounded-sm px-2 py-0.5 ${mode === "visual" ? "bg-brand/10 text-brand" : "text-gray-500"}`}>Visual</button>
+            <button onClick={() => setMode("markdown")} className={`rounded-sm px-2 py-0.5 ${mode === "markdown" ? "bg-brand/10 text-brand" : "text-gray-500"}`}>Markdown</button>
+            <button onClick={() => setMode("preview")} className={`rounded-sm px-2 py-0.5 ${mode === "preview" ? "bg-brand/10 text-brand" : "text-gray-500"}`}>Preview</button>
           </div>
           <button onClick={() => !saving && onClose()} className="ml-auto rounded-md px-2 py-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
@@ -279,13 +279,13 @@ export function SectionEditor({
           {mode === "visual" ? (
             <EditorContent
               editor={editor}
-              className="prose prose-sm max-w-none [&_.ProseMirror]:min-h-[18rem] [&_.ProseMirror]:outline-none [&_img]:max-w-full [&_img]:rounded-lg [&_table]:w-full [&_table]:border-collapse [&_table]:text-[12px] [&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-50 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_.selectedCell]:bg-brand/10 [&_.column-resize-handle]:bg-brand/40"
+              className="prose prose-sm max-w-none [&_.ProseMirror]:min-h-72 [&_.ProseMirror]:outline-hidden [&_img]:max-w-full [&_img]:rounded-lg [&_table]:w-full [&_table]:border-collapse [&_table]:text-[12px] [&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-50 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_.selectedCell]:bg-brand/10 [&_.column-resize-handle]:bg-brand/40"
             />
           ) : mode === "markdown" ? (
             <textarea
               value={mdText}
               onChange={(e) => setMdText(e.target.value)}
-              className="h-[24rem] w-full resize-none rounded-lg border border-gray-200 p-3 font-mono text-[12px] focus:border-brand focus:outline-none"
+              className="h-96 w-full resize-none rounded-lg border border-gray-200 p-3 font-mono text-[12px] focus:border-brand focus:outline-hidden"
               spellCheck={false}
             />
           ) : (

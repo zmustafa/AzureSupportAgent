@@ -138,7 +138,7 @@ function BackupMatrixBody({ group, openDrawer }: { group: BackupDrGroup; openDra
         return cell ? <Cell key={c} cell={cell} /> : <td key={c} className="px-2 py-2 text-center text-gray-300">–</td>;
       })}
       <td className="px-2 py-2 text-right">
-        <button onClick={() => openDrawer(group, row)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open</button>
+        <button onClick={() => openDrawer(group, row)} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open</button>
       </td>
     </tr>
   );
@@ -457,7 +457,7 @@ export function BackupDrCoveragePanel() {
             <h1 className="text-lg font-semibold text-gray-900">Backup &amp; DR Coverage</h1>
             <p className="text-xs text-gray-500">
               Are RTO/RPO commitments actually backed by configured &amp; tested protection?
-              {data?.demo && <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo data</span>}
+              {data?.demo && <span className="ml-1 rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo data</span>}
             </p>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
               <span>Resources: <b>{statusTotals.green + statusTotals.amber + statusTotals.red}</b></span>
@@ -495,7 +495,7 @@ export function BackupDrCoveragePanel() {
               }}
             />
             <span className="text-xs text-gray-500">
-              {data ? (<>Updated {agoText(data.age_seconds)}{data.stale_cache && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
+              {data ? (<>Updated {agoText(data.age_seconds)}{data.stale_cache && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
               {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
             </span>
             {/* BU4 — stale-cache rescan nudge (backup-DR uses stale_cache, not stale). */}
@@ -526,10 +526,10 @@ export function BackupDrCoveragePanel() {
         <div className="mt-3 flex items-center gap-1 border-b text-sm">
           <button onClick={() => setTab("backup")} className={`-mb-px border-b-2 px-3 py-1.5 ${tab === "backup" ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>Backup Coverage</button>
           <button onClick={() => setTab("dr")} className={`-mb-px border-b-2 px-3 py-1.5 ${tab === "dr" ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>
-            Disaster Recovery {sc?.dr_pairs_stale ? <span className="ml-1 rounded bg-red-100 px-1.5 text-[10px] text-red-700">{sc.dr_pairs_stale} stale</span> : null}
+            Disaster Recovery {sc?.dr_pairs_stale ? <span className="ml-1 rounded-sm bg-red-100 px-1.5 text-[10px] text-red-700">{sc.dr_pairs_stale} stale</span> : null}
           </button>
           <button onClick={() => setTab("all")} className={`-mb-px border-b-2 px-3 py-1.5 ${tab === "all" ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>
-            All Resources {data?.all_resources?.length ? <span className="ml-1 rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">{data.all_resources.length}</span> : null}
+            All Resources {data?.all_resources?.length ? <span className="ml-1 rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-600">{data.all_resources.length}</span> : null}
           </button>
         </div>
 
@@ -538,7 +538,7 @@ export function BackupDrCoveragePanel() {
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-gray-500">Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Resource Graph"}</span>
               <span className="text-gray-300">·</span>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search resources…" className="w-44 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search resources…" className="w-44 rounded-lg border px-2.5 py-1.5 outline-hidden focus:border-gray-400" />
               <select aria-label="Backup coverage status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
                 <option value="all">All statuses</option>
                 <option value="red">🔴 Critical</option>
@@ -632,13 +632,13 @@ export function BackupDrCoveragePanel() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-gray-900">{p.name}</span>
                     <span className="text-xs text-gray-500">{p.primary_region} → {p.secondary_region}</span>
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] ${p.healthy ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${p.healthy ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
                       {p.healthy ? "✓ " : "✗ "}{p.replication_health}
                     </span>
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] ${p.stale || neverDrilled ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${p.stale || neverDrilled ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
                       {neverDrilled ? "Never drilled" : `Last drill ${p.last_failover_test_age_days}d ago`}{p.stale ? " · stale" : ""}
                     </span>
-                    {atRisk && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">⚠ DR SLA at risk</span>}
+                    {atRisk && <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">⚠ DR SLA at risk</span>}
                     <span className="ml-auto text-[11px] text-gray-400">{p.protected_items} protected item(s)</span>
                   </div>
                 </div>
@@ -664,7 +664,7 @@ export function BackupDrCoveragePanel() {
                       {g.red > 0 && <span className="text-red-600">🔴 {g.red}</span>}
                       {g.amber > 0 && <span className="text-amber-600">🟠 {g.amber}</span>}
                       {g.green > 0 && <span className="text-green-600">🟢 {g.green}</span>}
-                      <span className={`rounded px-2 py-0.5 font-medium ${g.coverage_pct >= 80 ? "bg-green-100 text-green-700" : g.coverage_pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{g.coverage_pct}%</span>
+                      <span className={`rounded-sm px-2 py-0.5 font-medium ${g.coverage_pct >= 80 ? "bg-green-100 text-green-700" : g.coverage_pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{g.coverage_pct}%</span>
                     </span>
                   </button>
                   {!isCollapsed && (
@@ -689,7 +689,7 @@ export function BackupDrCoveragePanel() {
                 <div className="truncate text-sm font-semibold text-gray-900">{row.resource_name}</div>
                 <div className="truncate text-[11px] text-gray-500">{group.display} · {row.region}{row.backup_region ? ` → backup ${row.backup_region}` : ""}</div>
               </div>
-              <button onClick={() => setDrawer(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+              <button onClick={() => setDrawer(null)} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
             </div>
             <div className="flex items-center gap-1 border-b px-3 text-xs">
               <button onClick={() => setDrawerTab("details")} className={`-mb-px border-b-2 px-2 py-1.5 ${drawerTab === "details" ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>Details</button>
@@ -710,7 +710,7 @@ export function BackupDrCoveragePanel() {
                   </div>
                   <div className="rounded-lg border bg-gray-50 p-2">
                     <div className="mb-1 font-medium text-gray-700">Resource Graph properties (state)</div>
-                    <pre className="whitespace-pre-wrap break-words text-[10px] text-gray-600">{JSON.stringify(row.state, null, 2)}</pre>
+                    <pre className="whitespace-pre-wrap wrap-break-word text-[10px] text-gray-600">{JSON.stringify(row.state, null, 2)}</pre>
                   </div>
                   <button onClick={() => investigate(row, group)} className="w-full rounded-md border px-2 py-1.5 text-center hover:bg-gray-50">🚨 Investigate in War Room</button>
                 </>
@@ -747,7 +747,7 @@ export function BackupDrCoveragePanel() {
               <div className="text-sm font-semibold text-gray-900">{iacView.title}</div>
               <div className="flex items-center gap-2">
                 <button onClick={() => download(iacView.text, iacView.format === "runbook" ? "backupdr-runbook.ps1" : "backupdr.bicep")} className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50">⬇ Download</button>
-                <button onClick={() => setIacView(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+                <button onClick={() => setIacView(null)} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
               </div>
             </div>
             <pre className="min-h-0 flex-1 overflow-auto bg-gray-900 p-4 text-[11px] leading-relaxed text-gray-100">{iacView.text}</pre>

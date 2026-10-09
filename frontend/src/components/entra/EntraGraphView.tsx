@@ -277,9 +277,9 @@ function Canvas({ nodes, edges, lens, onSelect }: {
         ref={ref}
         tabIndex={0}
         onKeyDown={onKeyDown}
-        className="h-full w-full bg-slate-50 outline-none"
+        className="h-full w-full bg-slate-50 outline-hidden"
       />
-      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border bg-white/95 shadow-sm">
+      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border bg-white/95 shadow-xs">
         <button onClick={() => zoomBy(1.3)} title="Zoom in (+)"
                 className="px-2 py-1 text-base leading-5 text-gray-600 hover:bg-gray-100">＋</button>
         <div className="border-t px-1 py-0.5 text-center text-[10px] tabular-nums text-gray-500"
@@ -333,7 +333,7 @@ function Inspector({ node, escalations, onFocus }: {
       </div>
 
       {related.length > 0 && (
-        <div className="rounded border border-red-200 bg-red-50 p-2">
+        <div className="rounded-sm border border-red-200 bg-red-50 p-2">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-red-800">
             Escalation paths
           </div>
@@ -359,7 +359,7 @@ function Inspector({ node, escalations, onFocus }: {
 
       {(prefix === "eu" || prefix === "esp" || prefix === "er") && (
         <button
-          className="w-full rounded border px-2 py-1 text-[12px] text-gray-700 hover:bg-gray-50"
+          className="w-full rounded-sm border px-2 py-1 text-[12px] text-gray-700 hover:bg-gray-50"
           onClick={() => onFocus(
             prefix === "er" ? "role" : prefix === "esp" ? "application" : "principal", objectId)}
         >
@@ -442,7 +442,7 @@ export function EntraGraphView({ connectionId, onOpenSetup }:
         <select
           value={scopeKind}
           onChange={(e) => { setScopeKind(e.target.value); setScopeId(""); setSelected(null); }}
-          className="rounded border px-2 py-1 text-[13px]"
+          className="rounded-sm border px-2 py-1 text-[13px]"
         >
           {(scopesQ.data?.scopes || []).map((s) => (
             <option key={s.kind} value={s.kind}>{s.label}</option>
@@ -454,10 +454,10 @@ export function EntraGraphView({ connectionId, onOpenSetup }:
               value={targetSearch}
               onChange={(e) => setTargetSearch(e.target.value)}
               placeholder={`Search ${scopeKind}s\u2026`}
-              className="w-44 rounded border px-2 py-1 text-[13px]"
+              className="w-44 rounded-sm border px-2 py-1 text-[13px]"
             />
             <select value={scopeId} onChange={(e) => setScopeId(e.target.value)}
-                    className="min-w-56 rounded border px-2 py-1 text-[13px]">
+                    className="min-w-56 rounded-sm border px-2 py-1 text-[13px]">
               <option value="">Select\u2026</option>
               {targets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
@@ -470,7 +470,7 @@ export function EntraGraphView({ connectionId, onOpenSetup }:
         )}
         <span className="ml-auto text-[11px] text-gray-500">Color by</span>
         <select value={lens} onChange={(e) => setLens(e.target.value as Lens)}
-                className="rounded border px-2 py-1 text-[13px]">
+                className="rounded-sm border px-2 py-1 text-[13px]">
           {LENSES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
         </select>
       </div>

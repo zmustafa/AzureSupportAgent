@@ -78,12 +78,12 @@ export function DurableBatchBar({ batch, label, onCancel, onRetry, cancelling = 
       <span>{batch.succeeded} succeeded · {batch.partial} partial · {batch.failed} failed{batch.cancelled ? ` · ${batch.cancelled} cancelled` : ""}</span>
       <span className="text-current/70">Server-owned · safe to navigate or reload</span>
       {active && onCancel && (
-        <button onClick={onCancel} disabled={cancelling} className="ml-auto rounded border border-current/30 px-2 py-0.5 font-medium disabled:opacity-50">
+        <button onClick={onCancel} disabled={cancelling} className="ml-auto rounded-sm border border-current/30 px-2 py-0.5 font-medium disabled:opacity-50">
           {cancelling ? "Cancelling…" : "Cancel pending"}
         </button>
       )}
       {!active && onRetry && (batch.failed > 0 || batch.partial > 0 || batch.cancelled > 0) && (
-        <button onClick={onRetry} className="ml-auto rounded border border-current/30 px-2 py-0.5 font-medium">
+        <button onClick={onRetry} className="ml-auto rounded-sm border border-current/30 px-2 py-0.5 font-medium">
           Retry failed/partial
         </button>
       )}

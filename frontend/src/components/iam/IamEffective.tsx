@@ -68,7 +68,7 @@ function WhoRow({ p }: { p: { principalId: string; principalName: string; verdic
   const v = VERDICT[p.verdict as keyof typeof VERDICT] ?? VERDICT.indeterminate;
   return (
     <div className="flex items-start gap-2 border-b px-3 py-1.5 last:border-0">
-      <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${v.box}`}>{v.icon} {v.label}</span>
+      <span className={`shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold ${v.box}`}>{v.icon} {v.label}</span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-gray-800" title={p.principalId}>
           {p.principalName || p.principalId}
@@ -148,7 +148,7 @@ export function EffectiveTab() {
             key={m.id}
             type="button"
             onClick={() => setMode(m.id)}
-            className={`rounded border px-2 py-1 text-xs ${mode === m.id ? "border-brand bg-brand/10 font-medium text-brand" : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
+            className={`rounded-sm border px-2 py-1 text-xs ${mode === m.id ? "border-brand bg-brand/10 font-medium text-brand" : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
           >
             {m.label}
           </button>
@@ -168,7 +168,7 @@ export function EffectiveTab() {
                   onChange={(e) => setPrincipalId(e.target.value.trim())}
                   placeholder="Object id (GUID)"
                   aria-label="Principal"
-                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 font-mono text-[11px]"
+                  className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 font-mono text-[11px]"
                 />
                 <datalist id="iam-principal-options">
                   {principals.slice(0, 2000).map((p) => (
@@ -191,7 +191,7 @@ export function EffectiveTab() {
                 value={scopeOptions.some((s) => s.id === scope) ? scope : ""}
                 onChange={(e) => e.target.value && setScope(e.target.value)}
                 aria-label="Scope"
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 text-xs"
               >
                 {scopeOptions.map((s) => (
                   <option key={s.id} value={s.id}>{s.label}</option>
@@ -203,7 +203,7 @@ export function EffectiveTab() {
                 onChange={(e) => setScope(e.target.value.trim())}
                 placeholder="/subscriptions/…/resourceGroups/…/providers/…"
                 aria-label="Scope id"
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1 font-mono text-[11px]"
+                className="mt-1 w-full rounded-sm border border-gray-300 px-2 py-1 font-mono text-[11px]"
               />
               {noScopesAtAll && (
                 <span className="mt-0.5 block text-[10px] text-amber-700">
@@ -258,7 +258,7 @@ export function EffectiveTab() {
                       {/* A never-scanned tenant answers "nobody", which is the most reassuring
                           possible rendering of "we have no data". Say which one it is. */}
                       {whoQ.data.candidates === 0 && (
-                        <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                        <div className="mt-2 rounded-sm border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
                           No principal holds any grant at or above this scope in the cached scan. That is not the
                           same as nobody being able to do this — run an access scan if you expected results.
                         </div>
@@ -302,7 +302,7 @@ export function EffectiveTab() {
                       <span className="font-mono text-[11px]">{reachQ.data.scope}</span>.
                     </div>
                     {reachQ.data.control.length === 0 && reachQ.data.data.length === 0 && (
-                      <div className="rounded border bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
+                      <div className="rounded-sm border bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
                         No grants found here. Roles held further down the tree are not shown — this answers
                         &ldquo;at or above this scope&rdquo;.
                       </div>
@@ -311,7 +311,7 @@ export function EffectiveTab() {
                     <RefList title="Data plane" refs={reachQ.data.data} />
                     <RefList title="Deny assignments" refs={reachQ.data.denies} tone="text-red-700" />
                     {reachQ.data.unknownRoles.length > 0 && (
-                      <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
+                      <div className="rounded-sm border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
                         Role definition(s) not collected, so their permissions are unknown:{" "}
                         <b>{reachQ.data.unknownRoles.join(", ")}</b>.
                       </div>

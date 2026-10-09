@@ -296,7 +296,7 @@ export function RunCleanup({
                           <td className="px-2 py-1.5 text-gray-600" title={r.run_at}>{relTime(r.run_at)}</td>
                           <td className="px-2 py-1.5">{renderMeta(r)}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums text-gray-500">{fmtBytes(r.size_bytes)}</td>
-                          {r.demo && <td className="px-2 py-1.5"><span className="rounded bg-violet-50 px-1 text-[10px] text-violet-600">demo</span></td>}
+                          {r.demo && <td className="px-2 py-1.5"><span className="rounded-sm bg-violet-50 px-1 text-[10px] text-violet-600">demo</span></td>}
                         </tr>
                       ))}
                     </tbody>

@@ -92,7 +92,7 @@ function FlowPerspectiveBar({ current, onApply }: {
   return (
     <div className="flex flex-wrap items-center gap-1">
       <button type="button" onClick={save} title="Save the current columns, weighting and filters as a named perspective"
-        className="rounded border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">💾 Save view</button>
+        className="rounded-sm border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">💾 Save view</button>
       {FLOW_PRESETS.map((preset) => (
         <button key={preset.name} type="button" onClick={() => onApply(preset.perspective)}
           title={preset.perspective.chain.map((dimension) => DIMENSION_LABELS[dimension]).join(" ▸ ")}
@@ -192,7 +192,7 @@ export function BackupFlowTab({ snapshot, scope, onGoTab, onFocusGap, onFocusVau
       // repeating "/ month" beside every bar pushes long vault names off the canvas.
       formatNodeValue={(value) => weight === "cost" ? money(value, currency) : `${Math.round(value)}`}
       actions={
-        <div role="group" aria-label="Flow weight" className="flex items-center overflow-hidden rounded border bg-white text-xs">
+        <div role="group" aria-label="Flow weight" className="flex items-center overflow-hidden rounded-sm border bg-white text-xs">
           <button type="button" aria-pressed={weight === "count"} onClick={() => setWeight("count")}
             className={`h-7 px-2.5 font-medium ${weight === "count" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}>Items</button>
           <button type="button" aria-pressed={weight === "cost"} onClick={() => setWeight("cost")}
@@ -206,7 +206,7 @@ export function BackupFlowTab({ snapshot, scope, onGoTab, onFocusGap, onFocusVau
           {chain.map((dimension, index) => (
             <select key={`${dimension}-${index}`} value={dimension} aria-label={`Flow column ${index + 1}`}
               onChange={(event) => setColumn(index, event.target.value as FlowDimension | "")}
-              className="rounded border bg-white px-2 py-1 text-xs">
+              className="rounded-sm border bg-white px-2 py-1 text-xs">
               {ALL_DIMENSIONS.map((value) => (
                 <option key={value} value={value}>{DIMENSION_LABELS[value]}</option>
               ))}
@@ -216,7 +216,7 @@ export function BackupFlowTab({ snapshot, scope, onGoTab, onFocusGap, onFocusVau
           {chain.length < ALL_DIMENSIONS.length && (
             <select value="" aria-label="Add a flow column"
               onChange={(event) => event.target.value && setChain((current) => [...current, event.target.value as FlowDimension])}
-              className="rounded border bg-white px-2 py-1 text-xs text-gray-500">
+              className="rounded-sm border bg-white px-2 py-1 text-xs text-gray-500">
               <option value="">+ add column</option>
               {ALL_DIMENSIONS.filter((value) => !chain.includes(value)).map((value) => (
                 <option key={value} value={value}>{DIMENSION_LABELS[value]}</option>
@@ -238,7 +238,7 @@ export function BackupFlowTab({ snapshot, scope, onGoTab, onFocusGap, onFocusVau
               tone={OUTCOME_TONE[outcome]} active={outcomes.includes(outcome)} onClick={() => toggleOutcome(outcome)} />
           ))}
           {outcomes.length > 0 && (
-            <button type="button" onClick={() => setOutcomes([])} className="ml-2 rounded border bg-white px-2 py-1 text-xs text-blue-700">Show all</button>
+            <button type="button" onClick={() => setOutcomes([])} className="ml-2 rounded-sm border bg-white px-2 py-1 text-xs text-blue-700">Show all</button>
           )}
         </div>
       </>}

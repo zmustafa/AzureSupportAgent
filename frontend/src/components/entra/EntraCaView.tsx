@@ -278,7 +278,7 @@ function CoverageTab({ connectionId, onOpenSetup }: { connectionId: string | nul
       <div className="flex flex-wrap gap-3 text-xs text-gray-500">
         {Object.entries(CELL_STYLE).map(([k, v]) => (
           <span key={k} className="inline-flex items-center gap-1">
-            <span className={`inline-flex h-5 w-6 items-center justify-center rounded font-semibold ${v.chip}`}>
+            <span className={`inline-flex h-5 w-6 items-center justify-center rounded-sm font-semibold ${v.chip}`}>
               {v.label}
             </span>
             {v.title}
@@ -357,7 +357,7 @@ function ClassMatrix({
       {/* The control axis is 14 wide. Scroll it rather than shrinking the glyphs to the point
           where the ✓/◐/✕ distinction stops being legible. */}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[64rem] text-[13px]">
+        <table className="w-full min-w-5xl text-[13px]">
           <caption className="sr-only">
             {appClass.label}: coverage by cohort and control. Use the arrow keys to move between
             cells.
@@ -401,7 +401,7 @@ function ClassMatrix({
                           onOpenCell({ cohort: row.cohort, app_class: appClass.id, control: c.key })
                         }
                         disabled={inert}
-                        className={`inline-flex h-6 min-w-[2.25rem] items-center justify-center rounded px-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-1 ${
+                        className={`inline-flex h-6 min-w-9 items-center justify-center rounded px-1 text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-brand focus:ring-offset-1 ${
                           inert ? "bg-gray-50 text-gray-300" : style.chip
                         }`}
                       >
@@ -437,7 +437,7 @@ function DerivedClasses({ data }: { data: EntraCaCoverage }) {
       <div className="rounded-lg border bg-white p-3">
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold text-gray-700">Shadowed classes</span>
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+          <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
             Derived
           </span>
         </div>
@@ -466,7 +466,7 @@ function DerivedClasses({ data }: { data: EntraCaCoverage }) {
       <div className="rounded-lg border bg-white p-3">
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold text-gray-700">Unattributed applications</span>
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+          <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
             Derived
           </span>
         </div>
@@ -476,7 +476,7 @@ function DerivedClasses({ data }: { data: EntraCaCoverage }) {
         {/* "Not measured" must never render as "none found". An empty list here would be the
             most reassuring possible way to present data nobody collected. */}
         {!unattributed?.measured ? (
-          <div className="mt-2 rounded bg-amber-50 p-2 text-[13px] text-amber-900">
+          <div className="mt-2 rounded-sm bg-amber-50 p-2 text-[13px] text-amber-900">
             <span className="font-medium">Not measured. </span>
             {unattributed?.reason ||
               "Sign-in activity was not collected for this tenant, so unattributed applications cannot be identified."}
@@ -517,7 +517,7 @@ function CellDrawer({
     queryFn: () => api.entraCaCoverageCell(cell, connectionId),
   });
   return (
-    <div className="fixed inset-y-0 right-0 z-30 w-[28rem] overflow-auto border-l bg-white shadow-xl">
+    <div className="fixed inset-y-0 right-0 z-30 w-md overflow-auto border-l bg-white shadow-xl">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="text-sm font-semibold">Coverage detail</div>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
@@ -533,7 +533,7 @@ function CellDrawer({
               {q.data.cohort} · {cell.app_class} · {cell.control}
             </div>
             {q.data.cell.state === "n/a" ? (
-              <div className="mt-2 rounded bg-gray-50 p-2 text-gray-600">
+              <div className="mt-2 rounded-sm bg-gray-50 p-2 text-gray-600">
                 {q.data.cell.reason || "Entra does not offer this control for this target."}
               </div>
             ) : (
@@ -581,7 +581,7 @@ function CellDrawer({
                   <li key={u.id} className="flex items-center justify-between">
                     <span className="truncate text-gray-800">{u.name}</span>
                     {u.mfa_registered === false && (
-                      <span className="ml-2 shrink-0 rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">
+                      <span className="ml-2 shrink-0 rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">
                         no MFA method
                       </span>
                     )}
@@ -633,7 +633,7 @@ function PoliciesTab({ connectionId }: { connectionId: string | null }) {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Filter policies…"
-        className="mb-3 w-72 rounded border px-2 py-1.5 text-sm"
+        className="mb-3 w-72 rounded-sm border px-2 py-1.5 text-sm"
       />
       <div className="overflow-hidden rounded-lg border bg-white">
         <table className="w-full text-[13px]">
@@ -695,7 +695,7 @@ function PolicyDrawer({
     queryFn: () => api.entraCaPolicy(policyId, connectionId),
   });
   return (
-    <div className="fixed inset-y-0 right-0 z-30 w-[30rem] overflow-auto border-l bg-white shadow-xl">
+    <div className="fixed inset-y-0 right-0 z-30 w-120 overflow-auto border-l bg-white shadow-xl">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="text-sm font-semibold">Policy detail</div>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
@@ -711,10 +711,10 @@ function PolicyDrawer({
             <div className="flex flex-wrap gap-2">
               <PolicyStateChip policy={q.data.policy} />
               {q.data.policy.is_block && (
-                <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">block</span>
+                <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">block</span>
               )}
               {q.data.policy.blocks_legacy && (
-                <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700">blocks legacy auth</span>
+                <span className="rounded-sm bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700">blocks legacy auth</span>
               )}
             </div>
             <Field label="Effective users">{q.data.policy.effective_user_count.toLocaleString()}</Field>
@@ -728,7 +728,7 @@ function PolicyDrawer({
             </Field>
             <Field label="Last modified">{q.data.policy.modified_at || "unknown"}</Field>
             <Field label="Fingerprint">
-              <code className="rounded bg-gray-100 px-1 text-xs">{q.data.policy.fingerprint}</code>
+              <code className="rounded-sm bg-gray-100 px-1 text-xs">{q.data.policy.fingerprint}</code>
             </Field>
             {q.data.excluded_sample.length > 0 && (
               <div>
@@ -745,7 +745,7 @@ function PolicyDrawer({
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Conflicts</div>
                 <ul className="mt-1 space-y-1">
                   {q.data.conflicts.map((c, i) => (
-                    <li key={i} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                    <li key={i} className="rounded-sm bg-amber-50 px-2 py-1 text-xs text-amber-900">
                       <span className="font-medium">{c.kind}</span> — {c.detail}
                     </li>
                   ))}
@@ -901,7 +901,7 @@ function BreakGlassTab({ connectionId }: { connectionId: string | null }) {
                   </td>
                   <td className="px-2 py-2">
                     {c.lockout_risk ? (
-                      <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
+                      <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
                         lockout risk
                       </span>
                     ) : (

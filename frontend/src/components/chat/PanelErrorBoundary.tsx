@@ -26,7 +26,7 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, State> 
     if (!this.state.error) return this.props.children;
     return (
       <div className="flex h-full items-center justify-center bg-gray-50 p-8">
-        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
+        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-xs">
           <div className="mb-1 text-sm font-semibold text-red-700">The application hit an unexpected error</div>
           <p className="mb-4 text-xs text-gray-600">Reload to restore the application shell. No saved data is affected.</p>
           <pre className="mb-4 max-h-32 overflow-auto rounded-md bg-red-50 px-3 py-2 text-left font-mono text-[11px] text-red-600">

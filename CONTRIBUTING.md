@@ -77,10 +77,27 @@ cd backend; .\.venv\Scripts\python.exe -m pytest tests/ -q
 
 # Frontend type-check (must be clean — the project treats TS errors as failures)
 cd ..\frontend; npx tsc -p tsconfig.json --noEmit
+
+# Bundle-budget script regression tests
+node --test scripts/bundle-budget.test.mjs
 ```
 
 > Note: the frontend build flags unused variables/imports (TS6133). Remove dead
 > code rather than suppressing it.
+
+Keep Boto3 and Botocore pins compatible, and update Tiptap packages together because
+their peers require matching versions. Do not bypass dependency conflicts with
+`--force` or `--legacy-peer-deps`.
+
+Styles use Tailwind 4 through `@tailwindcss/postcss`. Theme colors and animations
+live in `src/index.css`; its compatibility layer preserves the previous default
+border color. Validate the built UI after changing CSS tooling or utility names.
+An intentional dependency-size change may update the total bundle budget only
+after measuring it; entry-size and largest-chunk gates still apply.
+
+The XLSX scaling test retains a less-than-10x timing bound for 4x the rows. It
+collects prior test garbage before each sample and compares three-sample medians;
+the deterministic per-row scan guard remains independent of timing.
 
 ## Making Changes
 

@@ -385,10 +385,10 @@ function CoverageTab({ id, profile, navigate }: { id: string; profile?: Workload
         const v = (profile?.health as unknown as Record<string, number | null> | undefined)?.[l.sig] ?? null;
         const band = v == null ? "unknown" : v >= 80 ? "good" : v >= 50 ? "warn" : "poor";
         return (
-          <button key={l.sig} onClick={() => open(l.to)} className="rounded-xl border bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-sm">
+          <button key={l.sig} onClick={() => open(l.to)} className="rounded-xl border bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-xs">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-800">{l.label}</span>
-              <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${bandBg(band)}`}>{v == null ? "—" : `${Math.round(v)}%`}</span>
+              <span className={`rounded-sm px-1.5 py-0.5 text-xs font-semibold ${bandBg(band)}`}>{v == null ? "—" : `${Math.round(v)}%`}</span>
             </div>
             <div className="mt-2"><MetricBar label="" value={v} /></div>
             <div className="mt-2 text-[11px] text-brand">Open scoped to this workload →</div>
@@ -421,7 +421,7 @@ function DeepLinkTab({ id, navigate, kind, profile }: { id: string; navigate: Re
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {groups.map((g) => (
-        <button key={g.to} onClick={() => open(g.to, g.scoped)} className="rounded-xl border bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-sm">
+        <button key={g.to} onClick={() => open(g.to, g.scoped)} className="rounded-xl border bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-xs">
           <div className="text-sm font-medium text-gray-800">{g.label}</div>
           <div className="mt-1 text-xs text-gray-500">{g.desc}</div>
           <div className="mt-2 text-[11px] text-brand">{g.scoped ? "Open scoped to this workload →" : "Open →"}</div>
@@ -493,7 +493,7 @@ function WatchersTab({ id, navigate }: { id: string; navigate: ReturnType<typeof
             <div key={a.area} className={`rounded-xl border bg-white p-4 ${st.ring}`}>
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-sm font-medium text-gray-800"><span>{a.icon}</span>{a.label}</span>
-                <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${st.badge}`}>{st.label}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-semibold ${st.badge}`}>{st.label}</span>
               </div>
               {a.packs.length === 0 ? (
                 <div className="mt-3">
@@ -508,7 +508,7 @@ function WatchersTab({ id, navigate }: { id: string; navigate: ReturnType<typeof
                       <div key={w.task_id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-2.5">
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-gray-800"><span>{w.pack_icon}</span><span className="truncate">{w.pack_name}</span></span>
-                          <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${ws.badge}`}>{ws.label}</span>
+                          <span className={`shrink-0 rounded-sm px-1 py-0.5 text-[10px] font-semibold ${ws.badge}`}>{ws.label}</span>
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-gray-500">
                           <span>{w.schedule_label}</span>
@@ -516,7 +516,7 @@ function WatchersTab({ id, navigate }: { id: string; navigate: ReturnType<typeof
                         </div>
                         {w.last_verdict ? (
                           <div className="mt-1 flex items-center gap-1.5">
-                            <span className={`rounded px-1 py-0.5 text-[10px] font-semibold ${VERDICT_STYLE[w.last_verdict] ?? ""}`}>{w.last_verdict.replace("_", " ")}</span>
+                            <span className={`rounded-sm px-1 py-0.5 text-[10px] font-semibold ${VERDICT_STYLE[w.last_verdict] ?? ""}`}>{w.last_verdict.replace("_", " ")}</span>
                             <span className="truncate text-[11px] text-gray-400">{fmtWhen(w.last_run_at)}</span>
                           </div>
                         ) : (
@@ -559,7 +559,7 @@ function WatchersTab({ id, navigate }: { id: string; navigate: ReturnType<typeof
             <ul className="mt-2 space-y-1.5">
               {recent.slice(0, 8).map((r) => (
                 <li key={r.id} className="flex items-center justify-between gap-2 text-xs">
-                  <span className="flex min-w-0 items-center gap-1.5 text-gray-700"><span>{r.pack_icon}</span><span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${VERDICT_STYLE[r.verdict] ?? ""}`}>{r.verdict.replace("_", " ")}</span><span className="truncate">{r.headline}</span></span>
+                  <span className="flex min-w-0 items-center gap-1.5 text-gray-700"><span>{r.pack_icon}</span><span className={`shrink-0 rounded-sm px-1 py-0.5 text-[10px] font-semibold ${VERDICT_STYLE[r.verdict] ?? ""}`}>{r.verdict.replace("_", " ")}</span><span className="truncate">{r.headline}</span></span>
                   <span className="shrink-0 text-gray-400">{fmtWhen(r.created_at)}</span>
                 </li>
               ))}

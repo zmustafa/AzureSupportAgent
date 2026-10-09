@@ -452,7 +452,7 @@ function Overview({ inv, onNavigate }: { inv: PolicyInventory; onNavigate?: (t: 
             <ul className="space-y-1.5">
               {byEffect.map(([eff, n]) => (
                 <li key={eff} className="flex items-center gap-2 text-sm">
-                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${effectTone(eff)}`}>{eff || "unknown"}</span>
+                  <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${effectTone(eff)}`}>{eff || "unknown"}</span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
                     <div className="h-full rounded-full bg-brand/60" style={{ width: `${Math.round((100 * n) / inv.counts.assignments)}%` }} />
                   </div>
@@ -523,7 +523,7 @@ function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemp
         />
       </div>
 
-      <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border bg-white shadow-xs">
         {sub === "assignments" && (
           <Table head={["Assignment", "Scope", "Definition", "Effect", "Enforcement", "Identity"]}>
             {fAssign
@@ -585,7 +585,7 @@ function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemp
                   <Td>
                     <button
                       onClick={() => onOpenExemption?.(e.id)}
-                      className="rounded border px-1.5 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/5"
+                      className="rounded-sm border px-1.5 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/5"
                       title="Open this exemption in the Exemptions tab"
                     >
                       Open ↗
@@ -673,7 +673,7 @@ function Effective({ inv, persistKey, onOpenExemptions }: { inv: PolicyInventory
                         <span className="flex items-center gap-1.5" style={{ paddingLeft: `${s.depth * 16}px` }}>
                           <ScopeIcon kind={s.kind} />
                           <span className={`truncate ${selected ? "font-semibold text-brand" : "font-medium text-gray-800"}`}>{s.label}</span>
-                          <span className="shrink-0 rounded bg-gray-100 px-1.5 text-[10px] uppercase tracking-wide text-gray-500">{scopeKindLabel(s.kind)}</span>
+                          <span className="shrink-0 rounded-sm bg-gray-100 px-1.5 text-[10px] uppercase tracking-wide text-gray-500">{scopeKindLabel(s.kind)}</span>
                         </span>
                       </td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">{s.assignments || <span className="text-gray-300">0</span>}</td>
@@ -802,7 +802,7 @@ function Advisors({ inv, connectionId }: { inv: PolicyInventory; connectionId: s
                 </div>
                 <div className="flex gap-1">
                   {i.flags.map((f) => (
-                    <span key={f} className={`rounded px-1.5 py-0.5 text-[10px] ${f === "expired" ? "bg-red-100 text-red-700" : f === "unjustified" ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"}`}>{f.replace(/_/g, " ")}</span>
+                    <span key={f} className={`rounded-sm px-1.5 py-0.5 text-[10px] ${f === "expired" ? "bg-red-100 text-red-700" : f === "unjustified" ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"}`}>{f.replace(/_/g, " ")}</span>
                   ))}
                 </div>
               </div>
@@ -837,7 +837,7 @@ function Advisors({ inv, connectionId }: { inv: PolicyInventory; connectionId: s
                         <span className="text-gray-500" title="Assignment name">· {s.assignment_name}</span>
                       )}
                       {s.effect && <Pill cls={effectTone(s.effect)}>{s.effect}</Pill>}
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${s.enforcement_mode === "DoNotEnforce" ? "bg-gray-200 text-gray-600" : "bg-green-100 text-green-700"}`}>
+                      <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${s.enforcement_mode === "DoNotEnforce" ? "bg-gray-200 text-gray-600" : "bg-green-100 text-green-700"}`}>
                         {s.enforcement_mode === "DoNotEnforce" ? "Dry-run" : "Enforced"}
                       </span>
                       {s.scope && (
@@ -1041,7 +1041,7 @@ function CoverageAdvisor({ inv, connectionId }: { inv: PolicyInventory; connecti
                       <button
                         onClick={(e) => { e.stopPropagation(); deleteSaved(r.id); }}
                         title="Delete saved analysis"
-                        className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500"
+                        className="rounded-sm p-1 text-gray-300 hover:bg-red-50 hover:text-red-500"
                       >
                         🗑
                       </button>
@@ -1379,8 +1379,8 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
   const totalMs = (steps.reduce((a, s) => a + (s.durationMs ?? 0), 0)) || (startedAt ? (busy ? now : 0) - startedAt : 0);
 
   return (
-    <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
-      <div className="rounded-xl border bg-gradient-to-br from-brand/10 to-violet-50 p-4">
+    <div className="mx-auto max-w-6xl 2xl:max-w-(--breakpoint-2xl) space-y-4">
+      <div className="rounded-xl border bg-linear-to-br from-brand/10 to-violet-50 p-4">
         <h2 className="flex items-center gap-2 text-base font-bold text-gray-800">🚦 AI Safe-Rollout Planner</h2>
         <p className="mt-0.5 text-xs text-gray-600">
           Simulate a policy change before you make it. Promote an existing policy (e.g. audit → deny) or deploy a new one,
@@ -1399,7 +1399,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
 
       {/* Saved simulations — every run is persisted; reopen one to review its impact & plan. */}
       {savedSims.length > 0 && (
-        <div className="rounded-xl border bg-white shadow-sm">
+        <div className="rounded-xl border bg-white shadow-xs">
           <button onClick={() => setShowSaved((v) => !v)} className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left">
             <span className="flex items-center gap-2 text-sm font-semibold text-gray-800">
               📁 Saved simulations
@@ -1415,7 +1415,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
                     <span className="flex min-w-0 items-center gap-1">
                       <span className="truncate font-medium text-gray-800">{s.title}</span>
                       <span className="shrink-0 text-[11px] text-gray-500">· {s.scope_label || s.scope}</span>
-                      {s.workload_name && !wlId && <span className="shrink-0 rounded bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">🧩 {s.workload_name}</span>}
+                      {s.workload_name && !wlId && <span className="shrink-0 rounded-sm bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">🧩 {s.workload_name}</span>}
                     </span>
                     <span className="flex shrink-0 items-center gap-1.5">
                       <Pill cls={effectTone(s.target_effect)}>{s.target_effect}</Pill>
@@ -1424,7 +1424,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
                       <span className="text-[10px] text-gray-400">{new Date(s.created_at).toLocaleString()}</span>
                     </span>
                   </button>
-                  <button onClick={() => deleteSaved(s.id)} disabled={busy} title="Delete saved simulation" className="shrink-0 rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">🗑</button>
+                  <button onClick={() => deleteSaved(s.id)} disabled={busy} title="Delete saved simulation" className="shrink-0 rounded-sm p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">🗑</button>
                 </div>
               ))}
             </div>
@@ -1471,7 +1471,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
                   return (
                     <div
                       key={f.check_id}
-                      className={`flex items-center gap-2 rounded-lg border p-2 text-sm ${i === activeFindingIdx ? "border-brand bg-brand/5" : sel ? "border-brand/40 bg-brand/[0.02]" : "border-gray-200 hover:bg-gray-50"}`}
+                      className={`flex items-center gap-2 rounded-lg border p-2 text-sm ${i === activeFindingIdx ? "border-brand bg-brand/5" : sel ? "border-brand/40 bg-brand/2" : "border-gray-200 hover:bg-gray-50"}`}
                     >
                       <input
                         type="checkbox"
@@ -1485,7 +1485,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
                           <span className="font-medium text-gray-800">{f.title}</span>
                           <span className="ml-1 text-[11px] text-gray-500">· {f.flagged_count} resource{f.flagged_count === 1 ? "" : "s"}</span>
                           {[...(f.frameworks.cis ?? []), ...(f.frameworks.nist ?? []).map((x: string) => `NIST ${x}`)].slice(0, 2).map((x) => (
-                            <span key={x} className="ml-1 rounded bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">{x}</span>
+                            <span key={x} className="ml-1 rounded-sm bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">{x}</span>
                           ))}
                         </span>
                         <span className="flex shrink-0 items-center gap-1">
@@ -1647,7 +1647,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
             </div>
           )}
           {steps.length > 0 && (
-            <details className="rounded-xl border bg-white px-4 py-2 text-xs shadow-sm">
+            <details className="rounded-xl border bg-white px-4 py-2 text-xs shadow-xs">
               <summary className="cursor-pointer font-medium text-gray-600">✅ Simulation steps ({steps.length}) · took {fmtDur(totalMs)}</summary>
               <ol className="mt-2 space-y-1">
                 {steps.map((s) => (
@@ -1655,7 +1655,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
                     <span className="mt-0.5 text-green-500">✓</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline justify-between gap-2"><span>{s.message}</span>{s.durationMs !== undefined && <span className="shrink-0 font-mono text-[10px] text-gray-400">{fmtDur(s.durationMs)}</span>}</div>
-                      {s.detail && <div className="text-[11px] text-gray-400 break-words">{s.detail}</div>}
+                      {s.detail && <div className="text-[11px] text-gray-400 wrap-break-word">{s.detail}</div>}
                     </div>
                   </li>
                 ))}
@@ -1664,7 +1664,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
           )}
           <SimulationResult res={res} />
           {res.check_id && (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white p-3 shadow-xs">
               {savedChecks.has(res.check_id) ? (
                 <span className="text-sm font-medium text-green-700">🛡 Saved as a planned guardrail — the assessment report now shows it.</span>
               ) : (
@@ -1714,7 +1714,7 @@ function BatchResults({
   return (
     <div className="space-y-3">
       {/* Header / aggregate */}
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
+      <div className="rounded-xl border bg-white p-4 shadow-xs">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-sm font-bold text-gray-800">
             {busy ? `🚦 Simulating ${batch.length} findings together…` : `✅ Simulated ${batch.length} findings`}
@@ -1752,7 +1752,7 @@ function BatchResults({
           const r = b.res;
           const isOpen = open === b.finding.check_id;
           return (
-            <div key={b.finding.check_id} className={`rounded-xl border bg-white shadow-sm ${isActive ? "border-brand" : ""}`}>
+            <div key={b.finding.check_id} className={`rounded-xl border bg-white shadow-xs ${isActive ? "border-brand" : ""}`}>
               <div className="flex items-center gap-3 px-4 py-2.5">
                 <span className="shrink-0 text-sm">
                   {b.status === "done" ? <span className="text-green-500">✓</span>
@@ -1824,7 +1824,7 @@ function SimProgress({ steps, activeKey, busy, now }: { steps: TrackedStep[]; ac
                   <span className={active ? "font-medium text-gray-800" : "text-gray-700"}>{s.message}</span>
                   <span className={`shrink-0 font-mono text-[10px] ${active ? "text-brand" : "text-gray-400"}`}>{fmtDur(dur)}</span>
                 </div>
-                {s.detail && <div className="mt-0.5 break-words font-mono text-[11px] text-gray-500">{s.detail}</div>}
+                {s.detail && <div className="mt-0.5 wrap-break-word font-mono text-[11px] text-gray-500">{s.detail}</div>}
               </div>
             </li>
           );
@@ -1902,7 +1902,7 @@ function SimulationResult({ res }: { res: PolicySimulateResult }) {
             <span className="text-sm text-gray-700">{res.plan.summary}</span>
           </div>
           {res.plan.rationale && <div className="mt-1 text-[11px] text-gray-500">{res.plan.rationale}</div>}
-          {res.plan.impact_interpretation && <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">{res.plan.impact_interpretation}</div>}
+          {res.plan.impact_interpretation && <div className="mt-1 rounded-sm bg-gray-50 px-2 py-1 text-xs text-gray-600">{res.plan.impact_interpretation}</div>}
           {res.plan.prerequisites?.length > 0 && (
             <div className="mt-2 text-xs"><span className="font-semibold text-violet-700">Prerequisites:</span> {res.plan.prerequisites.join(" · ")}</div>
           )}
@@ -1931,23 +1931,23 @@ function SimulationResult({ res }: { res: PolicySimulateResult }) {
           {res.artifacts.az_commands && res.artifacts.az_commands.length > 0 && (
             <div className="mb-2">
               <div className="mb-1 flex items-center gap-2"><span className="text-xs font-semibold text-gray-700">az CLI</span>
-                <button onClick={() => copy(res.artifacts.az_commands!.join("\n"), "az")} className="rounded border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">{copied === "az" ? "Copied ✓" : "Copy"}</button>
+                <button onClick={() => copy(res.artifacts.az_commands!.join("\n"), "az")} className="rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">{copied === "az" ? "Copied ✓" : "Copy"}</button>
               </div>
-              <pre className="max-h-48 overflow-auto rounded bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{res.artifacts.az_commands.join("\n")}</pre>
+              <pre className="max-h-48 overflow-auto rounded-sm bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{res.artifacts.az_commands.join("\n")}</pre>
             </div>
           )}
           {res.artifacts.assignment_json && (
             <details className="text-xs"><summary className="cursor-pointer text-gray-500">Assignment JSON
-              <button onClick={() => copy(JSON.stringify(res.artifacts.assignment_json, null, 2), "asg")} className="ml-2 rounded border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">{copied === "asg" ? "Copied ✓" : "Copy"}</button>
+              <button onClick={() => copy(JSON.stringify(res.artifacts.assignment_json, null, 2), "asg")} className="ml-2 rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">{copied === "asg" ? "Copied ✓" : "Copy"}</button>
             </summary>
-              <pre className="mt-1 max-h-60 overflow-auto rounded bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{JSON.stringify(res.artifacts.assignment_json, null, 2)}</pre>
+              <pre className="mt-1 max-h-60 overflow-auto rounded-sm bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{JSON.stringify(res.artifacts.assignment_json, null, 2)}</pre>
             </details>
           )}
           {res.artifacts.policy_definition && (
             <details className="text-xs"><summary className="cursor-pointer text-gray-500">Policy definition JSON
-              <button onClick={() => copy(JSON.stringify(res.artifacts.policy_definition, null, 2), "def")} className="ml-2 rounded border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">{copied === "def" ? "Copied ✓" : "Copy"}</button>
+              <button onClick={() => copy(JSON.stringify(res.artifacts.policy_definition, null, 2), "def")} className="ml-2 rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">{copied === "def" ? "Copied ✓" : "Copy"}</button>
             </summary>
-              <pre className="mt-1 max-h-60 overflow-auto rounded bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{JSON.stringify(res.artifacts.policy_definition, null, 2)}</pre>
+              <pre className="mt-1 max-h-60 overflow-auto rounded-sm bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{JSON.stringify(res.artifacts.policy_definition, null, 2)}</pre>
             </details>
           )}
           {res.artifacts.aliases_used && res.artifacts.aliases_used.length > 0 && (
@@ -2022,9 +2022,9 @@ function AuthorTool() {
           <div className="font-semibold text-gray-800">{res.display_name} <Pill cls={effectTone(res.recommended_effect)}>{res.recommended_effect}</Pill></div>
           <div className="text-xs text-gray-600">{res.description}</div>
           {res.aliases_used?.length > 0 && <div className="text-[11px] text-gray-500">Aliases: {res.aliases_used.slice(0, 4).map((a) => <code key={a} className="mr-1">{a}</code>)}</div>}
-          {res.notes && <div className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">{res.notes}</div>}
+          {res.notes && <div className="rounded-sm bg-amber-50 px-2 py-1 text-[11px] text-amber-700">{res.notes}</div>}
           <details className="text-xs"><summary className="cursor-pointer text-gray-500">Policy JSON</summary>
-            <pre className="mt-1 max-h-60 overflow-auto rounded bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{JSON.stringify(res.policy_definition, null, 2)}</pre>
+            <pre className="mt-1 max-h-60 overflow-auto rounded-sm bg-gray-900 p-2 font-mono text-[10px] text-gray-100">{JSON.stringify(res.policy_definition, null, 2)}</pre>
           </details>
         </div>
       )}
@@ -2150,7 +2150,7 @@ function DriftIac({ inv }: { inv: PolicyInventory }) {
                 {res.mismatched.map((x, i) => <div key={i} className="text-[11px] text-gray-600">{x.name} — {x.difference}</div>)}
               </div>
             )}
-            <div className="rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">{res.recommendation}</div>
+            <div className="rounded-sm bg-gray-50 px-2 py-1 text-xs text-gray-600">{res.recommendation}</div>
           </div>
         </Card>
       )}
@@ -2183,7 +2183,7 @@ function History({ connectionId }: { connectionId: string }) {
       </Card>
       <HistoryDisclosure
         storageKey="azsup.history.policySnapshots"
-        className="rounded-xl border bg-white p-4 shadow-sm"
+        className="rounded-xl border bg-white p-4 shadow-xs"
         bodyClassName="mt-2"
         title={<h3 className="text-sm font-semibold text-gray-800">Snapshots</h3>}
         count={<span className="text-[11px] text-gray-400">{snaps.length}</span>}
@@ -2209,7 +2209,7 @@ function History({ connectionId }: { connectionId: string }) {
 // =========================================================================== primitives
 function Kpi({ label, value, sub, icon, onClick }: { label: string; value: number | string; sub?: string; icon: string; onClick?: () => void }) {
   return (
-    <div onClick={onClick} className={`rounded-xl border bg-white p-3 shadow-sm ${onClick ? "cursor-pointer transition hover:border-brand/50 hover:shadow" : ""}`} title={onClick ? `View ${label}` : undefined}>
+    <div onClick={onClick} className={`rounded-xl border bg-white p-3 shadow-xs ${onClick ? "cursor-pointer transition hover:border-brand/50 hover:shadow-sm" : ""}`} title={onClick ? `View ${label}` : undefined}>
       <div className="flex items-center justify-between"><span className="text-lg">{icon}</span></div>
       <div className="mt-1 text-2xl font-bold text-gray-800">{value}</div>
       <div className="text-[11px] text-gray-500">{label}</div>
@@ -2221,7 +2221,7 @@ function Kpi({ label, value, sub, icon, onClick }: { label: string; value: numbe
 function HighlightCard({ tone, icon, title, value, total, desc, onClick }: { tone: string; icon: string; title: string; value: number; total?: number; desc: string; onClick?: () => void }) {
   const ring = tone === "green" ? "border-green-200" : tone === "red" ? "border-red-200" : tone === "amber" ? "border-amber-200" : "border-violet-200";
   return (
-    <div onClick={onClick} className={`rounded-xl border bg-white p-3 shadow-sm ${ring} ${onClick ? "cursor-pointer transition hover:shadow-md" : ""}`} title={onClick ? `View ${title} in Governance` : undefined}>
+    <div onClick={onClick} className={`rounded-xl border bg-white p-3 shadow-xs ${ring} ${onClick ? "cursor-pointer transition hover:shadow-md" : ""}`} title={onClick ? `View ${title} in Governance` : undefined}>
       <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><span>{icon}</span>{title}</div>
       <div className="mt-1 text-2xl font-bold text-gray-800">{value}{total !== undefined && <span className="text-sm font-normal text-gray-400"> / {total}</span>}</div>
       <div className="text-[11px] text-gray-500">{desc}</div>
@@ -2231,7 +2231,7 @@ function HighlightCard({ tone, icon, title, value, total, desc, onClick }: { ton
 
 function Card({ title, icon, subtitle, children }: { title: string; icon: string; subtitle?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border bg-white p-4 shadow-xs">
       <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">{icon && <span>{icon}</span>}{title}</h3>
       {subtitle && <p className="mb-2 mt-0.5 text-xs text-gray-500">{subtitle}</p>}
       <div className={subtitle ? "" : "mt-2"}>{children}</div>
@@ -2255,7 +2255,7 @@ function Td({ children, className = "" }: { children: ReactNode; className?: str
 }
 
 function Pill({ cls, children }: { cls: string; children: ReactNode }) {
-  return <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>{children}</span>;
+  return <span className={`ml-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>{children}</span>;
 }
 
 function DeltaPill({ label, v, invert }: { label: string; v: number; invert?: boolean }) {

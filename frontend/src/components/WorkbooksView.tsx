@@ -12,7 +12,7 @@ import { formatError, formatRelativeFromNow, formatDuration, formatTimestamp } f
 import { AIDesigner } from "./AIDesigner";
 
 const input =
-  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 
 const RUNTIME_LABELS: Record<string, string> = {
@@ -203,36 +203,36 @@ export function WorkbooksSection() {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {workbooks.map((w) => (
-          <div key={w.id} className="rounded-xl border bg-white p-4 shadow-sm">
+          <div key={w.id} className="rounded-xl border bg-white p-4 shadow-xs">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-semibold text-gray-800">{w.name}</span>
                   {w.starter && (
-                    <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                    <span className="rounded-sm bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
                       starter
                     </span>
                   )}
                 </div>
                 <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{w.description}</p>
               </div>
-              <span className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+              <span className="shrink-0 rounded-sm bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
                 {RUNTIME_LABELS[w.runtime] ?? w.runtime}
               </span>
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {(w.tags ?? []).map((t) => (
-                <span key={t} className="rounded bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500">
+                <span key={t} className="rounded-sm bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-500">
                   #{t}
                 </span>
               ))}
               {w.tile?.enabled && (
-                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600">
+                <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600">
                   tile
                 </span>
               )}
               {w.alert?.enabled && (
-                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                <span className="rounded-sm bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
                   alert ≥ {w.alert.min_severity}
                 </span>
               )}
@@ -372,7 +372,7 @@ function WorkbookForm({
           <h2 className="text-lg font-semibold text-gray-800">
             {form.id ? "Edit workbook" : "New workbook"}
           </h2>
-          <button onClick={onClose} className="rounded p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
@@ -597,7 +597,7 @@ function WorkbookForm({
                 {testRun.structured != null && (
                   <details className="text-xs" open>
                     <summary className="cursor-pointer text-gray-500">Structured result</summary>
-                    <pre className="mt-1 max-h-52 overflow-auto rounded bg-gray-900 p-2 text-[11px] text-gray-100">
+                    <pre className="mt-1 max-h-52 overflow-auto rounded-sm bg-gray-900 p-2 text-[11px] text-gray-100">
                       {JSON.stringify(testRun.structured, null, 2)}
                     </pre>
                   </details>
@@ -605,7 +605,7 @@ function WorkbookForm({
                 {testRun.output && (
                   <details className="text-xs">
                     <summary className="cursor-pointer text-gray-500">Raw output</summary>
-                    <pre className="mt-1 max-h-52 overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{testRun.output}</pre>
+                    <pre className="mt-1 max-h-52 overflow-auto rounded-sm bg-gray-50 p-2 text-[11px] text-gray-700">{testRun.output}</pre>
                   </details>
                 )}
                 {testRun.error && <div className="text-xs text-red-600">{testRun.error}</div>}
@@ -671,7 +671,7 @@ function RunPanel({ workbook, onClose }: { workbook: Workbook; onClose: () => vo
             <h2 className="text-lg font-semibold text-gray-800">Run: {workbook.name}</h2>
             <p className="text-xs text-gray-500">{RUNTIME_LABELS[workbook.runtime] ?? workbook.runtime}</p>
           </div>
-          <button onClick={onClose} className="rounded p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
@@ -715,7 +715,7 @@ function RunPanel({ workbook, onClose }: { workbook: Workbook; onClose: () => vo
               </div>
               {run.narrative && <p className="text-sm text-gray-700">{run.narrative}</p>}
               {run.diff?.has_changes && (
-                <div className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                <div className="rounded-sm bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
                   <span className="font-medium">Changes since last run:</span>{" "}
                   {Object.keys(run.diff.changed).length} changed, {run.diff.added.length} added, {run.diff.removed.length} removed
                 </div>
@@ -723,7 +723,7 @@ function RunPanel({ workbook, onClose }: { workbook: Workbook; onClose: () => vo
               {structured != null && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-gray-500">Structured result</summary>
-                  <pre className="mt-1 overflow-x-auto rounded bg-gray-900 p-2 text-[11px] text-gray-100">
+                  <pre className="mt-1 overflow-x-auto rounded-sm bg-gray-900 p-2 text-[11px] text-gray-100">
                     {JSON.stringify(structured, null, 2)}
                   </pre>
                 </details>
@@ -731,7 +731,7 @@ function RunPanel({ workbook, onClose }: { workbook: Workbook; onClose: () => vo
               {run.output && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-gray-500">Raw output</summary>
-                  <pre className="mt-1 max-h-60 overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{run.output}</pre>
+                  <pre className="mt-1 max-h-60 overflow-auto rounded-sm bg-gray-50 p-2 text-[11px] text-gray-700">{run.output}</pre>
                 </details>
               )}
               {run.error && <div className="text-xs text-red-600">{run.error}</div>}
@@ -742,7 +742,7 @@ function RunPanel({ workbook, onClose }: { workbook: Workbook; onClose: () => vo
             <div className="mb-1 text-xs font-medium text-gray-500">Recent runs</div>
             <div className="space-y-1">
               {(runsQ.data?.runs ?? []).slice(0, 8).map((r) => (
-                <div key={r.id} className="flex items-center gap-2 rounded border px-2 py-1 text-xs">
+                <div key={r.id} className="flex items-center gap-2 rounded-sm border px-2 py-1 text-xs">
                   <SeverityBadge severity={r.severity} />
                   <span className={r.status === "succeeded" ? "text-green-600" : "text-red-600"}>{r.status}</span>
                   <span className="truncate text-gray-500">{r.narrative}</span>
@@ -785,14 +785,14 @@ function WorkbookHistory({ workbook, onRun }: { workbook: Workbook; onRun: () =>
       ) : runs.length === 0 ? (
         <div className="flex items-center justify-between px-1 py-2">
           <span className="text-[11px] text-gray-400">No runs yet.</span>
-          <button onClick={onRun} className="rounded border border-brand/40 px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5">▶ Run now</button>
+          <button onClick={onRun} className="rounded-sm border border-brand/40 px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5">▶ Run now</button>
         </div>
       ) : (
         <div className="max-h-72 space-y-1 overflow-y-auto">
           {runs.slice(0, 25).map((r) => {
             const open = openId === r.id;
             return (
-              <div key={r.id} className="rounded border bg-white">
+              <div key={r.id} className="rounded-sm border bg-white">
                 <button
                   onClick={() => setOpenId(open ? null : r.id)}
                   className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px]"
@@ -800,7 +800,7 @@ function WorkbookHistory({ workbook, onRun }: { workbook: Workbook; onRun: () =>
                   <span className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}>▸</span>
                   <SeverityBadge severity={r.severity} />
                   <span className={`shrink-0 font-medium ${r.status === "succeeded" ? "text-green-600" : r.status === "running" ? "text-blue-600" : "text-red-600"}`}>{r.status}</span>
-                  {r.trigger && r.trigger !== "manual" && <span className="shrink-0 rounded bg-gray-100 px-1 text-[9px] text-gray-500">{r.trigger}</span>}
+                  {r.trigger && r.trigger !== "manual" && <span className="shrink-0 rounded-sm bg-gray-100 px-1 text-[9px] text-gray-500">{r.trigger}</span>}
                   <span className="min-w-0 flex-1 truncate text-gray-600" title={r.narrative ?? ""}>{r.narrative}</span>
                   {r.duration_ms != null && <span className="shrink-0 text-gray-400">{formatDuration(r.duration_ms)}</span>}
                   <span className="shrink-0 text-gray-400" title={r.started_at ? formatTimestamp(r.started_at) : ""}>{r.started_at ? formatRelativeFromNow(r.started_at) : ""}</span>
@@ -809,7 +809,7 @@ function WorkbookHistory({ workbook, onRun }: { workbook: Workbook; onRun: () =>
                   <div className="space-y-2 border-t px-2 py-2">
                     {r.narrative && <p className="text-xs text-gray-700">{r.narrative}</p>}
                     {r.diff?.has_changes && (
-                      <div className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                      <div className="rounded-sm bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
                         <span className="font-medium">Changes since prior run:</span>{" "}
                         {Object.keys(r.diff.changed).length} changed, {r.diff.added.length} added, {r.diff.removed.length} removed
                       </div>
@@ -817,19 +817,19 @@ function WorkbookHistory({ workbook, onRun }: { workbook: Workbook; onRun: () =>
                     {r.structured != null && (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-gray-500">Structured result</summary>
-                        <pre className="mt-1 max-h-44 overflow-auto rounded bg-gray-900 p-2 text-[11px] text-gray-100">{JSON.stringify(r.structured, null, 2)}</pre>
+                        <pre className="mt-1 max-h-44 overflow-auto rounded-sm bg-gray-900 p-2 text-[11px] text-gray-100">{JSON.stringify(r.structured, null, 2)}</pre>
                       </details>
                     )}
                     {r.output && (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-gray-500">Raw output</summary>
-                        <pre className="mt-1 max-h-44 overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">{r.output}</pre>
+                        <pre className="mt-1 max-h-44 overflow-auto rounded-sm bg-gray-50 p-2 text-[11px] text-gray-700">{r.output}</pre>
                       </details>
                     )}
                     {r.command && (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-gray-500">Command</summary>
-                        <pre className="mt-1 overflow-x-auto rounded bg-gray-50 p-2 font-mono text-[11px] text-gray-700">{r.command}</pre>
+                        <pre className="mt-1 overflow-x-auto rounded-sm bg-gray-50 p-2 font-mono text-[11px] text-gray-700">{r.command}</pre>
                       </details>
                     )}
                     {r.error && <div className="text-[11px] text-red-600">{r.error}</div>}

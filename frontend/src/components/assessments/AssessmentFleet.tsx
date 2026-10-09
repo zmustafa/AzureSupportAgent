@@ -29,16 +29,16 @@ function relTime(iso: string): string {
 function ScorePill({ value }: { value: number | null }) {
   if (value == null) return <span className="text-gray-400">n/a</span>;
   const tone = value >= 80 ? "bg-green-100 text-green-700" : value >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
-  return <span className={`inline-block min-w-[2.5rem] rounded px-1.5 py-0.5 text-center font-semibold tabular-nums ${tone}`}>{value}</span>;
+  return <span className={`inline-block min-w-10 rounded-sm px-1.5 py-0.5 text-center font-semibold tabular-nums ${tone}`}>{value}</span>;
 }
 
 function Status({ row, running, queued, launchError }: { row: AssessmentFleetRow; running: boolean; queued: boolean; launchError?: string }) {
   if (running) return <span className="text-brand">↻ launching…</span>;
   if (queued) return <span className="text-gray-400">queued</span>;
-  if (launchError) return <span className="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700" title={launchError}>⚠ launch failed</span>;
+  if (launchError) return <span className="rounded-sm bg-red-50 px-1.5 py-0.5 font-medium text-red-700" title={launchError}>⚠ launch failed</span>;
   const status = row.current_status;
   const tone = status === "failed" ? "bg-red-50 text-red-700" : status === "running" ? "bg-blue-50 text-blue-700" : status === "queued" ? "bg-gray-100 text-gray-600" : status === "cancelled" ? "bg-amber-50 text-amber-700" : status === "succeeded" ? "bg-green-50 text-green-700" : "text-gray-400";
-  return <span className={`rounded px-1.5 py-0.5 ${tone}`} title={row.error}>{status}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 ${tone}`} title={row.error}>{status}</span>;
 }
 
 export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport: (runId: string) => void; onOpenWorkload: (workloadId: string) => void }) {
@@ -146,9 +146,9 @@ export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport
           const item = durable.itemsByWorkload.get(row.workload_id); const running = item?.status === "running"; const queued = item?.status === "queued"; const launchError = item?.status === "failed" ? item.error : undefined;
           return <tr key={row.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(row.workload_id) ? "bg-brand/5" : ""}`}>
             <td className="px-2 py-1.5"><input type="checkbox" checked={selected.has(row.workload_id)} onChange={() => toggleOne(row.workload_id)} aria-label={`Select ${row.name}`} /></td>
-            <td className="px-2 py-1.5"><button onClick={() => onOpenWorkload(row.workload_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">{row.name}</button><div className="flex gap-1 text-[10px] text-gray-400">{row.environment && <span>{row.environment}</span>}{row.criticality && <span>· {row.criticality}</span>}{row.stale && row.has_scan && <span className="rounded bg-amber-50 px-1 text-amber-600">stale</span>}</div></td>
+            <td className="px-2 py-1.5"><button onClick={() => onOpenWorkload(row.workload_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">{row.name}</button><div className="flex gap-1 text-[10px] text-gray-400">{row.environment && <span>{row.environment}</span>}{row.criticality && <span>· {row.criticality}</span>}{row.stale && row.has_scan && <span className="rounded-sm bg-amber-50 px-1 text-amber-600">stale</span>}</div></td>
             <td className="px-2 py-1.5"><ScorePill value={row.overall_score} /></td>{PILLARS.map((pillar) => <td key={pillar} className="px-2 py-1.5"><ScorePill value={row.pillar_scores[pillar] ?? null} /></td>)}
-            <td className={`px-2 py-1.5 tabular-nums ${(row.failed ?? 0) > 0 ? "font-medium text-red-600" : "text-gray-500"}`}>{row.failed ?? "—"}</td><td className="px-2 py-1.5 tabular-nums text-gray-600">{row.has_scan ? `${row.findings_by_severity.critical ?? 0} / ${row.findings_by_severity.error ?? 0}` : "—"}</td><td className="px-2 py-1.5 tabular-nums text-gray-600">{row.resources ?? "—"}</td><td className="px-2 py-1.5 tabular-nums text-gray-600">{row.completeness_pct == null ? "—" : `${row.completeness_pct}%`}</td><td className="px-2 py-1.5"><Status row={row} running={running} queued={queued} launchError={launchError} /></td><td className="px-2 py-1.5 text-gray-500" title={row.current_run_at}>{relTime(row.current_run_at)}</td><td className="px-2 py-1.5">{row.run_id ? <button onClick={() => onOpenReport(row.run_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Report ▸</button> : <button onClick={() => onOpenWorkload(row.workload_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Assess ▸</button>}</td>
+            <td className={`px-2 py-1.5 tabular-nums ${(row.failed ?? 0) > 0 ? "font-medium text-red-600" : "text-gray-500"}`}>{row.failed ?? "—"}</td><td className="px-2 py-1.5 tabular-nums text-gray-600">{row.has_scan ? `${row.findings_by_severity.critical ?? 0} / ${row.findings_by_severity.error ?? 0}` : "—"}</td><td className="px-2 py-1.5 tabular-nums text-gray-600">{row.resources ?? "—"}</td><td className="px-2 py-1.5 tabular-nums text-gray-600">{row.completeness_pct == null ? "—" : `${row.completeness_pct}%`}</td><td className="px-2 py-1.5"><Status row={row} running={running} queued={queued} launchError={launchError} /></td><td className="px-2 py-1.5 text-gray-500" title={row.current_run_at}>{relTime(row.current_run_at)}</td><td className="px-2 py-1.5">{row.run_id ? <button onClick={() => onOpenReport(row.run_id)} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Report ▸</button> : <button onClick={() => onOpenWorkload(row.workload_id)} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Assess ▸</button>}</td>
           </tr>;
         })}</tbody></table>}
     </div>

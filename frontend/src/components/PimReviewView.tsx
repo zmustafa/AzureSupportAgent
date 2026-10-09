@@ -58,14 +58,14 @@ function agoText(seconds: number | null): string {
 
 function SevBadge({ sev }: { sev: string }) {
   const m = SEV_META[sev] ?? SEV_META.info;
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${m.cls}`}>{m.label}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${m.cls}`}>{m.label}</span>;
 }
 
 function IdleBadge({ f }: { f: PimFinding }) {
   if (f.assignment_type === "activated" && f.days_left != null) {
     const active = f.days_left >= 0;
     return (
-      <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium ${active ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-500"}`}>
+      <span className={`whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${active ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-500"}`}>
         {active ? "active now" : "expired"}
       </span>
     );
@@ -73,7 +73,7 @@ function IdleBadge({ f }: { f: PimFinding }) {
   if (f.days_idle == null) return null;
   const d = f.days_idle;
   const cls = d >= 180 ? "bg-red-100 text-red-700" : d >= 90 ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700";
-  return <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>idle {d}d</span>;
+  return <span className={`whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>idle {d}d</span>;
 }
 
 function FindingRow({ f }: { f: PimFinding }) {
@@ -83,8 +83,8 @@ function FindingRow({ f }: { f: PimFinding }) {
     <div className="border-t px-3 py-2 first:border-t-0">
       <div className="flex flex-wrap items-center gap-1.5">
         <SevBadge sev={f.severity} />
-        <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${tier.cls}`} title={`${f.role} privilege tier`}>{tier.label}</span>
-        {assign && <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${assign.cls}`}>{assign.label}</span>}
+        <span className={`rounded-sm border px-1.5 py-0.5 text-[10px] font-medium ${tier.cls}`} title={`${f.role} privilege tier`}>{tier.label}</span>
+        {assign && <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${assign.cls}`}>{assign.label}</span>}
         <IdleBadge f={f} />
         <span className="ml-auto text-[11px] text-gray-400">{f.scope}</span>
       </div>
@@ -102,7 +102,7 @@ function FindingRow({ f }: { f: PimFinding }) {
         {f.activation_count_90d != null && <span>· {f.activation_count_90d} activation(s)/90d</span>}
       </div>
       {f.remediation && (
-        <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
+        <div className="mt-1 rounded-sm bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
           <span className="font-medium text-gray-700">Fix: </span>{f.remediation}
         </div>
       )}
@@ -148,7 +148,7 @@ export function PimReviewPanel({ connectionId = null }: { connectionId?: string 
               <span className="text-[11px] text-gray-400">
                 {source === "demo" ? "demo · " : source === "live" ? "live · " : ""}
                 updated {agoText(data.age_seconds)}
-                {data.stale && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-700">stale</span>}
+                {data.stale && <span className="ml-1 rounded-sm bg-amber-100 px-1 text-amber-700">stale</span>}
               </span>
             )}
             <button
@@ -173,7 +173,7 @@ export function PimReviewPanel({ connectionId = null }: { connectionId?: string 
         ) : q.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             Couldn&apos;t load the PIM review. You may not have the{" "}
-            <code className="rounded bg-red-100 px-1">identity.read</code> permission.
+            <code className="rounded-sm bg-red-100 px-1">identity.read</code> permission.
             <button onClick={() => q.refetch()} className="ml-2 underline">Retry</button>
           </div>
         ) : neverLoaded ? (

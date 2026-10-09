@@ -167,7 +167,7 @@ function FactorInput({ value, onChange, label }: { value: number; onChange: (n: 
       value={value || ""}
       aria-label={label}
       onChange={(e) => onChange(normFactor(e.target.value))}
-      className={`h-full w-full border-0 bg-transparent px-1 py-0.5 text-center text-[11px] outline-none focus:ring-2 focus:ring-brand/40 ${factorCellClass(value)}`}
+      className={`h-full w-full border-0 bg-transparent px-1 py-0.5 text-center text-[11px] outline-hidden focus:ring-2 focus:ring-brand/40 ${factorCellClass(value)}`}
       placeholder="–"
     />
   );
@@ -180,7 +180,7 @@ function TextCell({ value, onChange, label, mono }: { value: string; onChange: (
       aria-label={label}
       rows={3}
       onChange={(e) => onChange(e.target.value)}
-      className={`block h-full w-full resize-none border-0 bg-transparent px-1.5 py-0.5 text-[10px] leading-snug text-gray-800 outline-none focus:ring-2 focus:ring-brand/40 ${mono ? "font-mono" : ""}`}
+      className={`block h-full w-full resize-none border-0 bg-transparent px-1.5 py-0.5 text-[10px] leading-snug text-gray-800 outline-hidden focus:ring-2 focus:ring-brand/40 ${mono ? "font-mono" : ""}`}
     />
   );
 }
@@ -195,7 +195,7 @@ function HumanTextCell({ value, onChange, label, placeholder }: { value: string;
       rows={3}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="block h-full w-full resize-none border-0 bg-transparent px-1.5 py-0.5 text-[10px] leading-snug text-gray-800 outline-none placeholder:text-gray-300 focus:ring-2 focus:ring-brand/40"
+      className="block h-full w-full resize-none border-0 bg-transparent px-1.5 py-0.5 text-[10px] leading-snug text-gray-800 outline-hidden placeholder:text-gray-300 focus:ring-2 focus:ring-brand/40"
     />
   );
 }
@@ -208,7 +208,7 @@ function DateCell({ value, onChange, label }: { value: string; onChange: (v: str
       value={toISODate(value)}
       aria-label={label}
       onChange={(e) => onChange(e.target.value)}
-      className="block h-full w-full border-0 bg-transparent px-1.5 py-0.5 text-[10px] text-gray-800 outline-none focus:ring-2 focus:ring-brand/40"
+      className="block h-full w-full border-0 bg-transparent px-1.5 py-0.5 text-[10px] text-gray-800 outline-hidden focus:ring-2 focus:ring-brand/40"
     />
   );
 }
@@ -270,14 +270,14 @@ function FmeaTableGrid({
   );
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xs">
       <div className="flex flex-wrap items-center gap-2 border-b bg-gray-50/70 px-3 py-2">
         <span className="text-sm font-semibold text-gray-800">
           <input
             value={table.name}
             aria-label="Table name"
             onChange={(e) => onChange({ ...table, name: e.target.value })}
-            className="rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-gray-800 hover:border-gray-200 focus:border-brand/40 focus:outline-none"
+            className="rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-gray-800 hover:border-gray-200 focus:border-brand/40 focus:outline-hidden"
           />
         </span>
         <input
@@ -285,7 +285,7 @@ function FmeaTableGrid({
           aria-label="Scope reference"
           placeholder="scope / resource group…"
           onChange={(e) => onChange({ ...table, scope_ref: e.target.value })}
-          className="rounded border border-transparent bg-transparent px-1 py-0.5 text-[11px] text-gray-500 hover:border-gray-200 focus:border-brand/40 focus:outline-none"
+          className="rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-[11px] text-gray-500 hover:border-gray-200 focus:border-brand/40 focus:outline-hidden"
         />
         <span className="ml-auto flex items-center gap-1.5">
           <button
@@ -605,7 +605,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
             value={doc.title}
             aria-label="FMEA title"
             onChange={(e) => patchDoc({ title: e.target.value })}
-            className="min-w-0 flex-1 rounded border border-transparent px-1 py-0.5 text-lg font-bold text-gray-900 hover:border-gray-200 focus:border-brand/40 focus:outline-none"
+            className="min-w-0 flex-1 rounded-sm border border-transparent px-1 py-0.5 text-lg font-bold text-gray-900 hover:border-gray-200 focus:border-brand/40 focus:outline-hidden"
           />
           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${sm.cls}`}>{sm.label}</span>
           {doc.source && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${SOURCE_BADGE[doc.source] ?? "bg-gray-100 text-gray-600"}`}>{doc.source}</span>}
@@ -618,7 +618,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
               value={doc.status}
               aria-label="Status"
               onChange={(e) => patchDoc({ status: e.target.value as FmeaDoc["status"] })}
-              className="rounded-lg border border-gray-300 px-2 py-1 text-[12px] text-gray-600 focus:border-brand-dark focus:outline-none"
+              className="rounded-lg border border-gray-300 px-2 py-1 text-[12px] text-gray-600 focus:border-brand-dark focus:outline-hidden"
             >
               {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
             </select>
@@ -665,7 +665,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
                 {genLog.map((l, i) => (
                   <div key={i} className="flex gap-2">
                     <span className="shrink-0 text-gray-400">{l.t}</span>
-                    <span className="min-w-0 flex-1 break-words">{l.msg}</span>
+                    <span className="min-w-0 flex-1 wrap-break-word">{l.msg}</span>
                   </div>
                 ))}
                 <div ref={logEndRef} />
@@ -804,7 +804,7 @@ function NewFmeaModal({
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search workloads…"
                 aria-label="Search workloads"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
               />
             </div>
             <div className="min-h-0 flex-1 divide-y overflow-y-auto">
@@ -921,13 +921,13 @@ export function FmeaIndex() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search workloads…"
               aria-label="Search FMEA documents"
-              className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+              className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
             />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
               aria-label="Filter by status"
-              className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-2 text-sm text-gray-600 focus:border-brand-dark focus:outline-none"
+              className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-2 text-sm text-gray-600 focus:border-brand-dark focus:outline-hidden"
             >
               <option value="all">All statuses</option>
               <option value="published">Published</option>

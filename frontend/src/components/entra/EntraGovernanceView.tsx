@@ -116,7 +116,7 @@ function CoverageTab({ connectionId }: { connectionId: string | null }) {
   const totalGap = d.rows.reduce((a, r) => a + r.gap, 0);
   return (
     <div className="space-y-4 p-4">
-      <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+      <div className="rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
         The portal shows the reviews you have. This table shows what nothing is reviewing —
         computed from the inventory, so it works whether or not this tenant is licensed for
         access reviews.
@@ -169,7 +169,7 @@ function CoverageTab({ connectionId }: { connectionId: string | null }) {
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {r.objects.length ? r.objects.map((o) => (
-                          <span key={o} className="rounded bg-white px-1.5 py-0.5 text-[11px] text-gray-700 ring-1 ring-gray-200">
+                          <span key={o} className="rounded-sm bg-white px-1.5 py-0.5 text-[11px] text-gray-700 ring-1 ring-gray-200">
                             {o}
                           </span>
                         )) : <span className="text-xs text-gray-500">None in this tenant.</span>}
@@ -217,12 +217,12 @@ function ReviewsTab({ connectionId }: { connectionId: string | null }) {
             <span className="text-[13px] font-semibold text-gray-900">{r.display_name}</span>
             <span className="text-[11px] text-gray-500">{r.status} · {r.recurrence}</span>
             {r.days_overdue > 0 && (
-              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
+              <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
                 {r.days_overdue}d overdue
               </span>
             )}
             {r.scope?.kind && (
-              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
+              <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
                 scope: {r.scope.kind}
               </span>
             )}
@@ -297,12 +297,12 @@ function EntitlementTab({ connectionId }: { connectionId: string | null }) {
                 <td className="pr-3">
                   <div className="flex flex-wrap gap-1">
                     {p.no_review && (
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
+                      <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
                         no review
                       </span>
                     )}
                     {p.no_expiry && (
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
+                      <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
                         never expires
                       </span>
                     )}

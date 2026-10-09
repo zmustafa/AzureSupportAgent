@@ -308,13 +308,13 @@ function PivotTable({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-[11px] text-gray-500">
-        <button onClick={expandAll} className="rounded border px-2 py-0.5 hover:bg-gray-50">Expand all</button>
-        <button onClick={() => setExpanded(new Set())} className="rounded border px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
+        <button onClick={expandAll} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50">Expand all</button>
+        <button onClick={() => setExpanded(new Set())} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50">Collapse all</button>
         <span className="ml-auto">{rows.length} assignment(s)</span>
-        <button onClick={exportCsv} className="rounded border px-2 py-0.5 hover:bg-gray-50">⬇ CSV</button>
-        <button onClick={() => void exportXlsx()} className="rounded border border-green-300 bg-green-50 px-2 py-0.5 text-green-700 hover:bg-green-100">⬇ Excel</button>
+        <button onClick={exportCsv} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50">⬇ CSV</button>
+        <button onClick={() => void exportXlsx()} className="rounded-sm border border-green-300 bg-green-50 px-2 py-0.5 text-green-700 hover:bg-green-100">⬇ Excel</button>
       </div>
-      <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border bg-white shadow-xs">
         <table className="w-full text-left text-sm">
           <thead className="bg-gray-50 text-[11px] uppercase text-gray-500">
             <tr>
@@ -402,7 +402,7 @@ function DateSlicer({
   function setHi(t: number) { onChange([lo, Math.max(t, lo)]); }
 
   return (
-    <div className="rounded-xl border bg-white p-3 shadow-sm">
+    <div className="rounded-xl border bg-white p-3 shadow-xs">
       <div className="mb-1 flex items-center gap-2 text-[11px] text-gray-500">
         <span className="font-medium text-gray-700">📅 Created-on window</span>
         <span className="tabular-nums">{toDate(lo)} → {toDate(hi)}</span>
@@ -410,9 +410,9 @@ function DateSlicer({
           {([
             ["30d", 30], ["90d", 90], ["1y", 365],
           ] as const).map(([lbl, days]) => (
-            <button key={lbl} onClick={() => onChange([Math.max(minTs, maxTs - days * dayMs), maxTs])} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">{lbl}</button>
+            <button key={lbl} onClick={() => onChange([Math.max(minTs, maxTs - days * dayMs), maxTs])} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">{lbl}</button>
           ))}
-          <button onClick={() => onChange(null)} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">All</button>
+          <button onClick={() => onChange(null)} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">All</button>
         </div>
       </div>
       {/* histogram */}
@@ -425,7 +425,7 @@ function DateSlicer({
           })}
         </div>
         {/* selected band */}
-        <div className="pointer-events-none absolute inset-y-0 rounded bg-brand/10" style={{ left: `${pct(lo)}%`, right: `${100 - pct(hi)}%` }} />
+        <div className="pointer-events-none absolute inset-y-0 rounded-sm bg-brand/10" style={{ left: `${pct(lo)}%`, right: `${100 - pct(hi)}%` }} />
       </div>
       {/* dual range */}
       <div className="relative mt-1 h-4">
@@ -444,8 +444,8 @@ function DateSlicer({
 
 function enfBadge(mode: string) {
   return mode === "Default"
-    ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">Enforced</span>
-    : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Dry-run</span>;
+    ? <span className="rounded-sm bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">Enforced</span>
+    : <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Dry-run</span>;
 }
 
 function fmtDate(s?: string): string {
@@ -568,7 +568,7 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
         </select>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search assignment / policy…" className="min-w-[180px] flex-1 rounded-md border px-2 py-1 text-xs" />
         <span className="text-[11px] text-gray-400">{rows.length} of {inv.assignments.length}{dryrun ? ` · ${dryrun} dry-run` : ""}</span>
-        {toast && <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ {toast}</span>}
+        {toast && <span className="rounded-sm bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ {toast}</span>}
         <button onClick={exportCsv} className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50">⬇ CSV</button>
         <button onClick={() => void exportXlsx()} className="rounded-md border border-green-300 bg-green-50 px-2 py-1 text-xs text-green-700 hover:bg-green-100">⬇ Excel</button>
       </div>
@@ -582,9 +582,9 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
           <button onClick={() => { setEnf("all"); setScope("all"); setByFilter("all"); setQ(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
         </div>
       )}
-      <div ref={scrollRef} className="max-h-[64vh] overflow-auto rounded-xl border bg-white shadow-sm">
+      <div ref={scrollRef} className="max-h-[64vh] overflow-auto rounded-xl border bg-white shadow-xs">
         <table className="w-full text-left text-sm">
-          <thead className="sticky top-0 z-10 bg-gray-50 text-[11px] uppercase text-gray-500 shadow-sm">
+          <thead className="sticky top-0 z-10 bg-gray-50 text-[11px] uppercase text-gray-500 shadow-xs">
             <tr>
               <th className="cursor-pointer px-3 py-2 font-medium" onClick={() => toggleSort("enforcement")}>Enforce{arrow("enforcement")}</th>
               <th className="cursor-pointer px-3 py-2 font-medium" onClick={() => toggleSort("subscription")}>Subscription{arrow("subscription")}</th>
@@ -714,7 +714,7 @@ export function PivotBuilder({ inv }: { inv: PolicyInventory }) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border bg-white p-3 shadow-sm">
+      <div className="rounded-xl border bg-white p-3 shadow-xs">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-medium uppercase text-gray-400">Rows</span>
           {levels.map((d, i) => (
@@ -834,7 +834,7 @@ export function GovernanceInsights({ inv }: { inv: PolicyInventory }) {
           ) : (
             <ul className="space-y-1 text-xs">
               {stats.dryrun.slice(0, 12).map((x) => (
-                <li key={x.id} className="flex items-center justify-between gap-2 rounded bg-amber-50/60 px-2 py-1">
+                <li key={x.id} className="flex items-center justify-between gap-2 rounded-sm bg-amber-50/60 px-2 py-1">
                   <span className="truncate text-gray-800" title={x.display_name}>{x.display_name || x.definition_name}</span>
                   <span className="shrink-0 text-gray-500">{x.subscription_name || x.scope_label}</span>
                 </li>
@@ -886,7 +886,7 @@ export function GovernanceInsights({ inv }: { inv: PolicyInventory }) {
 
 function Kpi({ label, value, tone }: { label: string; value: number; tone?: string }) {
   return (
-    <div className="rounded-lg border bg-white px-3 py-2 shadow-sm">
+    <div className="rounded-lg border bg-white px-3 py-2 shadow-xs">
       <div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div>
       <div className="truncate text-[11px] text-gray-500">{label}</div>
     </div>
@@ -895,7 +895,7 @@ function Kpi({ label, value, tone }: { label: string; value: number; tone?: stri
 
 function InsightCard({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border bg-white p-3 shadow-sm">
+    <div className="rounded-xl border bg-white p-3 shadow-xs">
       <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
       {subtitle && <p className="mb-2 mt-0.5 text-[11px] text-gray-500">{subtitle}</p>}
       <div className="mt-1">{children}</div>

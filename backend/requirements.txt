@@ -12,13 +12,13 @@ argon2-cffi-bindings==26.1.0
 asyncpg==0.31.0
 asyncssh==2.24.0
 attrs==26.1.0
-Authlib==1.7.2
+Authlib==1.8.0
 azure-core==1.41.0
-azure-identity==1.25.3
+azure-identity==1.26.0
 azure-servicebus==7.14.3
 beartype==0.22.9
-boto3==1.43.107
-botocore==1.43.107
+boto3==1.43.108
+botocore==1.43.108
 cachetools==7.1.8
 caio==0.12.2
 certifi==2026.7.22
@@ -81,7 +81,7 @@ microsoft-kiota-serialization-text==1.14.1
 more-itertools==11.1.0
 msal==1.39.0
 msal-extensions==1.3.1
-multidict==6.7.1
+multidict==6.9.1
 openai==3.1.0
 openapi-pydantic==0.5.1
 openpyxl==3.1.5
@@ -90,7 +90,7 @@ opentelemetry-sdk==1.42.1
 opentelemetry-semantic-conventions==0.63b1
 packaging==26.3
 pathable==0.6.0
-platformdirs==4.11.0
+platformdirs==4.12.3
 pluggy==1.6.0
 propcache==0.5.2
 py-key-value-aio==0.4.5
@@ -133,7 +133,7 @@ uncalled-for==0.4.0
 urllib3==2.8.0
 uvicorn==0.52.1
 watchfiles==1.2.0
-websockets==17.0.1
+websockets==17.2
 yarl==1.24.2
 # --- PDF report export (assessments) — xhtml2pdf + its dependency tree (pure-Python, no
 # system libraries; works on Windows and Linux containers) ---

@@ -49,7 +49,7 @@ export function TabStrip<T extends string>({
           type="button"
           aria-label="Scroll tabs left"
           onClick={() => nudge(-220)}
-          className="absolute left-0 top-1/2 z-10 -translate-y-1/2 rounded-full border bg-white/95 px-1.5 py-0.5 text-gray-500 shadow-sm hover:text-gray-800"
+          className="absolute left-0 top-1/2 z-10 -translate-y-1/2 rounded-full border bg-white/95 px-1.5 py-0.5 text-gray-500 shadow-xs hover:text-gray-800"
         >
           ‹
         </button>
@@ -80,7 +80,7 @@ export function TabStrip<T extends string>({
           type="button"
           aria-label="Scroll tabs right"
           onClick={() => nudge(220)}
-          className="absolute right-0 top-1/2 z-10 -translate-y-1/2 rounded-full border bg-white/95 px-1.5 py-0.5 text-gray-500 shadow-sm hover:text-gray-800"
+          className="absolute right-0 top-1/2 z-10 -translate-y-1/2 rounded-full border bg-white/95 px-1.5 py-0.5 text-gray-500 shadow-xs hover:text-gray-800"
         >
           ›
         </button>

@@ -82,30 +82,30 @@ function AlertBadges({ alert }: { alert: AmbaAlertRef }) {
     <span className="ml-1 inline-flex flex-wrap items-center gap-1 align-middle">
       <span
         title={ALERT_TYPE_LABEL[alert.alert_type]}
-        className={`rounded px-1.5 py-0.5 text-[10px] ${ALERT_TYPE_CLS[alert.alert_type] ?? ""}`}
+        className={`rounded-sm px-1.5 py-0.5 text-[10px] ${ALERT_TYPE_CLS[alert.alert_type] ?? ""}`}
       >
         {ALERT_TYPE_LABEL[alert.alert_type] ?? alert.alert_type}
       </span>
-      <span title={TIER_HINT[alert.tier]} className={`rounded px-1.5 py-0.5 text-[10px] ${TIER_CLS[alert.tier] ?? ""}`}>
+      <span title={TIER_HINT[alert.tier]} className={`rounded-sm px-1.5 py-0.5 text-[10px] ${TIER_CLS[alert.tier] ?? ""}`}>
         {TIER_LABEL[alert.tier] ?? alert.tier}
       </span>
       {alert.criterion_type === "DynamicThresholdCriterion" && (
-        <span title="Dynamic threshold" className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+        <span title="Dynamic threshold" className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
           dynamic
         </span>
       )}
       {alert.patterns.map((p) => (
-        <span key={p} title={PATTERN_LABEL[p]} className="rounded bg-cyan-50 px-1.5 py-0.5 text-[10px] text-cyan-700">
+        <span key={p} title={PATTERN_LABEL[p]} className="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] text-cyan-700">
           {p}
         </span>
       ))}
       {alert.source === "local" && (
-        <span title="Local addition — not published by AMBA" className="rounded bg-fuchsia-50 px-1.5 py-0.5 text-[10px] text-fuchsia-700">
+        <span title="Local addition — not published by AMBA" className="rounded-sm bg-fuchsia-50 px-1.5 py-0.5 text-[10px] text-fuchsia-700">
           local
         </span>
       )}
       {!alert.visible && (
-        <span title="Hidden in the upstream AMBA site" className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+        <span title="Hidden in the upstream AMBA site" className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
           hidden
         </span>
       )}
@@ -353,7 +353,7 @@ export function AmbaReferenceEditor() {
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span className="text-gray-500">v{ref?.version ?? 0} · {Object.keys(draft).length} types · {Object.values(draft).reduce((a, t) => a + t.alerts.length, 0)} alerts</span>
-          {dirty && <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">● Unsaved</span>}
+          {dirty && <span className="rounded-sm bg-amber-100 px-2 py-0.5 text-amber-700">● Unsaved</span>}
           <button onClick={() => setShowHistory(true)} className="rounded-md border bg-white px-2.5 py-1.5 hover:bg-gray-50">History</button>
           <button onClick={openRaw} className="rounded-md border bg-white px-2.5 py-1.5 hover:bg-gray-50">Advanced: JSON</button>
           <button onClick={reset} disabled={busy} className="rounded-md border bg-white px-2.5 py-1.5 hover:bg-gray-50 disabled:opacity-50">Reset to built-in</button>
@@ -372,7 +372,7 @@ export function AmbaReferenceEditor() {
         {/* Left: type list */}
         <div className="flex w-72 shrink-0 flex-col border-r bg-white">
           <div className="border-b p-2">
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter types…" className="w-full rounded border px-2 py-1.5 text-xs" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter types…" className="w-full rounded-sm border px-2 py-1.5 text-xs" />
             <button onClick={() => setAddTypeOpen(true)} className="mt-2 w-full rounded-md border bg-white px-2 py-1.5 text-xs font-medium hover:bg-gray-50">+ Add resource type</button>
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
@@ -389,7 +389,7 @@ export function AmbaReferenceEditor() {
                     <span className="block truncate font-medium text-gray-800">{spec.display || t}</span>
                     <span className="block truncate font-mono text-[10px] text-gray-400">{t}</span>
                   </span>
-                  {used > 0 && <span className="rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700" title={`${used} resource(s) in your workloads`}>{used}↗</span>}
+                  {used > 0 && <span className="rounded-sm bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700" title={`${used} resource(s) in your workloads`}>{used}↗</span>}
                   <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{spec.alerts.length}</span>
                 </button>
               );
@@ -409,7 +409,7 @@ export function AmbaReferenceEditor() {
                   <input
                     value={cur.display}
                     onChange={(e) => mutate((d) => { if (d[selected]) d[selected].display = e.target.value; })}
-                    className="rounded border px-2 py-1 text-sm font-semibold"
+                    className="rounded-sm border px-2 py-1 text-sm font-semibold"
                   />
                   <div className="mt-0.5 font-mono text-[11px] text-gray-400">{selected}{usageByType[selected] ? ` · used by ${usageByType[selected]} resource(s) in your workloads` : ""}</div>
                 </div>
@@ -420,7 +420,7 @@ export function AmbaReferenceEditor() {
                 </div>
               </div>
 
-              {cur.alerts.length === 0 && <div className="rounded border bg-white p-4 text-center text-xs text-gray-400">No alerts yet — add one from the catalog.</div>}
+              {cur.alerts.length === 0 && <div className="rounded-sm border bg-white p-4 text-center text-xs text-gray-400">No alerts yet — add one from the catalog.</div>}
 
               {(["availability", "performance", "security"] as const).map((catg) =>
                 alertsByCat[catg]?.length ? (
@@ -474,7 +474,7 @@ export function AmbaReferenceEditor() {
                     key={c.key}
                     onClick={() => addCatalogMetric(c)}
                     disabled={already}
-                    className="flex w-full items-center gap-2 rounded border bg-white px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-40"
+                    className="flex w-full items-center gap-2 rounded-sm border bg-white px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-40"
                   >
                     <span
                       className="inline-block h-2 w-2 shrink-0 rounded-full"
@@ -482,10 +482,10 @@ export function AmbaReferenceEditor() {
                     />
                     <span className="font-medium text-gray-800">{c.name}</span>
                     {c.metric && <span className="font-mono text-[11px] text-gray-400">{c.metric}</span>}
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${TIER_CLS[c.tier ?? "recommended"]}`}>
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${TIER_CLS[c.tier ?? "recommended"]}`}>
                       {TIER_LABEL[c.tier ?? "recommended"]}
                     </span>
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${ALERT_TYPE_CLS[c.alert_type ?? "metric"]}`}>
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${ALERT_TYPE_CLS[c.alert_type ?? "metric"]}`}>
                       {ALERT_TYPE_LABEL[c.alert_type ?? "metric"]}
                     </span>
                     <span className="ml-auto shrink-0 text-[11px] text-gray-500">
@@ -517,7 +517,7 @@ export function AmbaReferenceEditor() {
       {/* Raw JSON */}
       {showRaw && (
         <Modal title="Advanced — raw JSON (the types map)" onClose={() => setShowRaw(false)} wide>
-          <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} spellCheck={false} className="h-[60vh] w-full rounded border bg-gray-900 p-3 font-mono text-[11px] text-gray-100" />
+          <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} spellCheck={false} className="h-[60vh] w-full rounded-sm border bg-gray-900 p-3 font-mono text-[11px] text-gray-100" />
           <div className="mt-2 flex justify-end gap-2">
             <button onClick={() => setShowRaw(false)} className="rounded-md border px-3 py-1.5 text-sm">Cancel</button>
             <button onClick={applyRaw} className="rounded-md bg-brand px-3 py-1.5 text-sm text-white">Apply to draft</button>
@@ -531,12 +531,12 @@ export function AmbaReferenceEditor() {
           <div className="space-y-1 text-xs">
             {(revsQ.data?.revisions ?? []).length === 0 && <p className="text-gray-400">No revisions yet.</p>}
             {(revsQ.data?.revisions ?? []).map((r) => (
-              <div key={r.id} className="flex items-center gap-2 rounded border bg-white px-2 py-1.5">
+              <div key={r.id} className="flex items-center gap-2 rounded-sm border bg-white px-2 py-1.5">
                 <span className="font-medium">v{r.version}</span>
                 <span className="text-gray-500">{r.reason}</span>
                 <span className="text-gray-400">{r.type_count} types · {r.alert_count} alerts</span>
                 <span className="ml-auto text-gray-400">{r.by}</span>
-                <button onClick={() => { void restore(r.id); setShowHistory(false); }} disabled={busy} className="rounded border px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50">Restore</button>
+                <button onClick={() => { void restore(r.id); setShowHistory(false); }} disabled={busy} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50">Restore</button>
               </div>
             ))}
           </div>
@@ -578,7 +578,7 @@ function AlertCard({
         <button onClick={onToggleEdit} className="min-w-0 flex-1 text-left">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-gray-800">{alert.name}</span>
-            <span className={`rounded border px-1.5 py-0.5 text-[10px] ${SEV_TONE[alert.severity] || ""}`}>
+            <span className={`rounded-sm border px-1.5 py-0.5 text-[10px] ${SEV_TONE[alert.severity] || ""}`}>
               {alert.severity}
               {typeof alert.severity_num === "number" ? ` (Sev${alert.severity_num})` : ""}
             </span>
@@ -588,9 +588,9 @@ function AlertCard({
           <Gauge alert={alert} />
         </button>
         <div className="flex shrink-0 gap-1">
-          <button onClick={onToggleEdit} className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-gray-50">{editing ? "Done" : "Edit"}</button>
-          <button onClick={onDuplicate} className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-gray-50" title="Duplicate">⧉</button>
-          <button onClick={onDelete} className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50" title="Delete">✕</button>
+          <button onClick={onToggleEdit} className="rounded-sm border px-1.5 py-0.5 text-[11px] hover:bg-gray-50">{editing ? "Done" : "Edit"}</button>
+          <button onClick={onDuplicate} className="rounded-sm border px-1.5 py-0.5 text-[11px] hover:bg-gray-50" title="Duplicate">⧉</button>
+          <button onClick={onDelete} className="rounded-sm border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50" title="Delete">✕</button>
         </div>
       </div>
 
@@ -598,7 +598,7 @@ function AlertCard({
         <div className="grid grid-cols-2 gap-2 border-t bg-gray-50 p-3 text-xs sm:grid-cols-3">
           <label className="col-span-2 sm:col-span-3">
             <span className="text-gray-500">Name</span>
-            <input value={alert.name} onChange={(e) => onChange({ name: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1" />
+            <input value={alert.name} onChange={(e) => onChange({ name: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1" />
           </label>
 
           <label>
@@ -606,7 +606,7 @@ function AlertCard({
             <select
               value={alert.alert_type}
               onChange={(e) => onChange({ alert_type: e.target.value as AmbaAlertRef["alert_type"] })}
-              className="mt-0.5 w-full rounded border px-2 py-1"
+              className="mt-0.5 w-full rounded-sm border px-2 py-1"
             >
               {AMBA_ALERT_TYPES.map((t) => <option key={t} value={t}>{ALERT_TYPE_LABEL[t]}</option>)}
             </select>
@@ -616,14 +616,14 @@ function AlertCard({
             <select
               value={alert.tier}
               onChange={(e) => onChange({ tier: e.target.value as AmbaAlertRef["tier"] })}
-              className="mt-0.5 w-full rounded border px-2 py-1"
+              className="mt-0.5 w-full rounded-sm border px-2 py-1"
             >
               {AMBA_TIERS.map((t) => <option key={t} value={t}>{TIER_LABEL[t]}</option>)}
             </select>
           </label>
           <label>
             <span className="text-gray-500">Category</span>
-            <select value={alert.amba_category} onChange={(e) => onChange({ amba_category: e.target.value as AmbaAlertRef["amba_category"] })} className="mt-0.5 w-full rounded border px-2 py-1">
+            <select value={alert.amba_category} onChange={(e) => onChange({ amba_category: e.target.value as AmbaAlertRef["amba_category"] })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
               {AMBA_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
@@ -657,7 +657,7 @@ function AlertCard({
                       onChange({ metric: e.target.value });
                     }
                   }}
-                  className="mt-0.5 w-full rounded border px-2 py-1 font-mono"
+                  className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono"
                 />
                 <datalist id={`metriclist-${armType}`}>
                   {metricOptions.map((m) => <option key={m.key} value={m.metric}>{m.name}</option>)}
@@ -673,7 +673,7 @@ function AlertCard({
                       alert_sensitivity: e.target.value === "DynamicThresholdCriterion" ? alert.alert_sensitivity ?? "Medium" : null,
                     })
                   }
-                  className="mt-0.5 w-full rounded border px-2 py-1"
+                  className="mt-0.5 w-full rounded-sm border px-2 py-1"
                 >
                   <option value="StaticThresholdCriterion">Static</option>
                   <option value="DynamicThresholdCriterion">Dynamic</option>
@@ -690,7 +690,7 @@ function AlertCard({
                 onChange={(e) => onChange({ log_query: e.target.value })}
                 rows={5}
                 spellCheck={false}
-                className="mt-0.5 w-full rounded border px-2 py-1 font-mono text-[11px]"
+                className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono text-[11px]"
               />
               <span className="text-[10px] text-gray-400">
                 Detection matches on the primary table plus the Name / MetricName / CounterName operands.
@@ -706,7 +706,7 @@ function AlertCard({
                   value={String(activity["category"] ?? "")}
                   onChange={(e) => patchActivity("category", e.target.value)}
                   placeholder="ServiceHealth"
-                  className="mt-0.5 w-full rounded border px-2 py-1 font-mono"
+                  className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono"
                 />
               </label>
               <label>
@@ -715,7 +715,7 @@ function AlertCard({
                   value={String(activity["incidentType"] ?? "")}
                   onChange={(e) => patchActivity("incidentType", e.target.value)}
                   placeholder="Incident"
-                  className="mt-0.5 w-full rounded border px-2 py-1 font-mono"
+                  className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono"
                 />
               </label>
               <label>
@@ -724,7 +724,7 @@ function AlertCard({
                   value={String(activity["operationName"] ?? "")}
                   onChange={(e) => patchActivity("operationName", e.target.value)}
                   placeholder="Microsoft.KeyVault/vaults/delete"
-                  className="mt-0.5 w-full rounded border px-2 py-1 font-mono"
+                  className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono"
                 />
               </label>
             </>
@@ -734,7 +734,7 @@ function AlertCard({
             <>
               <label>
                 <span className="text-gray-500">Operator</span>
-                <select value={alert.operator} onChange={(e) => onChange({ operator: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1">
+                <select value={alert.operator} onChange={(e) => onChange({ operator: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
                   {AMBA_OPERATORS.map((o) => <option key={o} value={o}>{AMBA_OPERATOR_SYMBOL[o]} {o}</option>)}
                 </select>
               </label>
@@ -745,7 +745,7 @@ function AlertCard({
                     <select
                       value={alert.alert_sensitivity ?? "Medium"}
                       onChange={(e) => onChange({ alert_sensitivity: e.target.value as AmbaAlertRef["alert_sensitivity"] })}
-                      className="mt-0.5 w-full rounded border px-2 py-1"
+                      className="mt-0.5 w-full rounded-sm border px-2 py-1"
                     >
                       {AMBA_SENSITIVITIES.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
@@ -757,13 +757,13 @@ function AlertCard({
                         type="number" min={1} max={24}
                         value={alert.failing_periods?.min_failing_periods_to_alert ?? ""}
                         onChange={(e) => onChange({ failing_periods: { ...alert.failing_periods, min_failing_periods_to_alert: e.target.value === "" ? null : Number(e.target.value) } })}
-                        className="w-full rounded border px-2 py-1"
+                        className="w-full rounded-sm border px-2 py-1"
                       />
                       <input
                         type="number" min={1} max={24}
                         value={alert.failing_periods?.number_of_evaluation_periods ?? ""}
                         onChange={(e) => onChange({ failing_periods: { ...alert.failing_periods, number_of_evaluation_periods: e.target.value === "" ? null : Number(e.target.value) } })}
-                        className="w-full rounded border px-2 py-1"
+                        className="w-full rounded-sm border px-2 py-1"
                       />
                     </div>
                   </label>
@@ -777,32 +777,32 @@ function AlertCard({
                       value={alert.threshold ?? ""}
                       onChange={(e) => onChange({ threshold: e.target.value === "" ? null : Number(e.target.value) })}
                       placeholder="(exists)"
-                      className="mt-0.5 w-full rounded border px-2 py-1"
+                      className="mt-0.5 w-full rounded-sm border px-2 py-1"
                     />
                   </label>
                   <label>
                     <span className="text-gray-500">Unit</span>
-                    <input list="amba-units" value={alert.unit} onChange={(e) => onChange({ unit: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1" />
+                    <input list="amba-units" value={alert.unit} onChange={(e) => onChange({ unit: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1" />
                     <datalist id="amba-units">{AMBA_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
                   </label>
                 </>
               )}
               <label>
                 <span className="text-gray-500">Window</span>
-                <select value={alert.window_size} onChange={(e) => onChange({ window_size: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1">
+                <select value={alert.window_size} onChange={(e) => onChange({ window_size: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
                   {AMBA_WINDOWS.map((w) => <option key={w} value={w}>{w}</option>)}
                 </select>
               </label>
               <label>
                 <span className="text-gray-500">Evaluation frequency</span>
-                <select value={alert.evaluation_frequency} onChange={(e) => onChange({ evaluation_frequency: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1">
+                <select value={alert.evaluation_frequency} onChange={(e) => onChange({ evaluation_frequency: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
                   {AMBA_FREQUENCIES.map((w) => <option key={w} value={w}>{w}</option>)}
                 </select>
               </label>
               {isMetric && (
                 <label>
                   <span className="text-gray-500">Aggregation</span>
-                  <select value={alert.time_aggregation || ""} onChange={(e) => onChange({ time_aggregation: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1">
+                  <select value={alert.time_aggregation || ""} onChange={(e) => onChange({ time_aggregation: e.target.value })} className="mt-0.5 w-full rounded-sm border px-2 py-1">
                     {AMBA_AGGREGATIONS.map((value) => <option key={value || "auto"} value={value}>{value || "automatic"}</option>)}
                   </select>
                 </label>
@@ -812,7 +812,7 @@ function AlertCard({
 
           <div className="col-span-2 sm:col-span-3">
             <span className="text-gray-500">Severity</span>
-            <div className="mt-0.5 inline-flex overflow-hidden rounded border">
+            <div className="mt-0.5 inline-flex overflow-hidden rounded-sm border">
               {AMBA_SEVERITIES.map((s) => (
                 <button
                   key={s}
@@ -835,7 +835,7 @@ function AlertCard({
                     key={p}
                     title={PATTERN_LABEL[p]}
                     onClick={() => onChange({ patterns: on ? alert.patterns.filter((x) => x !== p) : [...alert.patterns, p] })}
-                    className={`rounded border px-2 py-0.5 text-[11px] ${on ? "border-cyan-300 bg-cyan-50 text-cyan-800" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                    className={`rounded-sm border px-2 py-0.5 text-[11px] ${on ? "border-cyan-300 bg-cyan-50 text-cyan-800" : "bg-white text-gray-500 hover:bg-gray-50"}`}
                   >
                     {p}
                   </button>
@@ -864,7 +864,7 @@ function AlertCard({
                 value={alert.threshold_override_tag || ""}
                 onChange={(e) => onChange({ threshold_override_tag: e.target.value })}
                 placeholder="_amba-Percentage CPU-threshold-Override_"
-                className="mt-0.5 w-full rounded border px-2 py-1 font-mono"
+                className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono"
               />
               <span className="text-[10px] text-gray-400">
                 AMBA-ALZ convention. When a resource carries this tag, its value replaces the baseline threshold
@@ -875,7 +875,7 @@ function AlertCard({
 
           <label className="col-span-2 sm:col-span-3">
             <span className="text-gray-500">Dimension filter (legacy single-dimension form)</span>
-            <input value={alert.dimension_filter || ""} onChange={(e) => onChange({ dimension_filter: e.target.value })} placeholder="StatusCode eq '429'" className="mt-0.5 w-full rounded border px-2 py-1 font-mono" />
+            <input value={alert.dimension_filter || ""} onChange={(e) => onChange({ dimension_filter: e.target.value })} placeholder="StatusCode eq '429'" className="mt-0.5 w-full rounded-sm border px-2 py-1 font-mono" />
             {!!alert.dimensions?.length && (
               <span className="text-[10px] text-gray-400">
                 Structured dimensions from AMBA: {alert.dimensions.map((d) => `${d.name} ${d.operator} [${d.values.join(", ")}]`).join(" · ")}
@@ -884,7 +884,7 @@ function AlertCard({
           </label>
           <label className="col-span-2 sm:col-span-3">
             <span className="text-gray-500">Why it matters</span>
-            <textarea value={alert.why} onChange={(e) => onChange({ why: e.target.value })} rows={2} className="mt-0.5 w-full rounded border px-2 py-1" />
+            <textarea value={alert.why} onChange={(e) => onChange({ why: e.target.value })} rows={2} className="mt-0.5 w-full rounded-sm border px-2 py-1" />
           </label>
 
           {!!alert.references?.length && (
@@ -921,7 +921,7 @@ function AddTypeModal({ existing, knownTypes, onClose, onAdd }: {
         <div className="mb-1 text-xs font-medium text-gray-500">Pick a type published by AMBA</div>
         <div className="max-h-48 space-y-1 overflow-auto">
           {known.map((k) => (
-            <button key={k.type} onClick={() => onAdd(k.type, k.label, k.category)} className="flex w-full items-center gap-2 rounded border bg-white px-2 py-1.5 text-left text-xs hover:bg-gray-50">
+            <button key={k.type} onClick={() => onAdd(k.type, k.label, k.category)} className="flex w-full items-center gap-2 rounded-sm border bg-white px-2 py-1.5 text-left text-xs hover:bg-gray-50">
               <span className="font-medium text-gray-800">{k.label}</span>
               <span className="font-mono text-[10px] text-gray-400">{k.type}</span>
               <span className="ml-auto text-[10px] text-gray-400">{k.alertCount} alerts</span>
@@ -932,9 +932,9 @@ function AddTypeModal({ existing, knownTypes, onClose, onAdd }: {
       </div>
       <div className="border-t pt-3">
         <div className="mb-1 text-xs font-medium text-gray-500">…or a custom ARM type</div>
-        <input value={armType} onChange={(e) => setArmType(e.target.value)} placeholder="microsoft.provider/resourcetype" className="mb-1 w-full rounded border px-2 py-1.5 font-mono text-xs" />
-        <input value={display} onChange={(e) => setDisplay(e.target.value)} placeholder="Display name" className="mb-1 w-full rounded border px-2 py-1.5 text-xs" />
-        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="category (e.g. data)" className="mb-2 w-full rounded border px-2 py-1.5 text-xs" />
+        <input value={armType} onChange={(e) => setArmType(e.target.value)} placeholder="microsoft.provider/resourcetype" className="mb-1 w-full rounded-sm border px-2 py-1.5 font-mono text-xs" />
+        <input value={display} onChange={(e) => setDisplay(e.target.value)} placeholder="Display name" className="mb-1 w-full rounded-sm border px-2 py-1.5 text-xs" />
+        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="category (e.g. data)" className="mb-2 w-full rounded-sm border px-2 py-1.5 text-xs" />
         <button onClick={() => onAdd(armType, display, category)} disabled={!armType.trim()} className="rounded-md bg-brand px-3 py-1.5 text-xs text-white disabled:opacity-50">Add type</button>
       </div>
     </Modal>
@@ -947,7 +947,7 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
       <div className={`flex max-h-[85vh] w-full ${wide ? "max-w-3xl" : "max-w-md"} flex-col rounded-lg bg-white shadow-xl`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <h3 className="text-sm font-semibold">{title}</h3>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
         <div className="overflow-auto p-4">{children}</div>
       </div>

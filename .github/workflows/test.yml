@@ -71,6 +71,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: bundle budget script tests
+        run: node --test scripts/bundle-budget.test.mjs
       - run: npx tsc --noEmit
       # `vite build` fails on unused top-level symbols (TS6133), so this catches
       # dead code the dev server tolerates.

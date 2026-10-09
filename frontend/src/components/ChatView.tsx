@@ -236,7 +236,7 @@ function PanelLoading() {
 function AccessDeniedPanel() {
   return (
     <main className="flex min-w-0 flex-1 items-center justify-center bg-gray-50 p-6">
-      <section className="max-w-md rounded-2xl border border-amber-200 bg-white p-7 text-center shadow-sm">
+      <section className="max-w-md rounded-2xl border border-amber-200 bg-white p-7 text-center shadow-xs">
         <div className="text-3xl" aria-hidden>🔒</div>
         <h1 className="mt-3 text-lg font-semibold text-gray-900">Access not granted</h1>
         <p className="mt-2 text-sm leading-6 text-gray-600">
@@ -2667,7 +2667,7 @@ export default function ChatView() {
             if (e.key === "Enter") void commitRename(c.id, e.currentTarget.value);
             if (e.key === "Escape") setRenamingId(null);
           }}
-          className="m-1 w-full rounded border px-2 py-1 text-[13px] focus:outline-none focus:ring-1 focus:ring-gray-300"
+          className="m-1 w-full rounded-sm border px-2 py-1 text-[13px] focus:outline-hidden focus:ring-1 focus:ring-gray-300"
         />
       ) : (
         <>
@@ -2699,14 +2699,14 @@ export default function ChatView() {
             <button
               onClick={() => setRenamingId(c.id)}
               title="Rename"
-              className="rounded p-1 text-gray-400 hover:bg-gray-300/70 hover:text-gray-700"
+              className="rounded-sm p-1 text-gray-400 hover:bg-gray-300/70 hover:text-gray-700"
             >
               <PencilIcon className="h-3.5 w-3.5" />
             </button>
             <button
               onClick={() => void deleteOneChat(c.id)}
               title="Delete"
-              className="rounded p-1 text-gray-400 hover:bg-red-100 hover:text-red-600"
+              className="rounded-sm p-1 text-gray-400 hover:bg-red-100 hover:text-red-600"
             >
               <TrashIcon className="h-3.5 w-3.5" />
             </button>
@@ -2955,7 +2955,7 @@ export default function ChatView() {
                 <button
                   onClick={() => setProactiveOpen((v) => !v)}
                   title={proactiveOpen ? "Collapse" : "Expand"}
-                  className="ml-1 rounded p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
+                  className="ml-1 rounded-sm p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
                 >
                   <ChevronRightIcon className={`h-4 w-4 transition-transform ${proactiveOpen ? "rotate-90" : ""}`} />
                 </button>
@@ -3025,7 +3025,7 @@ export default function ChatView() {
                 <button
                   onClick={() => setAdminOpen((v) => !v)}
                   title={adminOpen ? "Collapse" : "Expand"}
-                  className="ml-1 rounded p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
+                  className="ml-1 rounded-sm p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
                 >
                   <ChevronRightIcon
                     className={`h-4 w-4 transition-transform ${
@@ -3099,7 +3099,7 @@ export default function ChatView() {
                 <button
                   onClick={() => setAutomationsOpen((v) => !v)}
                   title={automationsOpen ? "Collapse" : "Expand"}
-                  className="ml-1 rounded p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
+                  className="ml-1 rounded-sm p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
                 >
                   <ChevronRightIcon
                     className={`h-4 w-4 transition-transform ${
@@ -3234,7 +3234,7 @@ export default function ChatView() {
                 value={chatSearch}
                 onChange={(e) => setChatSearch(e.target.value)}
                 placeholder="Search chats…"
-                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700 placeholder:text-gray-500 focus:border-gray-300 focus:outline-none focus:ring-0"
+                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700 placeholder:text-gray-500 focus:border-gray-300 focus:outline-hidden focus:ring-0"
               />
               {chatSearch && (
                 <button
@@ -3647,7 +3647,7 @@ export default function ChatView() {
             className={`mx-auto space-y-4 ${
               showWelcome
                 ? "max-w-3xl"
-                : "max-w-5xl xl:max-w-6xl 2xl:max-w-screen-2xl"
+                : "max-w-5xl xl:max-w-6xl 2xl:max-w-(--breakpoint-2xl)"
             }`}
           >
             {showWelcome && (
@@ -3657,7 +3657,7 @@ export default function ChatView() {
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {/* Quick checks — collapsible button menus */}
-                  <div className="rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
+                  <div className="rounded-xl border border-gray-200 bg-white p-2 shadow-xs">
                     <div className="px-1.5 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                       Quick checks
                     </div>
@@ -3673,7 +3673,7 @@ export default function ChatView() {
                   </div>
 
                   {/* Browse by resource & problem */}
-                  <div className="rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
+                  <div className="rounded-xl border border-gray-200 bg-white p-2 shadow-xs">
                     <div className="flex items-center justify-between px-1.5 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                       <span>Browse by resource &amp; problem</span>
                       <span className="font-normal normal-case text-gray-300">
@@ -3802,7 +3802,7 @@ export default function ChatView() {
               <div className="space-y-2">
                 {/* Deep investigation: a random animated agent icon at the top. */}
                 {live?.deepIcon && (
-                  <div className="flex items-center gap-3 rounded-lg border border-brand/20 bg-gradient-to-br from-brand/10 to-transparent px-4 py-3">
+                  <div className="flex items-center gap-3 rounded-lg border border-brand/20 bg-linear-to-br from-brand/10 to-transparent px-4 py-3">
                     <img
                       src={live.deepIcon}
                       alt=""
@@ -3834,7 +3834,7 @@ export default function ChatView() {
               <div className="flex justify-start">
                 <div className="max-w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   <div className="mb-1 font-medium">⚠️ The model failed to respond</div>
-                  <div className="whitespace-pre-wrap break-words text-xs text-red-600">
+                  <div className="whitespace-pre-wrap wrap-break-word text-xs text-red-600">
                     {displayError.message}
                   </div>
                   <div className="mt-2 text-xs text-red-500">
@@ -3909,7 +3909,7 @@ export default function ChatView() {
                             }
                             className={`flex items-start gap-2 rounded-lg border p-2 text-left transition ${
                               on
-                                ? "border-brand/50 bg-white shadow-sm"
+                                ? "border-brand/50 bg-white shadow-xs"
                                 : "border-gray-200 bg-white/40 opacity-70 hover:opacity-100"
                             }`}
                           >
@@ -3961,7 +3961,7 @@ export default function ChatView() {
                         <select
                           value={deepMemorySel}
                           onChange={(e) => setDeepMemorySel(e.target.value)}
-                          className="w-full rounded-md border border-gray-200 px-2 py-1.5 text-[13px] text-gray-700 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                          className="w-full rounded-md border border-gray-200 px-2 py-1.5 text-[13px] text-gray-700 focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand"
                         >
                           <option value="">
                             {candidates.length === 1 ? `Auto · ${candidates[0].architecture_name}` : "Auto (let the investigator decide)"}
@@ -4226,7 +4226,7 @@ export default function ChatView() {
               </svg>
             </button>
           )}
-          <div className="mx-auto max-w-5xl xl:max-w-6xl 2xl:max-w-screen-2xl">
+          <div className="mx-auto max-w-5xl xl:max-w-6xl 2xl:max-w-(--breakpoint-2xl)">
             <input
               ref={fileInputRef}
               type="file"
@@ -4238,7 +4238,7 @@ export default function ChatView() {
                 e.target.value = "";
               }}
             />
-            <div className="rounded-3xl border border-gray-300 bg-white px-4 py-3 shadow-sm transition focus-within:border-gray-400 focus-within:shadow-md">
+            <div className="rounded-3xl border border-gray-300 bg-white px-4 py-3 shadow-xs transition focus-within:border-gray-400 focus-within:shadow-md">
               {queuedMessages.length > 0 && activeId && (
                 <div
                   className="mb-3 rounded-xl border border-blue-200 bg-blue-50/70 p-2.5"
@@ -4311,7 +4311,7 @@ export default function ChatView() {
                 }}
                 rows={1}
                 placeholder="Write a message…"
-                className="block max-h-[200px] w-full resize-none overflow-y-hidden bg-transparent px-1 text-[15px] leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none"
+                className="block max-h-[200px] w-full resize-none overflow-y-hidden bg-transparent px-1 text-[15px] leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-hidden"
               />
 
               <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2">
@@ -4944,10 +4944,10 @@ function HypothesisTreeNode({
             </span>
           </span>
           {node.description && (
-            <span className="mt-0.5 block break-words text-[11px] text-gray-500">{node.description}</span>
+            <span className="mt-0.5 block wrap-break-word text-[11px] text-gray-500">{node.description}</span>
           )}
           {open && node.evidence && (
-            <span className="mt-1.5 block break-words rounded-md bg-gray-50 px-2 py-1.5 text-[11px] leading-relaxed text-gray-600">
+            <span className="mt-1.5 block wrap-break-word rounded-md bg-gray-50 px-2 py-1.5 text-[11px] leading-relaxed text-gray-600">
               <span className="font-medium text-gray-500">Evidence: </span>
               {node.evidence}
             </span>
@@ -5402,7 +5402,7 @@ function InvestigationPanel({
             <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-gray-400">
               Research findings
             </summary>
-            <p className="mt-1.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-gray-600">
+            <p className="mt-1.5 whitespace-pre-wrap wrap-break-word text-[12px] leading-relaxed text-gray-600">
               {researchSummary}
             </p>
           </details>
@@ -5418,13 +5418,13 @@ function InvestigationPanel({
               <div className="flex items-center gap-1 text-[10px]">
                 <button
                   onClick={() => setTreeMode({ open: true, v: treeMode.v + 1 })}
-                  className="rounded px-1.5 py-0.5 text-gray-500 transition hover:bg-gray-100"
+                  className="rounded-sm px-1.5 py-0.5 text-gray-500 transition hover:bg-gray-100"
                 >
                   Expand all
                 </button>
                 <button
                   onClick={() => setTreeMode({ open: false, v: treeMode.v + 1 })}
-                  className="rounded px-1.5 py-0.5 text-gray-500 transition hover:bg-gray-100"
+                  className="rounded-sm px-1.5 py-0.5 text-gray-500 transition hover:bg-gray-100"
                 >
                   Collapse all
                 </button>
@@ -5463,14 +5463,14 @@ function InvestigationPanel({
                 );
               })()}
             </div>
-            <div className="text-sm font-semibold break-words text-gray-800">{conclusion.root_cause}</div>
+            <div className="text-sm font-semibold wrap-break-word text-gray-800">{conclusion.root_cause}</div>
             {conclusion.summary && (
-              <p className="mt-1 break-words text-[12px] leading-relaxed text-gray-600">{conclusion.summary}</p>
+              <p className="mt-1 wrap-break-word text-[12px] leading-relaxed text-gray-600">{conclusion.summary}</p>
             )}
             {conclusion.evidence?.length > 0 && (
               <div className="mt-2">
                 <div className="text-[11px] font-medium text-gray-500">Evidence</div>
-                <ul className="mt-0.5 list-disc break-words pl-4 text-[12px] text-gray-600">
+                <ul className="mt-0.5 list-disc wrap-break-word pl-4 text-[12px] text-gray-600">
                   {conclusion.evidence.map((e, i) => (
                     <li key={i}>{e}</li>
                   ))}
@@ -5480,7 +5480,7 @@ function InvestigationPanel({
             {conclusion.actions?.length > 0 && (
               <div className="mt-2">
                 <div className="text-[11px] font-medium text-gray-500">Recommended actions</div>
-                <ul className="mt-0.5 list-disc break-words pl-4 text-[12px] text-gray-600">
+                <ul className="mt-0.5 list-disc wrap-break-word pl-4 text-[12px] text-gray-600">
                   {conclusion.actions.map((a, i) => (
                     <li key={i}>{a}</li>
                   ))}
@@ -5657,7 +5657,7 @@ function TenantPicker({
               </span>
               <span className="flex shrink-0 items-center gap-1">
                 {t.read_only && (
-                  <span className="rounded bg-green-100 px-1 py-0.5 text-[9px] text-green-700">
+                  <span className="rounded-sm bg-green-100 px-1 py-0.5 text-[9px] text-green-700">
                     RO
                   </span>
                 )}
@@ -5717,7 +5717,7 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
               : `${errorSteps.length} tools failed`}
           </div>
           {errorSteps.map((s, i) => (
-            <div key={i} className="mt-1 break-words text-[11px] leading-snug text-red-700">
+            <div key={i} className="mt-1 wrap-break-word text-[11px] leading-snug text-red-700">
               <span className="font-mono font-medium">{toolDisplayName(s.name)}</span>
               {s.summary ? ` — ${s.summary.replace(/^Error:\s*/i, "")}` : ""}
             </div>
@@ -5763,12 +5763,12 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
           {steps.map((s, i) =>
             s.kind === "reasoning" ? (
               <div key={i} className="border-l-2 border-gray-200 pl-3 text-gray-500">
-                <div className="prose-chat !text-[11px] !leading-relaxed !text-gray-500">
+                <div className="prose-chat text-[11px]! leading-relaxed! text-gray-500!">
                   <Markdown>{s.text}</Markdown>
                 </div>
               </div>
             ) : (
-              <div key={i} className={`rounded border px-3 py-2 text-xs ${s.status === "error" ? "border-red-300 bg-red-50" : "border-gray-200 bg-white"}`}>
+              <div key={i} className={`rounded-sm border px-3 py-2 text-xs ${s.status === "error" ? "border-red-300 bg-red-50" : "border-gray-200 bg-white"}`}>
                 <div className="flex items-center gap-2">
                   {s.status === "running" && live ? (
                     <Spinner />
@@ -5781,14 +5781,14 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
                   )}
                   <span className="font-mono font-medium text-gray-800">{toolDisplayName(s.name)}</span>
                   {s.status === "error" && (
-                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">failed</span>
+                    <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">failed</span>
                   )}
                   {s.duration != null && (
                     <span className="text-gray-400">{formatDuration(s.duration)}</span>
                   )}
                 </div>
                 {s.args != null && !s.discovery && Object.keys(s.args as object).length > 0 && (
-                  <pre className="mt-1 overflow-x-auto rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-500">
+                  <pre className="mt-1 overflow-x-auto rounded-sm bg-gray-50 px-2 py-1 text-[11px] text-gray-500">
                     {JSON.stringify(s.args)}
                   </pre>
                 )}
@@ -5967,7 +5967,7 @@ function ModelPicker({
       ) : variant === "bare" ? (
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex max-w-[14rem] items-center gap-1.5 rounded-md px-2 py-1 text-sm text-gray-700 transition hover:bg-gray-100"
+          className="flex max-w-56 items-center gap-1.5 rounded-md px-2 py-1 text-sm text-gray-700 transition hover:bg-gray-100"
           title={`Switch model${model ? ` (current: ${model})` : ""}`}
         >
           <span className="truncate font-medium text-gray-800">{model || label}</span>
@@ -6277,7 +6277,7 @@ function ProgressLines({
               title={`${s.name}: ${s.count} tool call${s.count === 1 ? "" : "s"}`}
             >
               <span aria-hidden>{s.icon}</span>
-              <span className="max-w-[8rem] truncate">{s.name}</span>
+              <span className="max-w-32 truncate">{s.name}</span>
               <span className="text-gray-400">{s.count}</span>
             </span>
           ))}
@@ -6292,7 +6292,7 @@ function ProgressLines({
             <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
               {icon(l)}
             </span>
-            <div className="prose-chat min-w-0 flex-1 border-l-2 border-gray-200 pl-2 !text-[11px] !leading-relaxed !text-gray-500">
+            <div className="prose-chat min-w-0 flex-1 border-l-2 border-gray-200 pl-2 text-[11px]! leading-relaxed! text-gray-500!">
               <TypedMarkdown text={l.text} live={animates(i)} />
             </div>
           </div>
@@ -6308,7 +6308,7 @@ function ProgressLines({
                   title={l.agentName ? `${l.agentName} agent` : undefined}
                 >
                   <span aria-hidden>{l.agentIcon}</span>
-                  {l.agentName && <span className="max-w-[7rem] truncate">{l.agentName}</span>}
+                  {l.agentName && <span className="max-w-28 truncate">{l.agentName}</span>}
                 </span>
               )}
               <span
@@ -6338,7 +6338,7 @@ function ProgressLines({
                       key={artifact.artifact_id}
                       href={artifactHref(artifact.url)}
                       download={artifact.filename}
-                      className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
+                      className="rounded-sm border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
                     >
                       ↓ {artifact.kind.toUpperCase()}
                     </a>
@@ -6559,7 +6559,7 @@ const TreeNode = memo(function TreeNode({
       <button
         onClick={() => onPick(prompt)}
         style={{ paddingLeft: `${depth * 14 + 24}px` }}
-        className="flex w-full items-center gap-2 rounded py-1 pr-2 text-left text-[13px] text-gray-600 transition hover:bg-brand/5 hover:text-brand"
+        className="flex w-full items-center gap-2 rounded-sm py-1 pr-2 text-left text-[13px] text-gray-600 transition hover:bg-brand/5 hover:text-brand"
         title={node.label}
       >
         <span className="truncate">{node.label}</span>
@@ -6612,7 +6612,7 @@ const StarterCategory = memo(function StarterCategory({
     <div>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded py-1 pl-1.5 pr-2 text-left text-sm font-semibold text-gray-800 transition hover:bg-gray-50"
+        className="flex w-full items-center gap-2 rounded-sm py-1 pl-1.5 pr-2 text-left text-sm font-semibold text-gray-800 transition hover:bg-gray-50"
       >
         <span className="w-3 shrink-0 text-gray-400">{open ? "▾" : "▸"}</span>
         <span className="text-base leading-none">{category.icon}</span>
@@ -6625,7 +6625,7 @@ const StarterCategory = memo(function StarterCategory({
               key={p}
               onClick={() => onPick(p)}
               style={{ paddingLeft: "38px" }}
-              className="flex w-full items-center gap-2 rounded py-1 pr-2 text-left text-[13px] text-gray-600 transition hover:bg-brand/5 hover:text-brand"
+              className="flex w-full items-center gap-2 rounded-sm py-1 pr-2 text-left text-[13px] text-gray-600 transition hover:bg-brand/5 hover:text-brand"
               title={p}
             >
               <span className="truncate">{p}</span>
@@ -6713,7 +6713,7 @@ const Bubble = memo(function Bubble({
   return (
     <div className="flex justify-start">
       <div className="w-full max-w-full">
-        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm">
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-xs">
           <div className="prose-chat">
             <Markdown components={MARKDOWN_COMPONENTS}>
               {content}
@@ -6883,7 +6883,7 @@ function MermaidEditorPanel({ code, onClose }: { code: string; onClose: () => vo
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
             rows={12}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-gray-900 px-3 py-2 font-mono text-[12px] leading-snug text-gray-100 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400"
+            className="w-full resize-y rounded-lg border border-gray-300 bg-gray-900 px-3 py-2 font-mono text-[12px] leading-snug text-gray-100 focus:border-sky-400 focus:outline-hidden focus:ring-1 focus:ring-sky-400"
           />
         </div>
 
@@ -7057,7 +7057,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
                 ? "Run this KQL query via Azure Resource Graph"
                 : "Run this command on the host"
             }
-            className="inline-flex items-center gap-1 rounded-md border border-sky-400/40 bg-sky-500/20 px-1.5 py-1 text-[11px] text-sky-100 backdrop-blur transition hover:bg-sky-500/30 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border border-sky-400/40 bg-sky-500/20 px-1.5 py-1 text-[11px] text-sky-100 backdrop-blur-sm transition hover:bg-sky-500/30 disabled:opacity-50"
           >
             {running ? (
               <Spinner className="h-3.5 w-3.5 text-sky-200" />
@@ -7073,7 +7073,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
           <button
             onClick={() => exec.openEditor(text, kqlRunnable ? "kql" : "command")}
             title="Edit before running"
-            className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-1.5 py-1 text-[11px] text-gray-200 backdrop-blur transition hover:bg-white/20"
+            className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-1.5 py-1 text-[11px] text-gray-200 backdrop-blur-sm transition hover:bg-white/20"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M13.5 4.5l2 2L7 15l-3 .8.8-3 8.7-8.3z" strokeLinejoin="round" />
@@ -7085,7 +7085,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
           content={() => text}
           title="Copy code"
           label="Copy"
-          className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-1.5 py-1 text-[11px] text-gray-200 backdrop-blur transition hover:bg-white/20"
+          className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-1.5 py-1 text-[11px] text-gray-200 backdrop-blur-sm transition hover:bg-white/20"
           checkClassName="h-3.5 w-3.5 text-green-400"
         />
       </div>
@@ -7100,7 +7100,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
             {running ? (
               <button
                 onClick={() => abortRef.current?.abort()}
-                className="rounded px-1.5 py-0.5 text-gray-300 hover:bg-gray-700"
+                className="rounded-sm px-1.5 py-0.5 text-gray-300 hover:bg-gray-700"
               >
                 Stop
               </button>
@@ -7128,13 +7128,13 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
               <div className="flex gap-2">
                 <button
                   onClick={() => setConfirmReq(null)}
-                  className="rounded border border-gray-600 px-2 py-0.5 text-gray-300 hover:bg-gray-700"
+                  className="rounded-sm border border-gray-600 px-2 py-0.5 text-gray-300 hover:bg-gray-700"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => void doRun(true)}
-                  className="rounded bg-amber-500 px-2 py-0.5 font-medium text-gray-900 hover:bg-amber-400"
+                  className="rounded-sm bg-amber-500 px-2 py-0.5 font-medium text-gray-900 hover:bg-amber-400"
                 >
                   Run anyway
                 </button>
@@ -7238,7 +7238,7 @@ function MarkdownTable({ children }: { children?: React.ReactNode }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Search ${rows.length} rows…`}
-            className="w-56 rounded-md border px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand"
+            className="w-56 rounded-md border px-2 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-brand"
           />
           {query && (
             <span className="text-[11px] text-gray-400">
@@ -7403,7 +7403,7 @@ function CommandEditorPanel({
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
             rows={isKql ? 8 : 4}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-gray-900 px-3 py-2 font-mono text-[12px] leading-snug text-gray-100 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400"
+            className="w-full resize-y rounded-lg border border-gray-300 bg-gray-900 px-3 py-2 font-mono text-[12px] leading-snug text-gray-100 focus:border-sky-400 focus:outline-hidden focus:ring-1 focus:ring-sky-400"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
@@ -7456,13 +7456,13 @@ function CommandEditorPanel({
             <div className="flex gap-2">
               <button
                 onClick={() => setConfirmReq(null)}
-                className="rounded border border-gray-300 bg-white px-2.5 py-1 font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-sm border border-gray-300 bg-white px-2.5 py-1 font-medium text-gray-700 hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void run(true)}
-                className="rounded bg-amber-500 px-2.5 py-1 font-medium text-gray-900 hover:bg-amber-400"
+                className="rounded-sm bg-amber-500 px-2.5 py-1 font-medium text-gray-900 hover:bg-amber-400"
               >
                 Run anyway
               </button>

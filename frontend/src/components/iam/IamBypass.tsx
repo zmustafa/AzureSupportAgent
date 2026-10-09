@@ -35,13 +35,13 @@ const UNREADABLE_STATUSES = new Set(["Unauthorized", "Throttled", "Failed"]);
 function Row({ r }: { r: IamBypassRow }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded border bg-white">
+    <div className="rounded-sm border bg-white">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-baseline gap-2 px-3 py-2 text-left hover:bg-gray-50"
       >
-        <span className={`rounded px-1.5 text-[10px] font-semibold uppercase ${SEV_CLASS[r.severity] ?? "bg-gray-100 text-gray-700"}`}>
+        <span className={`rounded-sm px-1.5 text-[10px] font-semibold uppercase ${SEV_CLASS[r.severity] ?? "bg-gray-100 text-gray-700"}`}>
           {r.severity}
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800" title={r.resourceId}>
@@ -49,7 +49,7 @@ function Row({ r }: { r: IamBypassRow }) {
         </span>
         <span className="shrink-0 text-[11px] text-gray-500">{r.title}</span>
         {r.environment && (
-          <span className="shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-600">{r.environment}</span>
+          <span className="shrink-0 rounded-sm bg-gray-100 px-1 text-[10px] text-gray-600">{r.environment}</span>
         )}
       </button>
       {open && (
@@ -62,7 +62,7 @@ function Row({ r }: { r: IamBypassRow }) {
           {/* Blind ≠ nobody. An empty list with the join unavailable must not read as "nobody
               holds this credential". */}
           {r.credentialAction && (
-            <div className="rounded bg-gray-50 p-2">
+            <div className="rounded-sm bg-gray-50 p-2">
               <div className="text-[11px] font-semibold text-gray-700">Who can fetch the credential</div>
               {!r.reachabilityAvailable ? (
                 <div className="text-[11px] text-amber-800">
@@ -90,7 +90,7 @@ function Row({ r }: { r: IamBypassRow }) {
                               edge. These rows span the full width of a wide panel, so a
                               right-aligned glyph ends up inches from the identity it acts on
                               and reads as belonging to the row's last column instead. */}
-                          <span className="max-w-[22rem] shrink-0 truncate">
+                          <span className="max-w-88 shrink-0 truncate">
                             {h.principalName}
                             {ambiguous && (
                               <span className="text-gray-400"> ({h.principalId.slice(0, 8)})</span>
@@ -115,7 +115,7 @@ function Row({ r }: { r: IamBypassRow }) {
           )}
 
           {/* Remediation and its blast radius are one unit. Never render one without the other. */}
-          <div className="rounded border border-emerald-200 bg-emerald-50 p-2">
+          <div className="rounded-sm border border-emerald-200 bg-emerald-50 p-2">
             <div className="text-[11px] font-semibold text-emerald-900">Remediation</div>
             <div className="text-[11px] text-emerald-900">{r.remediation}</div>
             <div className="mt-1 border-t border-emerald-200 pt-1 text-[11px] font-medium text-red-800">
@@ -126,7 +126,7 @@ function Row({ r }: { r: IamBypassRow }) {
           {r.frameworks.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {r.frameworks.map((f) => (
-                <span key={f} className="rounded bg-gray-100 px-1 text-[10px] text-gray-600">{f}</span>
+                <span key={f} className="rounded-sm bg-gray-100 px-1 text-[10px] text-gray-600">{f}</span>
               ))}
             </div>
           )}
@@ -184,7 +184,7 @@ export function BypassTab() {
 
         {/* Never hidden, never collapsed. */}
         {(s?.limitations?.length ?? 0) > 0 && (
-          <div data-testid="bypass-limitations" className="mt-2 rounded border border-amber-300 bg-amber-50 p-2">
+          <div data-testid="bypass-limitations" className="mt-2 rounded-sm border border-amber-300 bg-amber-50 p-2">
             <div className="mb-1 text-[11px] font-semibold text-amber-900">What this does not cover</div>
             <ul className="space-y-1">
               {s?.limitations.map((l) => (
@@ -201,7 +201,7 @@ export function BypassTab() {
           <button
             type="button"
             onClick={() => setFamily("")}
-            className={`w-full rounded px-2 py-1 text-left text-xs ${family === "" ? "bg-sky-100 text-sky-900" : "hover:bg-gray-100"}`}
+            className={`w-full rounded-sm px-2 py-1 text-left text-xs ${family === "" ? "bg-sky-100 text-sky-900" : "hover:bg-gray-100"}`}
           >
             All services
           </button>
@@ -211,12 +211,12 @@ export function BypassTab() {
               type="button"
               onClick={() => setFamily(f.family)}
               title={f.message || undefined}
-              className={`flex w-full items-baseline gap-1 rounded px-2 py-1 text-left text-xs ${family === f.family ? "bg-sky-100 text-sky-900" : "hover:bg-gray-100"}`}
+              className={`flex w-full items-baseline gap-1 rounded-sm px-2 py-1 text-left text-xs ${family === f.family ? "bg-sky-100 text-sky-900" : "hover:bg-gray-100"}`}
             >
               <span className="min-w-0 flex-1 truncate">{f.family}</span>
               {/* A family that could not be read says so instead of showing a clean zero. */}
               {UNREADABLE_STATUSES.has(f.status) ? (
-                <span className="rounded bg-red-100 px-1 text-[10px] text-red-800">{f.status}</span>
+                <span className="rounded-sm bg-red-100 px-1 text-[10px] text-red-800">{f.status}</span>
               ) : (
                 <span className="text-[10px] text-gray-500">
                   {f.affected}/{f.assessed}
@@ -232,7 +232,7 @@ export function BypassTab() {
               value={severity}
               onChange={(e) => setSeverity(e.target.value)}
               aria-label="Severity"
-              className="rounded border border-gray-300 px-1.5 py-0.5 text-xs"
+              className="rounded-sm border border-gray-300 px-1.5 py-0.5 text-xs"
             >
               <option value="">All severities</option>
               <option value="critical">Critical</option>
@@ -245,12 +245,12 @@ export function BypassTab() {
 
           {q.isLoading && <div className="text-sm text-gray-500">Loading…</div>}
           {d?.never_loaded && (
-            <div className="rounded border bg-white p-3 text-xs text-gray-600">
+            <div className="rounded-sm border bg-white p-3 text-xs text-gray-600">
               The bypass sweep has not run for this tenant yet. Nothing here is an all-clear.
             </div>
           )}
           {d && !d.never_loaded && s && s.assessed > 0 && d.rows.length === 0 && (
-            <div className="rounded border bg-white p-3 text-xs text-gray-600">
+            <div className="rounded-sm border bg-white p-3 text-xs text-gray-600">
               No non-RBAC door was found in what was assessed. Check the coverage above and the
               service statuses on the left before reading that as an all-clear.
             </div>

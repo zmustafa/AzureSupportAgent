@@ -202,17 +202,17 @@ export function TimeRangePicker({ start, end, label, onApply, disabled }: Props)
           if (!isNaN(eAbs.getTime())) setDrEnd(fmtInput(eAbs, tz));
           setOpen((o) => !o);
         }}
-        className="flex items-center gap-2 rounded border bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        className="flex items-center gap-2 rounded-sm border bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         title="Choose a time range"
       >
         <span>🕒</span>
         <span className="max-w-[16rem] truncate">{triggerLabel}</span>
-        <span className="rounded bg-gray-100 px-1 text-[10px] font-medium text-gray-500">{tzShort}</span>
+        <span className="rounded-sm bg-gray-100 px-1 text-[10px] font-medium text-gray-500">{tzShort}</span>
         <span className="text-gray-400">▾</span>
       </button>
 
       {open && (
-        <div ref={popRef} style={{ transform: shiftX ? `translateX(${shiftX}px)` : undefined }} className="absolute left-0 z-50 mt-1 flex w-[32rem] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border bg-white shadow-xl">
+        <div ref={popRef} style={{ transform: shiftX ? `translateX(${shiftX}px)` : undefined }} className="absolute left-0 z-50 mt-1 flex w-lg max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border bg-white shadow-xl">
           {/* Tab rail */}
           <div className="w-32 shrink-0 border-r bg-gray-50 py-1">
             {TABS.map((t) => (
@@ -238,7 +238,7 @@ export function TimeRangePicker({ start, end, label, onApply, disabled }: Props)
             {tab === "Presets" && (
               <div className="grid grid-cols-2 gap-1">
                 {presets.map((p) => (
-                  <button key={p.label} onClick={p.run} className="rounded px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-brand/5 hover:text-brand">{p.label}</button>
+                  <button key={p.label} onClick={p.run} className="rounded-sm px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-brand/5 hover:text-brand">{p.label}</button>
                 ))}
               </div>
             )}
@@ -248,8 +248,8 @@ export function TimeRangePicker({ start, end, label, onApply, disabled }: Props)
                 <div className="text-xs text-gray-500">Earliest</div>
                 <div className="mt-1 flex items-center gap-2">
                   <span className="text-sm text-gray-600">Last</span>
-                  <input type="number" min={1} value={relN} onChange={(e) => setRelN(Math.max(1, Number(e.target.value) || 1))} className="w-20 rounded border px-2 py-1 text-sm" />
-                  <select value={relUnit} onChange={(e) => setRelUnit(e.target.value)} className="rounded border px-2 py-1 text-sm">
+                  <input type="number" min={1} value={relN} onChange={(e) => setRelN(Math.max(1, Number(e.target.value) || 1))} className="w-20 rounded-sm border px-2 py-1 text-sm" />
+                  <select value={relUnit} onChange={(e) => setRelUnit(e.target.value)} className="rounded-sm border px-2 py-1 text-sm">
                     {REL_UNITS.map((u) => <option key={u.unit} value={u.unit}>{u.label}</option>)}
                   </select>
                 </div>
@@ -271,20 +271,20 @@ export function TimeRangePicker({ start, end, label, onApply, disabled }: Props)
               <div className="space-y-2">
                 <div className="flex gap-1 text-sm">
                   {(["between", "since", "before"] as const).map((m) => (
-                    <button key={m} onClick={() => setDrMode(m)} className={`rounded px-2 py-1 capitalize ${drMode === m ? "bg-brand/10 font-medium text-brand" : "text-gray-600 hover:bg-gray-100"}`}>{m}</button>
+                    <button key={m} onClick={() => setDrMode(m)} className={`rounded-sm px-2 py-1 capitalize ${drMode === m ? "bg-brand/10 font-medium text-brand" : "text-gray-600 hover:bg-gray-100"}`}>{m}</button>
                   ))}
                 </div>
                 {drMode === "between" && (
                   <div className="flex flex-wrap items-end gap-2">
-                    <label className="text-xs text-gray-500">From<input type="datetime-local" value={drStart} onChange={(e) => setDrStart(e.target.value)} className="mt-0.5 block rounded border px-2 py-1 text-sm" /></label>
-                    <label className="text-xs text-gray-500">To<input type="datetime-local" value={drEnd} onChange={(e) => setDrEnd(e.target.value)} className="mt-0.5 block rounded border px-2 py-1 text-sm" /></label>
+                    <label className="text-xs text-gray-500">From<input type="datetime-local" value={drStart} onChange={(e) => setDrStart(e.target.value)} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" /></label>
+                    <label className="text-xs text-gray-500">To<input type="datetime-local" value={drEnd} onChange={(e) => setDrEnd(e.target.value)} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" /></label>
                   </div>
                 )}
                 {drMode === "since" && (
-                  <label className="block text-xs text-gray-500">Since<input type="datetime-local" value={drStart} onChange={(e) => setDrStart(e.target.value)} className="mt-0.5 block rounded border px-2 py-1 text-sm" /></label>
+                  <label className="block text-xs text-gray-500">Since<input type="datetime-local" value={drStart} onChange={(e) => setDrStart(e.target.value)} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" /></label>
                 )}
                 {drMode === "before" && (
-                  <label className="block text-xs text-gray-500">Before<input type="datetime-local" value={drEnd} onChange={(e) => setDrEnd(e.target.value)} className="mt-0.5 block rounded border px-2 py-1 text-sm" /></label>
+                  <label className="block text-xs text-gray-500">Before<input type="datetime-local" value={drEnd} onChange={(e) => setDrEnd(e.target.value)} className="mt-0.5 block rounded-sm border px-2 py-1 text-sm" /></label>
                 )}
                 {/* Show the same instant in the OTHER zone so a value typed in one is unambiguous. */}
                 <div className="text-[11px] text-gray-400">
@@ -326,8 +326,8 @@ export function TimeRangePicker({ start, end, label, onApply, disabled }: Props)
             {tab === "Advanced" && (
               <div className="space-y-2">
                 <p className="text-[11px] text-gray-500">Relative modifiers, e.g. <code>-7d@d</code>, <code>-24h</code>, <code>@mon</code>, <code>now</code>. <code>@</code> snaps to the unit boundary.</p>
-                <label className="block text-xs text-gray-500">Earliest<input value={advEarliest} onChange={(e) => setAdvEarliest(e.target.value)} className="mt-0.5 block w-full rounded border px-2 py-1 font-mono text-sm" placeholder="-24h" /></label>
-                <label className="block text-xs text-gray-500">Latest<input value={advLatest} onChange={(e) => setAdvLatest(e.target.value)} className="mt-0.5 block w-full rounded border px-2 py-1 font-mono text-sm" placeholder="now" /></label>
+                <label className="block text-xs text-gray-500">Earliest<input value={advEarliest} onChange={(e) => setAdvEarliest(e.target.value)} className="mt-0.5 block w-full rounded-sm border px-2 py-1 font-mono text-sm" placeholder="-24h" /></label>
+                <label className="block text-xs text-gray-500">Latest<input value={advLatest} onChange={(e) => setAdvLatest(e.target.value)} className="mt-0.5 block w-full rounded-sm border px-2 py-1 font-mono text-sm" placeholder="now" /></label>
                 <div className="text-[11px] text-gray-500">
                   {advPreview.ok && advPreview.s && advPreview.e
                     ? <span className="text-emerald-700">{fmtAbsDate(advPreview.s, tz)} → {fmtAbsDate(advPreview.e, tz)} ({tz === "utc" ? "UTC" : localOffsetLabel()})</span>

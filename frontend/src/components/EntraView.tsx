@@ -85,10 +85,10 @@ function TabScroller({ activeId, children }: { activeId: string; children: React
         {children}
       </div>
       {edges.left && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-white to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-linear-to-r from-white to-transparent" />
       )}
       {edges.right && (
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-end bg-gradient-to-l from-white via-white to-transparent">
+        <div className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-end bg-linear-to-l from-white via-white to-transparent">
           <span className="text-xs text-gray-400">{"\u203a"}</span>
         </div>
       )}
@@ -284,7 +284,7 @@ function ProgressStrip({
         )}
       </div>
       {open && (
-        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] leading-relaxed">
+        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-sm bg-white/70 p-2 text-[11px] leading-relaxed">
           {progress.map((p) => `${p.level.toUpperCase().padEnd(5)} ${p.message}`).join("\n")}
         </pre>
       )}
@@ -348,7 +348,7 @@ function PostureTab({
             <div className="flex flex-wrap items-baseline gap-2">
               <span className="text-2xl font-semibold text-gray-900">Identity posture {s.score}/100</span>
               {s.grade ? (
-                <span className="rounded bg-gray-100 px-2 py-0.5 text-sm font-medium text-gray-700">
+                <span className="rounded-sm bg-gray-100 px-2 py-0.5 text-sm font-medium text-gray-700">
                   Grade {s.grade} · {s.grade_label}
                 </span>
               ) : (
@@ -386,7 +386,7 @@ function PostureTab({
                 type="button"
                 onClick={() => download.start(api.entraWorkbookUrl(connectionId), "entra-identity-review.xlsx")}
                 disabled={download.phase !== "idle"}
-                className="ml-auto rounded border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                className="ml-auto rounded-sm border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
                 title="Every /entra tab and sub-tab as one multi-sheet workbook — posture, findings, Conditional Access, privileged access, applications, sign-in risk, governance, blast radius and the raw directory. Contains personal data."
               >
                 ⬇ Export everything to Excel

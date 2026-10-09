@@ -124,7 +124,7 @@ function Section({
                title={prov ? `${prov.source}${prov.collected_at ? ` \u00b7 collected ${prov.collected_at.slice(0, 16).replace("T", " ")}` : ""}` : undefined}>
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
-          <span className="rounded bg-gray-100 px-1.5 text-[11px] tabular-nums text-gray-600">0</span>
+          <span className="rounded-sm bg-gray-100 px-1.5 text-[11px] tabular-nums text-gray-600">0</span>
           <span className="text-xs text-gray-500">{empty ?? "Nothing recorded."}</span>
         </div>
         {footer}
@@ -137,11 +137,11 @@ function Section({
       <div className="mb-2 flex items-baseline gap-2">
         <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
         {count !== undefined && !unreadable && (
-          <span className="rounded bg-gray-100 px-1.5 text-[11px] tabular-nums text-gray-600">{count}</span>
+          <span className="rounded-sm bg-gray-100 px-1.5 text-[11px] tabular-nums text-gray-600">{count}</span>
         )}
       </div>
       {unreadable ? (
-        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+        <div className="rounded-sm border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
           This could not be read, so nothing is claimed about it. {prov?.reason}
         </div>
       ) : (
@@ -155,7 +155,7 @@ function Section({
 
 function Table({ head, rows }: { head: string[]; rows: React.ReactNode[][] }) {
   return (
-    <div className="max-h-72 overflow-auto rounded border">
+    <div className="max-h-72 overflow-auto rounded-sm border">
       <table className="w-full text-left text-xs">
         <thead className="sticky top-0 bg-gray-50 text-[11px] uppercase text-gray-500">
           <tr>{head.map((h, i) => <th key={i} className="px-2 py-1.5 font-medium">{h}</th>)}</tr>
@@ -209,7 +209,7 @@ function AttributionChip({ value }: { value: string }) {
   const s = ATTRIBUTION_STYLE[value];
   if (!s) return null;
   return (
-    <span title={s.title} className={`rounded border px-1.5 py-0.5 text-[10px] ${s.cls}`}>{s.label}</span>
+    <span title={s.title} className={`rounded-sm border px-1.5 py-0.5 text-[10px] ${s.cls}`}>{s.label}</span>
   );
 }
 
@@ -291,7 +291,7 @@ function RecentStrip({
         onClick={onClear}
         data-testid="investigate-recent-clear"
         title="Hide this list. The audit record of who was investigated is kept."
-        className="ml-1 rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        className="ml-1 rounded-sm px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600"
       >
         clear
       </button>
@@ -387,7 +387,7 @@ function SearchPane({ connectionId, onPick }: { connectionId: string; onPick: (i
               <span>{KIND_GLYPH[h.kind]}</span>
               <span className="min-w-0 flex-1 truncate">{h.display_name}</span>
               <span className="truncate text-xs text-gray-400">{h.upn || h.app_id}</span>
-              <span className="rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">{KIND_LABEL[h.kind]}</span>
+              <span className="rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-600">{KIND_LABEL[h.kind]}</span>
             </button>
           ))}
         </div>
@@ -395,7 +395,7 @@ function SearchPane({ connectionId, onPick }: { connectionId: string; onPick: (i
       <button
         onClick={() => onPick(q.trim())}
         disabled={q.trim().length < 4}
-        className="mt-3 rounded border px-2 py-1 text-xs text-gray-600 disabled:opacity-40"
+        className="mt-3 rounded-sm border px-2 py-1 text-xs text-gray-600 disabled:opacity-40"
       >
         Investigate this identifier exactly
       </button>
@@ -477,7 +477,7 @@ function ActivityPanel({
           placeholder="Ticket or reason (recorded)"
           aria-label="Justification"
           data-testid="investigate-justification"
-          className="w-56 rounded border px-2 py-1 text-xs"
+          className="w-56 rounded-sm border px-2 py-1 text-xs"
         />
         <button
           onClick={() => void run(includeAzure)}
@@ -485,7 +485,7 @@ function ActivityPanel({
           aria-busy={busy}
           data-testid="investigate-run-activity"
           // Dimmed less than a normally-disabled control: this one is working, not unavailable.
-          className="inline-flex items-center gap-1.5 rounded bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-70"
+          className="inline-flex items-center gap-1.5 rounded-sm bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-70"
         >
           {busy && (
             <span
@@ -500,7 +500,7 @@ function ActivityPanel({
             onClick={() => abortRef.current?.abort()}
             data-testid="investigate-cancel-activity"
             title="Stops waiting for the result. The request already reached the server, so the read is recorded and may still finish there."
-            className="rounded border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            className="rounded-sm border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
           >
             Cancel
           </button>
@@ -517,33 +517,33 @@ function ActivityPanel({
       </p>
 
       {cancelled && !busy && (
-        <div className="mb-2 rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
+        <div className="mb-2 rounded-sm border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
           Read cancelled. Only the wait was stopped — the request had already reached the server,
           so it is recorded in the audit log either way.
         </div>
       )}
 
       {denied && (
-        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+        <div className="rounded-sm border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
           Your role can see this identity's access and findings but not its behavioral history.
           That split is deliberate — <code>investigate.activity</code> is granted separately.
         </div>
       )}
-      {err && !denied && <div className="rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{err}</div>}
+      {err && !denied && <div className="rounded-sm border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{err}</div>}
 
       {result && (
         // These sections are already inside Activity's card, so their own card chrome is a
         // second border and a second padding box around the same content.
         <div className="space-y-3 [&>section]:border-0 [&>section]:p-0">
           {result.notes?.length > 0 && (
-            <ul className="list-disc space-y-0.5 rounded bg-gray-50 p-2 pl-6 text-[11px] text-gray-600">
+            <ul className="list-disc space-y-0.5 rounded-sm bg-gray-50 p-2 pl-6 text-[11px] text-gray-600">
               {result.notes.map((n, i) => <li key={i}>{n}</li>)}
             </ul>
           )}
           {result.attribution?.counts && (
             <div className="flex flex-wrap gap-2 text-[11px]">
               {Object.entries(ATTRIBUTION_STYLE).map(([k, s]) => (
-                <span key={k} title={s.title} className={`rounded border px-2 py-0.5 ${s.cls}`}>
+                <span key={k} title={s.title} className={`rounded-sm border px-2 py-0.5 ${s.cls}`}>
                   {s.label}: <b className="tabular-nums">{result.attribution.counts?.[k] ?? 0}</b>
                 </span>
               ))}
@@ -720,7 +720,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
       </div>
 
       {q.isLoading && <div className="p-6 text-sm text-gray-400">Loading…</div>}
-      {q.error && <div className="rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{formatError(q.error)}</div>}
+      {q.error && <div className="rounded-sm border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{formatError(q.error)}</div>}
 
       {dossier && principal && (
         <>
@@ -731,16 +731,16 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
           <div
             ref={lensBarRef}
             data-testid="investigate-header"
-            className="sticky top-0 z-10 -mx-4 border-b bg-gray-50/95 px-4 py-1.5 backdrop-blur"
+            className="sticky top-0 z-10 -mx-4 border-b bg-gray-50/95 px-4 py-1.5 backdrop-blur-sm"
           >
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span>{KIND_GLYPH[principal.kind]}</span>
               <h2 className="text-sm font-semibold text-gray-900">{principal.display_name}</h2>
-              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
+              <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
                 {KIND_LABEL[principal.kind]}
               </span>
               {principal.enabled === false && (
-                <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                <span className="rounded-sm border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
                   ⚠ disabled
                 </span>
               )}
@@ -750,14 +750,14 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                   onClick={() => setIdsOpen((v) => !v)}
                   aria-expanded={idsOpen}
                   data-testid="investigate-ids-toggle"
-                  className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-white"
+                  className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-white"
                 >
                   {idsOpen ? "▾" : "▸"} ids
                 </button>
                 <a
                   href={api.entraInvestigateExportUrl(principal.id, connectionId || null)}
                   data-testid="investigate-export"
-                  className="rounded border bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                  className="rounded-sm border bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
                 >
                   ⬇ Export
                 </a>
@@ -779,7 +779,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                     onClick={() => document
                       .querySelector(`[data-testid="investigate-section-${name}"]`)
                       ?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                    className="rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white hover:text-brand"
+                    className="rounded-sm px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white hover:text-brand"
                   >
                     {SECTION_LABEL[name] ?? name}
                   </button>
@@ -835,7 +835,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
 
               Multi-column rather than a 2-col grid: grid rows are as tall as their tallest card,
               so a short card next to a tall one left the rest of that row empty. */}
-          <div className="xl:columns-2 xl:gap-3 [&>*]:mb-3 [&>*]:break-inside-avoid">
+          <div className="xl:columns-2 xl:gap-3 *:mb-3 *:break-inside-avoid">
           {sectionOrder.map((name) => {
             if (name === "activity") {
               return (
@@ -941,25 +941,25 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                     <div className="flex flex-wrap items-center gap-1">
                       {d.dynamic && (
                         <span title={d.membership_rule || "Membership is evaluated from a rule."}
-                              className="rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-800">
+                              className="rounded-sm border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-800">
                           dynamic — membership is a rule's output
                         </span>
                       )}
                       {d.on_prem_synced && (
                         <span title="Members are added and removed in on-premises AD, not in Entra. Changes here will be overwritten by the next sync."
-                              className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800">
+                              className="rounded-sm border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800">
                           synced from on-premises AD
                         </span>
                       )}
                       {d.role_assignable && (
                         <span title="This group can be assigned an Entra directory role, so its membership is a privileged-access control."
-                              className="rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-800">
+                              className="rounded-sm border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-800">
                           role-assignable
                         </span>
                       )}
                     </div>
                     {d.membership_rule && (
-                      <pre className="overflow-auto rounded bg-gray-50 p-2 text-[10px] text-gray-700">{d.membership_rule}</pre>
+                      <pre className="overflow-auto rounded-sm bg-gray-50 p-2 text-[10px] text-gray-700">{d.membership_rule}</pre>
                     )}
                     {d.count > 0 && (
                       <Table
@@ -998,7 +998,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                          }>
                   <div className="space-y-2">
                     {d.role_assignable_count > 0 && (
-                      <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
+                      <div className="rounded-sm border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
                         {d.role_assignable_count} of these can be assigned an Entra directory
                         role. Membership of one is a privilege-escalation path in its own right.
                       </div>
@@ -1009,7 +1009,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                         g.display_name || g.id,
                         <span className="flex flex-wrap gap-1">
                           {g.sources.map((src) => (
-                            <span key={src} className="rounded border bg-gray-50 px-1 py-0.5 text-[10px] text-gray-700">
+                            <span key={src} className="rounded-sm border bg-gray-50 px-1 py-0.5 text-[10px] text-gray-700">
                               {d.source_labels[src] ?? src}
                             </span>
                           ))}
@@ -1017,19 +1017,19 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                         <span className="flex flex-wrap gap-1">
                           {g.role_assignable && (
                             <span title="This group can be assigned an Entra directory role."
-                                  className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 text-[10px] text-rose-800">
+                                  className="rounded-sm border border-rose-200 bg-rose-50 px-1 py-0.5 text-[10px] text-rose-800">
                               role-assignable
                             </span>
                           )}
                           {g.dynamic && (
                             <span title={g.membership_rule || "Membership is evaluated from a rule — removing this principal does not stick."}
-                                  className="rounded border border-sky-200 bg-sky-50 px-1 py-0.5 text-[10px] text-sky-800">
+                                  className="rounded-sm border border-sky-200 bg-sky-50 px-1 py-0.5 text-[10px] text-sky-800">
                               dynamic
                             </span>
                           )}
                           {g.on_prem_synced && (
                             <span title="Membership is authored in on-premises AD. A change made in Entra is overwritten by the next sync."
-                                  className="rounded border border-amber-200 bg-amber-50 px-1 py-0.5 text-[10px] text-amber-800">
+                                  className="rounded-sm border border-amber-200 bg-amber-50 px-1 py-0.5 text-[10px] text-amber-800">
                               on-prem
                             </span>
                           )}

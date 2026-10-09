@@ -356,7 +356,7 @@ export function DigestView({ run }: { run: InsightRun }) {
                     {r.workload && <div className="text-xs text-gray-400">{r.workload}</div>}
                   </td>
                   <td className="px-3 py-2">
-                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${RISK_STYLE[r.risk] ?? RISK_STYLE.low}`}>
+                    <span className={`rounded-sm px-1.5 py-0.5 text-xs font-medium ${RISK_STYLE[r.risk] ?? RISK_STYLE.low}`}>
                       {r.risk || "—"}
                     </span>
                   </td>
@@ -766,7 +766,7 @@ function GeneratorWizard({ onDraft, onClose, library }: {
               rows={4}
               maxLength={600}
               placeholder="e.g. Watch for anything that exposes a workload to the public internet, or grants someone privileged access."
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand"
             />
             <div className="mt-1 flex items-center justify-between text-xs text-gray-400">
               <span>{vague ? "A bit more detail will produce a sharper pack." : "The clearer the intent, the better the design."}</span>
@@ -856,7 +856,7 @@ function GeneratorWizard({ onDraft, onClose, library }: {
                     <input
                       value={(current[q.id] as string) ?? ""}
                       onChange={(e) => setCurrent((c) => ({ ...c, [q.id]: e.target.value }))}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand"
                     />
                   ) : (
                     <div role={q.kind === "multi" ? "group" : "radiogroup"} className="space-y-1.5">
@@ -872,7 +872,7 @@ function GeneratorWizard({ onDraft, onClose, library }: {
                             onClick={() => q.kind === "multi" ? toggleMulti(q.id, opt.value) : setCurrent((c) => ({ ...c, [q.id]: opt.value }))}
                             className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition ${selected ? "border-brand bg-brand/5" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"}`}
                           >
-                            <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${q.kind === "multi" ? "rounded" : "rounded-full"} ${selected ? "border-brand bg-brand text-white" : "border-gray-300"}`}>
+                            <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${q.kind === "multi" ? "rounded-sm" : "rounded-full"} ${selected ? "border-brand bg-brand text-white" : "border-gray-300"}`}>
                               {selected && <span className="text-[10px] leading-none">✓</span>}
                             </span>
                             <span className="min-w-0">
@@ -894,7 +894,7 @@ function GeneratorWizard({ onDraft, onClose, library }: {
                         onChange={(e) => setCustom((c) => ({ ...c, [q.id]: e.target.value }))}
                         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomChip(q.id); } }}
                         placeholder="Add your own…"
-                        className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
+                        className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-hidden"
                       />
                       <button onClick={() => addCustomChip(q.id)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Add</button>
                     </div>
@@ -904,7 +904,7 @@ function GeneratorWizard({ onDraft, onClose, library }: {
                       value={custom[q.id] ?? ""}
                       onChange={(e) => { setCustom((c) => ({ ...c, [q.id]: e.target.value })); setCurrent((c) => ({ ...c, [q.id]: "" })); }}
                       placeholder="Or type your own…"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-hidden"
                     />
                   )}
                 </fieldset>
@@ -974,7 +974,7 @@ function GeneratorWizard({ onDraft, onClose, library }: {
             <div className="text-sm font-medium text-gray-800">Preview a sample run</div>
             <div className="text-xs text-gray-500">Test the pack against a real workload (read-only, no notification).</div>
             <div className="mt-2 flex flex-wrap items-end gap-2">
-              <select value={runWorkloadId} onChange={(e) => setRunWorkloadId(e.target.value)} className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+              <select value={runWorkloadId} onChange={(e) => setRunWorkloadId(e.target.value)} className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden">
                 <option value="">Select a workload…</option>
                 {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}{w.demo ? " (demo)" : ""}</option>)}
               </select>
@@ -1301,7 +1301,7 @@ function PackForm({ initial, library, onClose, onSaved }: {
     }
   }
 
-  const inputCls = "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none";
+  const inputCls = "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden";
   const errRing = (field: string) => (showErrors && errors.some((e) => e.field === field) ? "border-red-400" : "border-gray-300");
 
   return (
@@ -1337,11 +1337,11 @@ function PackForm({ initial, library, onClose, onSaved }: {
           <div className="flex gap-3">
             <div className="w-16">
               <label className="block text-xs font-medium text-gray-500">Icon</label>
-              <input value={pack.icon} onChange={(e) => setField("icon", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-2 text-center text-lg focus:border-brand focus:outline-none" />
+              <input value={pack.icon} onChange={(e) => setField("icon", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-2 text-center text-lg focus:border-brand focus:outline-hidden" />
             </div>
             <div className="flex-1">
               <label className="block text-xs font-medium text-gray-500">Name</label>
-              <input value={pack.name} onChange={(e) => setField("name", e.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:border-brand focus:outline-none ${errRing("name")}`} />
+              <input value={pack.name} onChange={(e) => setField("name", e.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:border-brand focus:outline-hidden ${errRing("name")}`} />
             </div>
             <div className="w-36">
               <label className="block text-xs font-medium text-gray-500">Category</label>
@@ -1449,7 +1449,7 @@ function PackForm({ initial, library, onClose, onSaved }: {
               </div>
             </div>
             <textarea ref={insRef} value={pack.instructions} onChange={(e) => setField("instructions", e.target.value)} rows={9}
-              className={`mt-1 w-full rounded-lg border px-3 py-2 font-mono text-xs focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand ${errRing("instructions")}`} />
+              className={`mt-1 w-full rounded-lg border px-3 py-2 font-mono text-xs focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand ${errRing("instructions")}`} />
             <div className="mt-1 flex justify-between text-[11px] text-gray-400">
               <span>{pack.instructions.length} chars</span>
               <span>Use {"{{scope_label}}"} & {"{{lookback_hours}}"}</span>
@@ -1520,7 +1520,7 @@ function PackForm({ initial, library, onClose, onSaved }: {
                   <div className="text-[11px] font-medium text-gray-500">Real test run</div>
                   <div className="mt-1 text-[11px] text-gray-400">Runs against a real workload, read-only, no notification.</div>
                   <div className="mt-2 flex gap-2">
-                    <select value={runWorkloadId} onChange={(e) => setRunWorkloadId(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs focus:border-brand focus:outline-none">
+                    <select value={runWorkloadId} onChange={(e) => setRunWorkloadId(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs focus:border-brand focus:outline-hidden">
                       <option value="">Select a workload…</option>
                       {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}{w.demo ? " (demo)" : ""}</option>)}
                     </select>
@@ -1554,7 +1554,7 @@ function PackForm({ initial, library, onClose, onSaved }: {
                 {findings?.map((f, idx) => (
                   <div key={idx} className="rounded-lg border border-gray-200 bg-white p-2.5 text-[11px]">
                     <div className="flex items-center gap-1.5">
-                      <span className={`rounded px-1.5 py-0.5 font-medium ${f.severity === "high" ? "bg-red-100 text-red-700" : f.severity === "medium" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}`}>{f.severity}</span>
+                      <span className={`rounded-sm px-1.5 py-0.5 font-medium ${f.severity === "high" ? "bg-red-100 text-red-700" : f.severity === "medium" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}`}>{f.severity}</span>
                       {f.field && <span className="text-gray-400">{EDIT_FIELD_LABELS[f.field] ?? f.field}</span>}
                     </div>
                     <p className="mt-1 text-gray-600">{f.message}</p>
@@ -1568,7 +1568,7 @@ function PackForm({ initial, library, onClose, onSaved }: {
           <div className="shrink-0 border-t border-gray-200 p-2.5">
             <div className="flex gap-2">
               <input value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitCommand(); }}
-                placeholder="Tell AI to change this pack…" className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-brand focus:outline-none" />
+                placeholder="Tell AI to change this pack…" className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-brand focus:outline-hidden" />
               <button onClick={submitCommand} disabled={!command.trim() || !!aiBusy} className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-brand/90 disabled:opacity-50">
                 {aiBusy === "command" ? "…" : "Send"}
               </button>
@@ -1728,7 +1728,7 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
 
         <div>
           <label className="block text-xs font-medium text-gray-500">Anchor workload</label>
-          <select value={workloadId} onChange={(e) => setWorkloadId(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+          <select value={workloadId} onChange={(e) => setWorkloadId(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden">
             <option value="">Select a workload…</option>
             {workloadId && !selectedWl && <option value={workloadId}>{initialWorkloadName ?? "Selected workload"}</option>}
             {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}{w.demo ? " (demo)" : ""}</option>)}
@@ -1778,7 +1778,7 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
                   else if (v === "builder") { setScheduleKind("cron"); setCronMode("builder"); }
                   else { setScheduleKind("cron"); setCronMode("raw"); }
                 }}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden">
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="builder">Advanced (recurrence builder)</option>
@@ -1788,7 +1788,7 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
             {scheduleKind === "weekly" && (
               <div>
                 <label className="block text-xs text-gray-500">Day</label>
-                <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+                <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden">
                   {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
                 </select>
               </div>
@@ -1796,12 +1796,12 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
             {scheduleKind !== "cron" && (
               <div>
                 <label className="block text-xs text-gray-500">Time</label>
-                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden" />
               </div>
             )}
             <div>
               <label className="block text-xs text-gray-500">Timezone</label>
-              <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+              <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-hidden">
                 {SCHEDULE_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
               </select>
             </div>
@@ -1815,10 +1815,10 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
           {scheduleKind === "cron" && cronMode === "raw" && (
             <div className="mt-3">
               <label className="block text-xs text-gray-500">Cron expression</label>
-              <input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 8 * * *" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-brand focus:outline-none" />
+              <input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 8 * * *" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-brand focus:outline-hidden" />
               <div className="mt-1 flex flex-wrap gap-1">
                 {[["Hourly","0 * * * *"],["Daily 08:00","0 8 * * *"],["Weekdays 09:00","0 9 * * 1-5"],["Weekly Mon","0 9 * * 1"],["Monthly 1st","0 9 1 * *"]].map(([lbl, expr]) => (
-                  <button key={expr} type="button" onClick={() => setCronExpr(expr)} className="rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700">{lbl}</button>
+                  <button key={expr} type="button" onClick={() => setCronExpr(expr)} className="rounded-sm border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700">{lbl}</button>
                 ))}
               </div>
             </div>
@@ -1898,7 +1898,7 @@ function CollectionManager({ collections, counts, onCreate, onRename, onDelete, 
       <form onSubmit={(e) => { e.preventDefault(); const n = newName.trim(); if (n) { onCreate(n); setNewName(""); } }}
         className="mt-2 flex items-center gap-1.5">
         <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New collection name…"
-          className="w-56 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs focus:border-brand focus:outline-none" />
+          className="w-56 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs focus:border-brand focus:outline-hidden" />
         <button type="submit" disabled={!newName.trim() || busy} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90 disabled:opacity-40">Create</button>
       </form>
     </div>
@@ -1935,7 +1935,7 @@ function CollectionPicker({ pack, collections, onChange, onCreate, busy }: {
               {collections.length === 0 && <div className="px-1 py-1 text-xs text-gray-400">No collections yet.</div>}
               {collections.map((c) => (
                 <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-xs hover:bg-gray-50">
-                  <input type="checkbox" checked={ids.has(c.id)} onChange={() => toggle(c.id)} disabled={busy} className="h-3.5 w-3.5 rounded border-gray-300" />
+                  <input type="checkbox" checked={ids.has(c.id)} onChange={() => toggle(c.id)} disabled={busy} className="h-3.5 w-3.5 rounded-sm border-gray-300" />
                   <span>{c.icon || "📁"}</span><span className="truncate">{c.name}</span>
                 </label>
               ))}
@@ -1943,7 +1943,7 @@ function CollectionPicker({ pack, collections, onChange, onCreate, busy }: {
             <form onSubmit={(e) => { e.preventDefault(); const n = newName.trim(); if (n) { onCreate(n); setNewName(""); } }}
               className="mt-1 flex items-center gap-1 border-t border-gray-100 pt-1.5">
               <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New collection…"
-                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-brand focus:outline-none" />
+                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1 text-xs focus:border-brand focus:outline-hidden" />
               <button type="submit" disabled={!newName.trim() || busy} className="rounded-lg bg-brand px-2 py-1 text-xs font-medium text-white disabled:opacity-40">Add</button>
             </form>
           </div>
@@ -1986,21 +1986,21 @@ function PackCard({ pack, onRun, onEdit, onClone, onDelete, onToggle, latest, he
     <CollectionPicker pack={pack} collections={collections} onChange={onSetCollections}
       onCreate={(name) => onCreateCollection?.(name)} busy={collectionBusy} />
   ) : null;
-  const snoozeBadge = snooze.active ? <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600" title={`Muted until ${new Date(snooze.until!).toLocaleString()}`}>😴 Snoozed</span> : null;
-  const noisyBadge = noisy ? <span className="inline-flex items-center gap-1 rounded bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-600" title="Notifies often — consider raising the threshold">🔊 Noisy</span> : null;
+  const snoozeBadge = snooze.active ? <span className="inline-flex items-center gap-1 rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600" title={`Muted until ${new Date(snooze.until!).toLocaleString()}`}>😴 Snoozed</span> : null;
+  const noisyBadge = noisy ? <span className="inline-flex items-center gap-1 rounded-sm bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-600" title="Notifies often — consider raising the threshold">🔊 Noisy</span> : null;
 
   if (view === "list") {
     return (
-      <div className={`flex items-center gap-3 rounded-xl border bg-white px-3 py-2 transition hover:shadow-sm ${selected ? "border-brand ring-1 ring-brand/30" : "border-gray-200"} ${!pack.enabled ? "opacity-75" : ""}`}>
+      <div className={`flex items-center gap-3 rounded-xl border bg-white px-3 py-2 transition hover:shadow-xs ${selected ? "border-brand ring-1 ring-brand/30" : "border-gray-200"} ${!pack.enabled ? "opacity-75" : ""}`}>
         {selectable
-          ? <input type="checkbox" checked={!!selected} onChange={(e) => onSelectChange?.(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+          ? <input type="checkbox" checked={!!selected} onChange={(e) => onSelectChange?.(e.target.checked)} className="h-4 w-4 rounded-sm border-gray-300" />
           : pinStar}
         <span className="text-lg leading-none">{pack.icon || "🧠"}</span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-gray-900">{pack.name}</span>
-            {pack.builtin && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-500">Built-in</span>}
-            {!pack.enabled && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-400">Off</span>}
+            {pack.builtin && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-500">Built-in</span>}
+            {!pack.enabled && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-400">Off</span>}
             {snoozeBadge}{noisyBadge}
           </div>
           <div className="truncate text-[11px] text-gray-400">{pack.category} · {pack.sources.join(", ")} · last {pack.lookback_hours}h</div>
@@ -2023,18 +2023,18 @@ function PackCard({ pack, onRun, onEdit, onClone, onDelete, onToggle, latest, he
   }
 
   return (
-    <div className={`flex flex-col rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${selected ? "border-brand ring-1 ring-brand/30" : "border-gray-200"} ${!pack.enabled ? "opacity-75" : ""}`}>
+    <div className={`flex flex-col rounded-2xl border bg-white p-4 shadow-xs transition hover:shadow-md ${selected ? "border-brand ring-1 ring-brand/30" : "border-gray-200"} ${!pack.enabled ? "opacity-75" : ""}`}>
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-3">
           <div className="text-2xl leading-none">{pack.icon || "🧠"}</div>
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-gray-900">{pack.name}</span>
-              {pack.builtin && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-500">Built-in</span>}
-              {!pack.enabled && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-400">Off</span>}
+              {pack.builtin && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-500">Built-in</span>}
+              {!pack.enabled && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-400">Off</span>}
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-              <span className="inline-block rounded bg-brand/5 px-1.5 py-0.5 text-[11px] font-medium text-brand">{pack.category}</span>
+              <span className="inline-block rounded-sm bg-brand/5 px-1.5 py-0.5 text-[11px] font-medium text-brand">{pack.category}</span>
               {snoozeBadge}
               {noisyBadge}
             </div>
@@ -2043,7 +2043,7 @@ function PackCard({ pack, onRun, onEdit, onClone, onDelete, onToggle, latest, he
         <div className="flex items-center gap-2">
           {pinStar}
           {selectable ? (
-            <input type="checkbox" checked={!!selected} onChange={(e) => onSelectChange?.(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+            <input type="checkbox" checked={!!selected} onChange={(e) => onSelectChange?.(e.target.checked)} className="h-4 w-4 rounded-sm border-gray-300" />
           ) : (
             <button onClick={onToggle} title={pack.enabled ? "Enabled" : "Disabled"}
               className={`relative h-5 w-9 rounded-full transition ${pack.enabled ? "bg-brand" : "bg-gray-300"}`}>
@@ -2056,10 +2056,10 @@ function PackCard({ pack, onRun, onEdit, onClone, onDelete, onToggle, latest, he
       <p className="mt-2 line-clamp-2 text-xs text-gray-500">{pack.description}</p>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
-        {pack.sources.map((s) => <span key={s} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{s}</span>)}
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">last {pack.lookback_hours}h</span>
+        {pack.sources.map((s) => <span key={s} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{s}</span>)}
+        <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">last {pack.lookback_hours}h</span>
         {pack.materiality.always_notify_if.length > 0 && (
-          <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] text-red-600">{pack.materiality.always_notify_if.length} always-notify</span>
+          <span className="rounded-sm bg-red-50 px-1.5 py-0.5 text-[10px] text-red-600">{pack.materiality.always_notify_if.length} always-notify</span>
         )}
       </div>
 
@@ -2119,7 +2119,7 @@ function SnoozeMenu({ onPick, disabled }: { onPick: (days: number) => void; disa
   return (
     <select disabled={disabled} value=""
       onChange={(e) => { const d = Number(e.target.value); e.currentTarget.value = ""; if (d) onPick(d); }}
-      className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 focus:border-brand focus:outline-none disabled:opacity-50">
+      className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 focus:border-brand focus:outline-hidden disabled:opacity-50">
       <option value="">Snooze…</option>
       <option value="1">Mute 1 day</option>
       <option value="3">Mute 3 days</option>
@@ -2736,7 +2736,7 @@ export function InsightPacksPanel() {
                 </div>
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   {todayItems.map((r) => (
-                    <div key={r.id} className={`flex flex-col rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${r.verdict === "urgent" ? "border-red-200" : r.verdict === "notable" ? "border-amber-200" : "border-gray-200"}`}>
+                    <div key={r.id} className={`flex flex-col rounded-2xl border bg-white p-4 shadow-xs transition hover:shadow-md ${r.verdict === "urgent" ? "border-red-200" : r.verdict === "notable" ? "border-amber-200" : "border-gray-200"}`}>
                       <div className="flex items-start gap-3">
                         <div className="text-2xl leading-none">{r.pack_icon || "🧠"}</div>
                         <div className="min-w-0 flex-1">
@@ -2769,7 +2769,7 @@ export function InsightPacksPanel() {
         {tab === "library" && (
           <>
             {preAnchor && (
-              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/[0.04] px-3 py-2 text-sm">
+              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/4 px-3 py-2 text-sm">
                 <span className="text-gray-700">
                   Adding a watcher for <b>{preAnchor.name ?? "the selected workload"}</b> — pick a pack and schedule it; the run/schedule dialog is pre-scoped to this workload.
                 </span>
@@ -2784,16 +2784,16 @@ export function InsightPacksPanel() {
               <>
                 <div className="mb-4 flex flex-wrap items-center gap-2">
                   <input value={librarySearch} onChange={(e) => setLibrarySearch(e.target.value)} placeholder="Search packs…"
-                    className="min-w-[12rem] flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none" />
-                  <select value={libCategory} onChange={(e) => setLibCategory(e.target.value)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 focus:border-brand focus:outline-none">
+                    className="min-w-48 flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-hidden" />
+                  <select value={libCategory} onChange={(e) => setLibCategory(e.target.value)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 focus:border-brand focus:outline-hidden">
                     <option value="">All categories</option>
                     {catOptions.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
                   </select>
-                  <select value={libSource} onChange={(e) => setLibSource(e.target.value)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 focus:border-brand focus:outline-none">
+                  <select value={libSource} onChange={(e) => setLibSource(e.target.value)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 focus:border-brand focus:outline-hidden">
                     <option value="">All sources</option>
                     {sourceOptions.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                   </select>
-                  <select value={libSort} onChange={(e) => setLibSort(e.target.value as typeof libSort)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 focus:border-brand focus:outline-none">
+                  <select value={libSort} onChange={(e) => setLibSort(e.target.value as typeof libSort)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 focus:border-brand focus:outline-hidden">
                     <option value="active">Recently active</option>
                     <option value="noisy">Noisiest</option>
                     <option value="runs">Most runs</option>
@@ -2806,7 +2806,7 @@ export function InsightPacksPanel() {
                   </div>
                   <div className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600">
                     <span className="text-gray-400">Group</span>
-                    <select value={libGroupBy} onChange={(e) => setLibGroupBy(e.target.value as typeof libGroupBy)} className="bg-transparent text-xs text-gray-700 focus:outline-none">
+                    <select value={libGroupBy} onChange={(e) => setLibGroupBy(e.target.value as typeof libGroupBy)} className="bg-transparent text-xs text-gray-700 focus:outline-hidden">
                       <option value="category">Category</option>
                       <option value="source">Source</option>
                       <option value="status">Status</option>
@@ -2840,7 +2840,7 @@ export function InsightPacksPanel() {
                 )}
 
                 {bulkMode && selectedPacks.size > 0 && (
-                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/[0.04] px-3 py-2 text-sm">
+                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/4 px-3 py-2 text-sm">
                     <span className="font-medium text-gray-700">{selectedPacks.size} selected</span>
                     <button onClick={() => bulkEnable.mutate({ ids: [...selectedPacks], enabled: true })} disabled={bulkEnable.isPending} className="rounded-lg bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand/90 disabled:opacity-50">Enable</button>
                     <button onClick={() => bulkEnable.mutate({ ids: [...selectedPacks], enabled: false })} disabled={bulkEnable.isPending} className="rounded-lg border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">Disable</button>
@@ -2879,9 +2879,9 @@ export function InsightPacksPanel() {
                               {editable && (
                                 <div className="flex items-center gap-1">
                                   <button onClick={() => { const n = prompt("Rename collection", g.label); if (n && n.trim()) renameCollection.mutate({ id: g.key, name: n.trim() }); }}
-                                    className="rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600">Rename</button>
+                                    className="rounded-sm px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600">Rename</button>
                                   <button onClick={() => { if (confirm(`Delete collection "${g.label}"? Packs stay, just un-filed.`)) deleteCollection.mutate(g.key); }}
-                                    className="rounded px-1.5 py-0.5 text-[11px] text-red-500 hover:bg-red-50">Delete</button>
+                                    className="rounded-sm px-1.5 py-0.5 text-[11px] text-red-500 hover:bg-red-50">Delete</button>
                                 </div>
                               )}
                             </div>
@@ -2932,14 +2932,14 @@ export function InsightPacksPanel() {
                   </button>
                 );
               })}
-              <select value={runPackFilter} onChange={(e) => setRunPackFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-700 focus:border-brand focus:outline-none">
+              <select value={runPackFilter} onChange={(e) => setRunPackFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-700 focus:border-brand focus:outline-hidden">
                 <option value="">All packs</option>
                 {packs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <label className="inline-flex items-center gap-1.5 text-xs text-gray-600">
                 <input type="checkbox" checked={notifiedOnly} onChange={(e) => setNotifiedOnly(e.target.checked)} /> Notified only
               </label>
-              <input value={runSearch} onChange={(e) => setRunSearch(e.target.value)} placeholder="Search headline, pack, scope…" className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-xs focus:border-brand focus:outline-none" />
+              <input value={runSearch} onChange={(e) => setRunSearch(e.target.value)} placeholder="Search headline, pack, scope…" className="min-w-40 flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-xs focus:border-brand focus:outline-hidden" />
               {unreadCount > 0 && (
                 <button onClick={() => markAllRead.mutate()} disabled={markAllRead.isPending} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                   Mark all read
@@ -2955,7 +2955,7 @@ export function InsightPacksPanel() {
               <div className="space-y-4">
                 {runSections.map((section) => (
                   <div key={section.day} className="space-y-1.5">
-                    <div className="sticky top-0 z-10 bg-gray-50/90 py-1 text-xs font-semibold uppercase tracking-wide text-gray-400 backdrop-blur">{section.day}</div>
+                    <div className="sticky top-0 z-10 bg-gray-50/90 py-1 text-xs font-semibold uppercase tracking-wide text-gray-400 backdrop-blur-sm">{section.day}</div>
                     {section.groups.map((g) => {
                       const head = g.runs[0];
                       const extra = g.runs.length - 1;
@@ -2963,7 +2963,7 @@ export function InsightPacksPanel() {
                       return (
                         <div key={head.id}>
                           <button onClick={() => openRun(head)}
-                            className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition hover:shadow-sm ${isUnread(head) ? "border-brand/40 bg-brand/[0.03]" : "border-gray-200 bg-white"}`}>
+                            className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition hover:shadow-xs ${isUnread(head) ? "border-brand/40 bg-brand/3" : "border-gray-200 bg-white"}`}>
                             <span className={`h-2 w-2 shrink-0 rounded-full ${isUnread(head) ? "bg-brand" : "bg-transparent"}`} />
                             <span className="text-xl">{head.pack_icon}</span>
                             <div className="min-w-0 flex-1">

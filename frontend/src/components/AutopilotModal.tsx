@@ -22,7 +22,7 @@ import { formatError } from "../utils/format";
 import { AzureIcon } from "./AzureIcon";
 
 const input =
-  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 
 function confidenceTag(c: number): { label: string; cls: string } {
@@ -154,7 +154,7 @@ function FacetBars({ title, items, max = 6, onToggle, selected }: {
               key={it.label}
               onClick={onToggle ? () => onToggle(it.label) : undefined}
               disabled={!onToggle}
-              className={`group flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] ${onToggle ? "cursor-pointer hover:bg-gray-50" : "cursor-default"} ${isSel ? "ring-1 ring-brand/40" : ""}`}
+              className={`group flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left text-[11px] ${onToggle ? "cursor-pointer hover:bg-gray-50" : "cursor-default"} ${isSel ? "ring-1 ring-brand/40" : ""}`}
             >
               <span className="w-32 shrink-0 truncate text-gray-600" title={it.label}>{it.label}</span>
               <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
@@ -289,7 +289,7 @@ function TraceRow({
         <button
           onClick={onExpand}
           title="Re-trace using this resource as the seed"
-          className="mt-0.5 rounded px-1 text-xs text-gray-300 hover:bg-white hover:text-brand"
+          className="mt-0.5 rounded-sm px-1 text-xs text-gray-300 hover:bg-white hover:text-brand"
         >
           ⤵
         </button>
@@ -371,7 +371,7 @@ function TraceRings({ nodes, maxHops }: { nodes: TraceNode[]; maxHops: number })
                 <span
                   key={n.id}
                   title={`${n.name} · ${n.resource_type} · strength ${Math.round(n.score * 100)}%`}
-                  className={`inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full border px-2 py-0.5 text-[10px] ${
+                  className={`inline-flex max-w-56 items-center gap-1 truncate rounded-full border px-2 py-0.5 text-[10px] ${
                     n.is_seed
                       ? "border-brand bg-brand/10 font-medium text-brand"
                       : n.shared
@@ -1099,7 +1099,7 @@ export function AutopilotModal({
                 : "Point it at a subscription or management group and it discovers the workloads inside."}
             </p>
           </div>
-          <button onClick={cancel} className="rounded p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={cancel} className="rounded-sm p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -1405,7 +1405,7 @@ export function AutopilotModal({
                     <label className="flex items-start gap-2 rounded-lg border bg-gray-50 px-3 py-2 text-xs text-gray-700">
                       <input type="checkbox" checked={useNaming} onChange={(e) => setUseNaming(e.target.checked)} className="mt-0.5" />
                       <span>
-                        Use the detected naming convention <code className="rounded bg-white px-1 text-[11px]">{survey.facets.naming.pattern}</code>{" "}
+                        Use the detected naming convention <code className="rounded-sm bg-white px-1 text-[11px]">{survey.facets.naming.pattern}</code>{" "}
                         <span className="text-gray-400">({Math.round(survey.facets.naming.confidence * 100)}% of names · e.g. {survey.facets.naming.examples.slice(0, 2).join(", ")})</span> as a grouping signal.
                       </span>
                     </label>
@@ -1685,10 +1685,10 @@ export function AutopilotModal({
                           Excludes workloads with fewer than <b>{minCandidateResources}</b> resources.
                         </span>
                         <div className="ml-auto flex flex-wrap gap-2 text-[11px]">
-                          <span className="rounded bg-white px-2 py-1 text-amber-800">
+                          <span className="rounded-sm bg-white px-2 py-1 text-amber-800">
                             {autoExcludedIndexes.size} workload(s) excluded · {reviewCoverage.excludedResources} resource(s)
                           </span>
-                          <span className="rounded bg-white px-2 py-1 text-emerald-700">
+                          <span className="rounded-sm bg-white px-2 py-1 text-emerald-700">
                             {candidates.length - autoExcludedIndexes.size} eligible
                           </span>
                         </div>
@@ -1810,7 +1810,7 @@ export function AutopilotModal({
                               value={curName}
                               onChange={(ev) => setEdits((m) => ({ ...m, [i]: { ...m[i], name: ev.target.value } }))}
                               title="Rename this workload (the system learns from your correction)"
-                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-gray-800 hover:border-gray-200 focus:border-brand focus:outline-none"
+                              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-gray-800 hover:border-gray-200 focus:border-brand focus:outline-hidden"
                             />
                             <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${ct.cls}`}>{ct.label}</span>
                             <span className="text-[11px] text-gray-400">{c.resource_count} resources</span>
@@ -1825,7 +1825,7 @@ export function AutopilotModal({
                                   setSizeOverrides((current) => new Set(current).add(i));
                                   setSelected((current) => new Set(current).add(i));
                                 }}
-                                className="rounded border border-sky-300 bg-white px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-50"
+                                className="rounded-sm border border-sky-300 bg-white px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-50"
                               >
                                 Include anyway
                               </button>
@@ -1849,7 +1849,7 @@ export function AutopilotModal({
                             <select
                               value={curCrit}
                               onChange={(ev) => setEdits((m) => ({ ...m, [i]: { ...m[i], criticality: ev.target.value } }))}
-                              className="rounded border px-1 py-0.5 text-[10px] text-gray-600"
+                              className="rounded-sm border px-1 py-0.5 text-[10px] text-gray-600"
                             >
                               {CRIT_OPTIONS.map((o) => (
                                 <option key={o} value={o}>{o || "—"}</option>

@@ -63,7 +63,7 @@ export function ManagementGroupPicker({
       </div>
       {(groupsQ.isError || (!groupsQ.isLoading && groups.length === 0)) && (
         <button type="button" onClick={() => void groupsQ.refetch()}
-          className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
+          className="rounded-sm border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
           Retry
         </button>
       )}

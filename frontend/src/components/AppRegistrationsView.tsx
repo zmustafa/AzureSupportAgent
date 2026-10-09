@@ -137,7 +137,7 @@ function EnterpriseStateBadge({ state }: { state?: EnterpriseAppState }) {
     <span
       data-testid={`appregs-state-${state ?? "unknown"}`}
       title={meta.title}
-      className={`inline-flex max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.cls}`}
+      className={`inline-flex max-w-full truncate rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${meta.cls}`}
     >
       {meta.label}
     </span>
@@ -161,7 +161,7 @@ function ExpiryBadge({ days }: { days: number | null }) {
     ? "bg-amber-100 text-amber-700"
     : "bg-sky-100 text-sky-700";
   return (
-    <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>
+    <span className={`whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>
       {expired ? `expired ${Math.abs(days)}d` : `${days}d`}
     </span>
   );
@@ -196,7 +196,7 @@ function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: num
       <span
         data-testid="appregs-signin-unmeasured"
         title="Sign-in activity could not be read for this tenant. This is NOT a statement that the application is unused."
-        className="whitespace-nowrap rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500"
+        className="whitespace-nowrap rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500"
       >
         not measured
       </span>
@@ -209,7 +209,7 @@ function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: num
         <span
           data-testid="appregs-signin-failed"
           title={`Last attempt ${new Date(a.lastAttempt).toLocaleString()} — it did not succeed.\nMicrosoft's report counts a rejected credential as sign-in activity, so a date here is an attempt, not use.\nNo successful sign-in in the last ${windowDays} days.`}
-          className="whitespace-nowrap rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700"
+          className="whitespace-nowrap rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700"
         >
           failed {daysAgoText(a.lastAttemptDays)}
         </span>
@@ -219,7 +219,7 @@ function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: num
       <span
         data-testid="appregs-signin-none"
         title={`Nothing signed into this application in the last ${windowDays} days. Microsoft's report does not go back further, so this is not proof it was never used.`}
-        className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+        className="whitespace-nowrap rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
       >
         none in {windowDays}d
       </span>
@@ -278,7 +278,7 @@ function LastFailedCell({ a, measured, reason }: {
     <span
       data-testid="appregs-lastfailed"
       title={`${new Date(a.lastFailedSignIn).toLocaleString()}\nThis attempt was stamped after the last successful sign-in, so it did not succeed.`}
-      className="whitespace-nowrap rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600"
+      className="whitespace-nowrap rounded-sm bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600"
     >
       {daysAgoText(a.lastFailedSignInDays)}
     </span>
@@ -322,7 +322,7 @@ function Kpi({ label, value, tone, active, onClick }: { label: string; value: nu
   const base = `rounded-lg border bg-white px-3 py-2 text-left transition ${active ? "ring-2 ring-brand border-brand" : ""}`;
   const inner = (<><div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div><div className="truncate text-[11px] text-gray-500">{label}</div></>);
   if (!onClick) return <div className={base}>{inner}</div>;
-  return <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-sm`} title={active ? "Click to clear filter" : `Filter to ${label}`}>{inner}</button>;
+  return <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-xs`} title={active ? "Click to clear filter" : `Filter to ${label}`}>{inner}</button>;
 }
 
 export function AppRegistrationsView({ connectionId = null }: { connectionId?: string | null }) {
@@ -601,7 +601,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               ) : data ? (
                 <>
                   Last refreshed {agoText(data.age_seconds)}
-                  <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">server cache</span>
+                  <span className="ml-1 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">server cache</span>
                 </>
               ) : (
                 "—"
@@ -713,7 +713,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
         {data && !data.never_loaded && typeof data.age_seconds === "number" && data.age_seconds > 24 * 3600 && (
           <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
             App-registration snapshot is {agoText(data.age_seconds)} — credentials &amp; owners may have changed.
-            <button onClick={() => void doRefresh()} disabled={refreshing} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
+            <button onClick={() => void doRefresh()} disabled={refreshing} className="rounded-sm border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
           </div>
         )}
       </div>
@@ -730,7 +730,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
           </div>
           <div ref={logRef} className="max-h-56 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
             {refreshing && liveProgress && (
-              <div data-testid="appregs-page-progress" className="mb-2 rounded border border-gray-700 bg-gray-800 px-2 py-1.5 font-sans text-[11px] text-gray-300">
+              <div data-testid="appregs-page-progress" className="mb-2 rounded-sm border border-gray-700 bg-gray-800 px-2 py-1.5 font-sans text-[11px] text-gray-300">
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                   <span>
                     {liveProgress.current ?? 0}{liveProgress.total != null ? ` of ${liveProgress.total}` : ""} fetched
@@ -833,7 +833,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               value={permSearch}
               onChange={(e) => setPermSearch(e.target.value)}
               placeholder="Filter permissions…"
-              className="mb-1 w-full rounded border px-2 py-1 text-xs outline-none focus:border-gray-400"
+              className="mb-1 w-full rounded-sm border px-2 py-1 text-xs outline-hidden focus:border-gray-400"
             />
             <div className="max-h-52 space-y-0.5 overflow-auto">
               {permFacet.map((f) => (
@@ -863,13 +863,13 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="Search name, app ID, publisher, tag, owner…"
-              className="w-72 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400"
+              className="w-72 rounded-lg border px-2.5 py-1.5 outline-hidden focus:border-gray-400"
             />
             <span className="text-gray-500">
               {filtered.length} of {apps.length} app registration(s)
             </span>
             {data?.truncated && (
-              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={`The completed snapshot contains ${data.enumeration?.fetched ?? data.limit ?? 500}${data.graph_total != null ? ` of ${data.graph_total}` : ""} apps. Raise the configured cap or run Full tenant.`}>
+              <span className="rounded-sm bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={`The completed snapshot contains ${data.enumeration?.fetched ?? data.limit ?? 500}${data.graph_total != null ? ` of ${data.graph_total}` : ""} apps. Raise the configured cap or run Full tenant.`}>
                 {data.enumeration?.fetched ?? data.limit ?? 500}{data.graph_total != null ? ` of ${data.graph_total}` : ""} (capped)
               </span>
             )}
@@ -955,9 +955,9 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                           <span className="min-w-0 pr-1"><LastSignInCell a={a} windowDays={signinWindow} /></span>
                           <span className="min-w-0 pr-1"><LastFailedCell a={a} measured={failuresMeasured} reason={failuresReason} /></span>
                           <span className="truncate text-xs text-gray-600">
-                            {a.ownerless ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">ownerless</span> : a.owners.join(", ")}
+                            {a.ownerless ? <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">ownerless</span> : a.owners.join(", ")}
                           </span>
-                          <span>{a.highRisk ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">high</span> : <span className="text-gray-300">—</span>}</span>
+                          <span>{a.highRisk ? <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">high</span> : <span className="text-gray-300">—</span>}</span>
                         </div>
                         {open && (
                           <div className="bg-gray-50/60 px-6 py-3">
@@ -986,7 +986,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                                   <ul className="space-y-1">
                                     {a.credentials.map((c, i) => (
                                       <li key={i} className="flex items-center gap-2 text-xs">
-                                        <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">{c.type === "certificate" ? "cert" : "secret"}</span>
+                                        <span className="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">{c.type === "certificate" ? "cert" : "secret"}</span>
                                         <span className="text-gray-700">{c.displayName || "(unnamed)"}</span>
                                         <ExpiryBadge days={c.daysUntilExpiry} />
                                         <LastUsedBadge lastUsed={c.lastUsed} known={c.lastUsedKnown} days={c.lastUsedDays} />
@@ -998,7 +998,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                                 )}
                                 {a.tags.length > 0 && (
                                   <div className="mt-2 flex flex-wrap gap-1">
-                                    {a.tags.map((t) => (<span key={t} className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">{t}</span>))}
+                                    {a.tags.map((t) => (<span key={t} className="rounded-sm bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">{t}</span>))}
                                   </div>
                                 )}
                               </div>
@@ -1008,9 +1008,9 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                                   <ul className="space-y-1">
                                     {a.permissions.map((p, i) => (
                                       <li key={i} className="flex items-center gap-2 text-xs">
-                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${p.type === "Application" ? "bg-violet-100 text-violet-700" : "bg-emerald-100 text-emerald-700"}`}>{p.type}</span>
+                                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${p.type === "Application" ? "bg-violet-100 text-violet-700" : "bg-emerald-100 text-emerald-700"}`}>{p.type}</span>
                                         <span className="font-mono text-gray-700">{p.value}</span>
-                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${RISK_CLS[p.risk]}`}>{p.risk}</span>
+                                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${RISK_CLS[p.risk]}`}>{p.risk}</span>
                                       </li>
                                     ))}
                                   </ul>

@@ -168,7 +168,7 @@ function LaneRow({ lane, onHover, highlighted }: { lane: Lane; onHover?: (i: num
       onMouseEnter={() => onHover?.(lane.index - 1)}
       onMouseLeave={() => onHover?.(null)}
     >
-      <span className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center self-center rounded bg-gray-100 text-[10px] font-medium text-gray-500">{lane.index}</span>
+      <span className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center self-center rounded-sm bg-gray-100 text-[10px] font-medium text-gray-500">{lane.index}</span>
       {/* LEFT (before) */}
       <div className="flex flex-col items-start justify-center gap-1">
         <span className="text-[9px] uppercase tracking-wide text-gray-300">before</span>
@@ -214,7 +214,7 @@ export function ChangeSetFlow({
   const overwrites = (plan?.overwrites ?? null);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-gradient-to-b from-slate-50 to-white p-2">
+    <div className="rounded-lg border border-gray-200 bg-linear-to-b from-slate-50 to-white p-2">
       {/* scoped, reduced-motion-aware flow animation */}
       <style>{`
         .csf-flow { stroke-dashoffset: 0; animation: csf-march 0.9s linear infinite; }

@@ -462,7 +462,7 @@ export function DashboardPanel() {
         const blocked = !s.allowed;
         const expanded = expandedSteps[s.id] ?? forceExpanded;
         return (
-          <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-sm ${s.done ? "border-green-200" : ""}`}>
+          <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-xs ${s.done ? "border-green-200" : ""}`}>
             <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
               s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
             }`}>
@@ -781,7 +781,7 @@ export function DashboardPanel() {
     <div className="h-full overflow-y-auto bg-gray-50">
       <div className="w-full max-w-none space-y-6 p-6">
         {/* Hero — personalized greeting + estate health */}
-        <div className="rounded-2xl border bg-gradient-to-br from-brand/10 to-violet-50 p-5">
+        <div className="rounded-2xl border bg-linear-to-br from-brand/10 to-violet-50 p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
               <span className="text-3xl">🤖</span>
@@ -869,7 +869,7 @@ export function DashboardPanel() {
 
         {/* One honest scope/freshness row. Lower widgets are cached views and may have
             their own native scopes; the selected workload controls Mission + coverage. */}
-        <div className="flex flex-col gap-3 rounded-xl border bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-xl border bg-white px-4 py-3 shadow-xs sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-600">
             {defaultConn && <span className="rounded-full bg-gray-100 px-2 py-1">🏢 {defaultConn.name}</span>}
             {workloads.length > 0 && (
@@ -965,7 +965,7 @@ export function DashboardPanel() {
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${a.sev === "red" ? "bg-red-500" : "bg-amber-500"}`} />
                     <span className="text-base">{a.icon}</span>
                     <span className="min-w-0 flex-1 truncate text-[12px] text-gray-700" title={a.text}>{a.text}</span>
-                    <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium text-brand">{a.action} →</span>
+                    <span className="shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] font-medium text-brand">{a.action} →</span>
                   </Link>
                 </li>
               ))}
@@ -985,7 +985,7 @@ export function DashboardPanel() {
                 <Link
                   key={d.id}
                   to="/insights/runs"
-                  className={`block rounded-xl border p-3 hover:shadow-sm ${d.verdict === "urgent" ? "border-red-200 bg-red-50/50" : "border-amber-200 bg-amber-50/40"}`}
+                  className={`block rounded-xl border p-3 hover:shadow-xs ${d.verdict === "urgent" ? "border-red-200 bg-red-50/50" : "border-amber-200 bg-amber-50/40"}`}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-base">{d.pack_icon || "🧠"}</span>
@@ -1049,7 +1049,7 @@ export function DashboardPanel() {
                 <Link to={`/assessments/${lowestRun.id}`} className="block rounded-lg border bg-gray-50 p-3 hover:border-brand/40 hover:bg-white">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-gray-800">{lowestRun.workload_name}</span>
-                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${scoreTone(lowestRun.overall_score)}`}>
+                    <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-bold ${scoreTone(lowestRun.overall_score)}`}>
                       {lowestRun.overall_score}/100
                     </span>
                   </div>
@@ -1156,7 +1156,7 @@ export function DashboardPanel() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium text-gray-800">{plural(optimization.total_count, "opportunity")}</span>
                       {optimization.total_monthly_cost != null && optimization.cost_available && (
-                        <span className="shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700">
+                        <span className="shrink-0 rounded-sm bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700">
                           ~{formatMoney(optimization.total_monthly_cost, optimization.currency)}/mo
                         </span>
                       )}
@@ -1179,7 +1179,7 @@ export function DashboardPanel() {
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {upcomingTasks.map((t) => (
                 <li key={t.id}>
-                  <Link to="/automations" className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2 shadow-sm hover:border-brand/40">
+                  <Link to="/automations" className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2 shadow-xs hover:border-brand/40">
                     <span className="text-base">{t.target_meta?.icon || "⏰"}</span>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-gray-800">{t.name}</div>
@@ -1197,7 +1197,7 @@ export function DashboardPanel() {
         {!isHidden("activity") && recentActivity.length > 0 && (
           <div>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Recent runs &amp; changes</h2>
-            <ul className="divide-y rounded-xl border bg-white shadow-sm">
+            <ul className="divide-y rounded-xl border bg-white shadow-xs">
               {recentActivity.map((e, i) => (
                 <li key={i}>
                   <Link to={e.to} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
@@ -1244,7 +1244,7 @@ export function DashboardPanel() {
                 <button
                   onClick={() => setSetupGuideOpen((value) => !value)}
                   aria-expanded={setupGuideOpen}
-                  className="rounded border bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
+                  className="rounded-sm border bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
                 >
                   {setupGuideOpen ? "Hide completed" : "Show all"}
                 </button>
@@ -1427,7 +1427,7 @@ export function DashboardPanel() {
 
 function Card({ title, icon, manageTo, children }: { title: string; icon: string; manageTo?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border bg-white p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><span>{icon}</span>{title}</h3>
         {manageTo && <Link to={manageTo} className="text-xs font-medium text-brand hover:underline">Manage →</Link>}
@@ -1451,7 +1451,7 @@ function Badge({ tone, children }: { tone: "brand" | "green" | "gray"; children:
     tone === "brand" ? "bg-brand/10 text-brand" :
     tone === "green" ? "bg-green-100 text-green-700" :
     "bg-gray-100 text-gray-500";
-  return <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${cls}`}>{children}</span>;
+  return <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[9px] font-medium ${cls}`}>{children}</span>;
 }
 
 function Empty({ text }: { text: string }) {
@@ -1460,11 +1460,11 @@ function Empty({ text }: { text: string }) {
 
 function SkeletonTile() {
   return (
-    <div className="flex items-center gap-2.5 rounded-xl border bg-white p-3 shadow-sm">
+    <div className="flex items-center gap-2.5 rounded-xl border bg-white p-3 shadow-xs">
       <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-gray-100" />
       <div className="min-w-0 flex-1">
-        <div className="h-4 w-10 animate-pulse rounded bg-gray-100" />
-        <div className="mt-1 h-2.5 w-16 animate-pulse rounded bg-gray-100" />
+        <div className="h-4 w-10 animate-pulse rounded-sm bg-gray-100" />
+        <div className="mt-1 h-2.5 w-16 animate-pulse rounded-sm bg-gray-100" />
       </div>
     </div>
   );
@@ -1479,7 +1479,7 @@ function KpiTile({ to, icon, label, value, sub, tone }: { to: string; icon: stri
   const valueTone = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : "text-gray-800";
   const borderTone = tone === "red" ? "border-red-200" : tone === "amber" ? "border-amber-200" : "";
   return (
-    <Link to={to} className={`flex items-center gap-2.5 rounded-xl border bg-white p-3 shadow-sm transition hover:border-brand/40 hover:shadow-md ${borderTone}`}>
+    <Link to={to} className={`flex items-center gap-2.5 rounded-xl border bg-white p-3 shadow-xs transition hover:border-brand/40 hover:shadow-md ${borderTone}`}>
       <span className="text-xl">{icon}</span>
       <div className="min-w-0 flex-1">
         <div className={`text-lg font-bold leading-tight ${valueTone}`}>{value}</div>
@@ -1604,7 +1604,7 @@ function RecentlyVisited({
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {items.map((item) => (
-            <div key={item.id} className="group flex min-w-0 items-center gap-2 rounded-xl border bg-white p-2.5 shadow-sm hover:border-brand/40">
+            <div key={item.id} className="group flex min-w-0 items-center gap-2 rounded-xl border bg-white p-2.5 shadow-xs hover:border-brand/40">
               <Link to={item.route} className="flex min-w-0 flex-1 items-center gap-2" title={`${item.title}${item.subtitle ? ` · ${item.subtitle}` : ""}`}>
                 <span className="text-lg" aria-hidden>{recentItemIcon(item.kind)}</span>
                 <span className="min-w-0 flex-1">
@@ -1612,8 +1612,8 @@ function RecentlyVisited({
                   <span className="block truncate text-[10px] text-gray-600">{item.subtitle || humanize(item.kind)} · {formatRelative(item.last_visited_at)}</span>
                 </span>
               </Link>
-              <button onClick={() => void act(item, "pin")} disabled={busyId === item.id} className={`rounded p-1 text-xs hover:bg-gray-100 disabled:opacity-40 ${item.pinned ? "text-brand" : "text-gray-300 group-hover:text-gray-500"}`} aria-label={item.pinned ? `Unpin ${item.title}` : `Pin ${item.title}`} aria-pressed={item.pinned}>{item.pinned ? "★" : "☆"}</button>
-              <button onClick={() => void act(item, "remove")} disabled={busyId === item.id} className="rounded p-1 text-xs text-gray-300 hover:bg-red-50 hover:text-red-600 disabled:opacity-40" aria-label={`Remove ${item.title} from recently visited`}>×</button>
+              <button onClick={() => void act(item, "pin")} disabled={busyId === item.id} className={`rounded-sm p-1 text-xs hover:bg-gray-100 disabled:opacity-40 ${item.pinned ? "text-brand" : "text-gray-300 group-hover:text-gray-500"}`} aria-label={item.pinned ? `Unpin ${item.title}` : `Pin ${item.title}`} aria-pressed={item.pinned}>{item.pinned ? "★" : "☆"}</button>
+              <button onClick={() => void act(item, "remove")} disabled={busyId === item.id} className="rounded-sm p-1 text-xs text-gray-300 hover:bg-red-50 hover:text-red-600 disabled:opacity-40" aria-label={`Remove ${item.title} from recently visited`}>×</button>
             </div>
           ))}
         </div>
@@ -1628,22 +1628,22 @@ function CoverageLensTile({ lens, scopeName }: { lens: { key: string; label: str
   const pct = lens.current;
   const valueTone = pct == null ? "text-gray-400" : pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600";
   return (
-    <Link to={lens.to} className="rounded-xl border bg-white p-3 shadow-sm transition hover:border-brand/40 hover:shadow-md" title={scopeName}>
+    <Link to={lens.to} className="rounded-xl border bg-white p-3 shadow-xs transition hover:border-brand/40 hover:shadow-md" title={scopeName}>
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-[12px] font-medium text-gray-600"><span>{lens.icon}</span>{lens.label}</span>
         {lens.delta != null && lens.delta !== 0 && (
-          <span className={`rounded px-1 text-[10px] font-bold ${lens.delta > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+          <span className={`rounded-sm px-1 text-[10px] font-bold ${lens.delta > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
             {lens.delta > 0 ? "▲" : "▼"} {Math.abs(lens.delta)}
           </span>
         )}
       </div>
       {lens.loading ? (
-        <div className="mt-2 h-7 w-16 animate-pulse rounded bg-gray-100" />
+        <div className="mt-2 h-7 w-16 animate-pulse rounded-sm bg-gray-100" />
       ) : lens.hasData ? (
         <>
           <div className={`mt-1 text-2xl font-bold leading-tight ${valueTone}`}>{pct != null ? `${pct}${lens.key === "performance" ? "" : "%"}` : "—"}</div>
           {lens.points.length > 1 && (
-            <div className="mt-1 [&_svg]:!h-7">
+            <div className="mt-1 [&_svg]:h-7!">
               <TrendChart points={lens.points} current={lens.current} delta={lens.delta} unit={lens.key === "performance" ? "" : "%"} />
             </div>
           )}
@@ -1709,7 +1709,7 @@ function QuickLink({ to, icon, label }: { to: string; icon: string; label: strin
   return (
     <Link
       to={to}
-      className="group inline-flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition hover:border-brand/40 hover:text-brand hover:shadow"
+      className="group inline-flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-xs transition hover:border-brand/40 hover:text-brand hover:shadow-sm"
     >
       <span className="text-sm">{icon}</span>
       <span>{label}</span>

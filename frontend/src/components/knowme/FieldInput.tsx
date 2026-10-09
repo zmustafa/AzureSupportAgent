@@ -42,7 +42,7 @@ export function FieldInput({
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(e.target.value),
     placeholder: meta.placeholder,
     className:
-      "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none " +
+      "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden " +
       (error ? "border-red-300 focus:border-red-400" : "border-gray-300 focus:border-brand"),
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey && onEnter) {
@@ -183,7 +183,7 @@ function Combobox({
         placeholder={allowCustom ? "Pick an option or type your own…" : "Pick an option…"}
         aria-label={todo.label}
         className={
-          "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none " +
+          "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden " +
           (error ? "border-red-300 focus:border-red-400" : "border-gray-300 focus:border-brand")
         }
         onKeyDown={(e) => {

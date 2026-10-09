@@ -70,7 +70,7 @@ export function EntraFindingsView({
       <div className="flex flex-wrap items-center gap-2 border-b bg-white px-4 py-2">
         <button
           onClick={() => setSeverity("")}
-          className={`rounded px-2 py-1 text-xs font-medium ${!severity ? "bg-gray-800 text-white" : "border text-gray-600"}`}
+          className={`rounded-sm px-2 py-1 text-xs font-medium ${!severity ? "bg-gray-800 text-white" : "border text-gray-600"}`}
         >
           All ({q.data.total})
         </button>
@@ -89,7 +89,7 @@ export function EntraFindingsView({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter by object or title…"
-          className="ml-auto w-64 rounded border px-2 py-1 text-sm"
+          className="ml-auto w-64 rounded-sm border px-2 py-1 text-sm"
         />
         {q.data.suppressed_count > 0 && (
           <span className="text-xs text-gray-400">{q.data.suppressed_count} suppressed</span>
@@ -135,7 +135,7 @@ export function EntraFindingsView({
                     </div>
                   </td>
                   <td className="px-2 py-2">
-                    <code className="rounded bg-gray-100 px-1 text-[11px] text-gray-600">{f.signal_id}</code>
+                    <code className="rounded-sm bg-gray-100 px-1 text-[11px] text-gray-600">{f.signal_id}</code>
                   </td>
                   <td className="px-2 py-2 text-gray-500">{f.state ?? "open"}</td>
                 </tr>
@@ -190,7 +190,7 @@ export function FindingDrawer({
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-30 w-[32rem] overflow-auto border-l bg-white shadow-xl">
+    <div className="fixed inset-y-0 right-0 z-30 w-lg overflow-auto border-l bg-white shadow-xl">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <SevBadge sev={finding.severity} />
@@ -218,7 +218,7 @@ export function FindingDrawer({
             {evidence.map(([k, v]) => (
               <div key={k} className="flex gap-2">
                 <dt className="w-40 shrink-0 text-gray-500">{k}</dt>
-                <dd className="min-w-0 flex-1 break-words text-gray-800">
+                <dd className="min-w-0 flex-1 wrap-break-word text-gray-800">
                   {typeof v === "object" ? JSON.stringify(v) : String(v)}
                 </dd>
               </div>
@@ -259,7 +259,7 @@ export function FindingDrawer({
               href={finding.portal_link}
               target="_blank"
               rel="noreferrer"
-              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
             >
               Open in Entra portal ↗
             </a>
@@ -269,7 +269,7 @@ export function FindingDrawer({
               href={signal.doc_link}
               target="_blank"
               rel="noreferrer"
-              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
             >
               Documentation ↗
             </a>
@@ -282,7 +282,7 @@ export function FindingDrawer({
             <button
               disabled={busy}
               onClick={() => setState("acknowledged")}
-              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
             >
               Acknowledge
             </button>
@@ -290,14 +290,14 @@ export function FindingDrawer({
               disabled={busy || !reason.trim()}
               onClick={() => setState("suppressed")}
               title={reason.trim() ? "" : "A suppression requires a reason"}
-              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
             >
               Suppress
             </button>
             <button
               disabled={busy}
               onClick={() => setState("open")}
-              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
             >
               Reopen
             </button>
@@ -306,7 +306,7 @@ export function FindingDrawer({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Reason (required to suppress)"
-            className="mt-2 w-full rounded border px-2 py-1 text-xs"
+            className="mt-2 w-full rounded-sm border px-2 py-1 text-xs"
           />
           <div className="mt-1 text-[11px] text-gray-400">
             Suppressions persist across refreshes and are excluded from the posture score.

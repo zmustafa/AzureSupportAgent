@@ -77,10 +77,10 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
               the consent link before they have added the permission produces no change and
               looks like the product ignoring them, so the order is stated explicitly. */}
           {data.app_registration?.client_id && (
-            <div className="mt-2 rounded border bg-gray-50 px-2 py-1.5 text-[12px] text-gray-700">
+            <div className="mt-2 rounded-sm border bg-gray-50 px-2 py-1.5 text-[12px] text-gray-700">
               <div>
                 To grant a permission: add it to app registration{" "}
-                <code className="rounded bg-white px-1">{data.app_registration.client_id}</code>{" "}
+                <code className="rounded-sm bg-white px-1">{data.app_registration.client_id}</code>{" "}
                 as an <span className="font-medium">Application</span> permission (not
                 Delegated — an app-only token never carries delegated scopes), then grant
                 admin consent.
@@ -120,7 +120,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
         <Card title="Microsoft Graph access">
           <Row label="Token">
             {meta.permissions_summary.token_ok === true ? (
-              <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
+              <span className="rounded-sm bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
                 acquired
               </span>
             ) : meta.permissions_summary.token_ok === false ? (
@@ -139,7 +139,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
             <button
               onClick={() => recheckM.mutate()}
               disabled={recheckM.isPending}
-              className="rounded border bg-white px-2 py-1 text-[12px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border bg-white px-2 py-1 text-[12px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               {recheckM.isPending ? "Checking with Microsoft…" : "Re-check permissions now"}
             </button>
@@ -205,7 +205,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
         ))}
         <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
           Every scope above is <strong>read-only</strong>. This product never requests a
-          <code className="mx-1 rounded bg-sky-100 px-1">ReadWrite</code> permission and never writes to the directory.
+          <code className="mx-1 rounded-sm bg-sky-100 px-1">ReadWrite</code> permission and never writes to the directory.
         </div>
       </div>
 
@@ -284,7 +284,7 @@ function DomainCoverageTable({ domains }: { domains: EntraDomainMeta[] }) {
 function RecheckResult({ result }: { result: EntraPermissionRecheck }) {
   const stillBlind = result.blind_domains;
   return (
-    <div className="mt-2 space-y-1 rounded border bg-gray-50 px-2 py-1.5 text-[12px]">
+    <div className="mt-2 space-y-1 rounded-sm border bg-gray-50 px-2 py-1.5 text-[12px]">
       <div className="text-gray-800">
         <span className="font-medium">{result.granted.length}</span> permission(s) granted right now.
       </div>
@@ -340,7 +340,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
-    <div className="rounded bg-gray-50 px-2 py-1.5">
+    <div className="rounded-sm bg-gray-50 px-2 py-1.5">
       <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
       <div className="text-sm font-semibold text-gray-800">{(value ?? 0).toLocaleString()}</div>
     </div>

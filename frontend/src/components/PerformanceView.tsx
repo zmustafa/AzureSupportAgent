@@ -392,7 +392,7 @@ function Sparkline({ cell }: { cell: PerfMetricCell }) {
   const path = vals.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   const thrY = cell.threshold != null ? y(cell.threshold) : null;
   return (
-    <svg width={W} height={H} className="rounded border bg-white">
+    <svg width={W} height={H} className="rounded-sm border bg-white">
       {thrY != null && (
         <line x1={pad} y1={thrY} x2={W - pad} y2={thrY} stroke="#ef4444" strokeWidth="1" strokeDasharray="3 2" />
       )}
@@ -1028,9 +1028,9 @@ export function PerformancePanel() {
             {
               header: "Actions", align: "right", render: (r) => (
                 <>
-                  <button onClick={() => viewRun(r.id)} disabled={busy === `view:${r.id}`} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">View</button>
-                  <button onClick={() => void downloadPdf(r.id)} disabled={busy === "pdf"} title="Download a branded PDF report for this run" className="ml-1 rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">📄 PDF</button>
-                  <button onClick={() => deleteRun(r.id)} disabled={busy === `del:${r.id}`} className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
+                  <button onClick={() => viewRun(r.id)} disabled={busy === `view:${r.id}`} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">View</button>
+                  <button onClick={() => void downloadPdf(r.id)} disabled={busy === "pdf"} title="Download a branded PDF report for this run" className="ml-1 rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">📄 PDF</button>
+                  <button onClick={() => deleteRun(r.id)} disabled={busy === `del:${r.id}`} className="ml-1 rounded-sm border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
                 </>
               ),
             },
@@ -1044,8 +1044,8 @@ export function PerformancePanel() {
             {
               header: "Actions", align: "right", render: (r) => (
                 <>
-                  <button onClick={() => void restoreRun(r.id)} disabled={busy === `restore:${r.id}`} className="rounded border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50">↩ Restore</button>
-                  <button onClick={() => void purgeRun(r.id)} disabled={busy === `purge:${r.id}`} className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete forever</button>
+                  <button onClick={() => void restoreRun(r.id)} disabled={busy === `restore:${r.id}`} className="rounded-sm border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50">↩ Restore</button>
+                  <button onClick={() => void purgeRun(r.id)} disabled={busy === `purge:${r.id}`} className="ml-1 rounded-sm border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete forever</button>
                 </>
               ),
             },
@@ -1116,7 +1116,7 @@ export function PerformancePanel() {
                 >
                   {label}
                   {(id === "analysis" ? data.resources.length : (data.all_resources?.length ?? 0)) > 0 && (
-                    <span className="ml-1 rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">
+                    <span className="ml-1 rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-600">
                       {id === "analysis" ? data.resources.length : data.all_resources!.length}
                     </span>
                   )}
@@ -1137,7 +1137,7 @@ export function PerformancePanel() {
                 headerClassName="mb-2"
                 title={<h2 className="text-sm font-semibold text-gray-900">Ranked bottlenecks</h2>}
                 count={
-                  <span className="rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">
+                  <span className="rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-600">
                     {data.bottlenecks.length}
                   </span>
                 }
@@ -1152,10 +1152,10 @@ export function PerformancePanel() {
                       <span className={STATE_TEXT[b.state]}>{b.observed}{b.unit} / {b.threshold}{b.unit} ({pctText(b.pct_of_threshold)})</span>
                       {b.trend_pct ? <span className="text-[11px] text-gray-400">trend {b.trend_pct > 0 ? "+" : ""}{b.trend_pct}%</span> : null}
                       <div className="ml-auto flex gap-1.5">
-                        <button onClick={() => investigate(b)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">🔎 War Room</button>
+                        <button onClick={() => investigate(b)} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50">🔎 War Room</button>
                         {i === 0 && (
                           <div className="relative" ref={ticketRef}>
-                            <button onClick={() => setTicketOpen(!ticketOpen)} disabled={ticketConnectors.length === 0} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">🎫 Ticket</button>
+                            <button onClick={() => setTicketOpen(!ticketOpen)} disabled={ticketConnectors.length === 0} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">🎫 Ticket</button>
                             {ticketOpen && (
                               <div className="absolute right-0 z-10 mt-1 w-48 rounded-md border bg-white shadow-lg">
                                 {ticketConnectors.map((c) => (
@@ -1235,7 +1235,7 @@ export function PerformancePanel() {
                   className="flex cursor-pointer items-center gap-1 rounded-md border bg-white px-2.5 py-1 hover:bg-gray-50"
                 >
                   <span className="text-gray-600">Types</span>
-                  {hmTypes.length > 0 && <span className="rounded bg-brand/10 px-1.5 text-[10px] font-medium text-brand">{hmTypes.length}</span>}
+                  {hmTypes.length > 0 && <span className="rounded-sm bg-brand/10 px-1.5 text-[10px] font-medium text-brand">{hmTypes.length}</span>}
                   <span className="text-gray-400">▾</span>
                 </button>
                 {hmTypesOpen && (
@@ -1244,7 +1244,7 @@ export function PerformancePanel() {
                     <div className="px-2 py-1 text-gray-400">No types</div>
                   ) : (
                     hmAllTypes.map((t) => (
-                      <label key={t.type} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-gray-50">
+                      <label key={t.type} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-gray-50">
                         <input
                           type="checkbox"
                           checked={hmTypes.includes(t.type)}
@@ -1255,7 +1255,7 @@ export function PerformancePanel() {
                     ))
                   )}
                   {hmTypes.length > 0 && (
-                    <button onClick={() => setHmTypes([])} className="mt-1 w-full rounded border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear types</button>
+                    <button onClick={() => setHmTypes([])} className="mt-1 w-full rounded-sm border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear types</button>
                   )}
                 </div>
                 )}
@@ -1311,7 +1311,7 @@ export function PerformancePanel() {
                 Showing {filteredResources.length} of {data.resources.length} resource(s)
               </span>
               {hmFiltersActive && (
-                <button onClick={clearHeatmapFilters} className="rounded border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
+                <button onClick={clearHeatmapFilters} className="rounded-sm border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
               )}
             </div>
             {/* PU4 — active heatmap filter chips. */}
@@ -1331,7 +1331,7 @@ export function PerformancePanel() {
               <div className="mt-2 flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed bg-white py-12 text-center text-sm text-gray-400">
                 <div>No resources match the current filters.</div>
                 {hmFiltersActive && (
-                  <button onClick={clearHeatmapFilters} className="mt-2 rounded border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
+                  <button onClick={clearHeatmapFilters} className="mt-2 rounded-sm border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
                 )}
               </div>
             ) : (
@@ -1387,7 +1387,7 @@ export function PerformancePanel() {
                           const floorWord = cell.higher_is_worse ? "threshold" : "floor";
                           return (
                             <td key={mc.key} className={`px-1 py-1 text-center ${border}`}>
-                              <span className={`inline-block min-w-[38px] rounded border px-1 py-0.5 text-[11px] ${STATE_CELL[cell.state]}`} title={`${cell.observed ?? "?"}${cell.unit} vs ${cell.threshold ?? "—"}${cell.unit} ${floorWord}`}>
+                              <span className={`inline-block min-w-[38px] rounded-sm border px-1 py-0.5 text-[11px] ${STATE_CELL[cell.state]}`} title={`${cell.observed ?? "?"}${cell.unit} vs ${cell.threshold ?? "—"}${cell.unit} ${floorWord}`}>
                                 {metricPctLabel(cell) ?? (cell.state === "no_data" ? "—" : "ok")}
                               </span>
                             </td>
@@ -1425,7 +1425,7 @@ export function PerformancePanel() {
                 </div>
                 <div className="text-[11px] text-gray-400">{drawer.display} · {drawer.region}</div>
               </div>
-              <button onClick={() => setDrawer(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+              <button onClick={() => setDrawer(null)} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
             </div>
             <div className="space-y-4 px-5 py-4">
               {drawer.cells.map((c) => (

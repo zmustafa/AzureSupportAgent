@@ -130,8 +130,8 @@ export function ConnectionScopePicker({
                 <span className="block truncate text-[11px] text-gray-400">{c.tenant_id}</span>
               </span>
               <span className="flex shrink-0 items-center gap-1 pt-0.5">
-                {c.is_default && <span className="rounded bg-gray-100 px-1.5 text-[10px] text-gray-500">default</span>}
-                {c.read_only && <span className="rounded bg-amber-50 px-1.5 text-[10px] text-amber-600">read-only</span>}
+                {c.is_default && <span className="rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-500">default</span>}
+                {c.read_only && <span className="rounded-sm bg-amber-50 px-1.5 text-[10px] text-amber-600">read-only</span>}
               </span>
             </button>
           ))}

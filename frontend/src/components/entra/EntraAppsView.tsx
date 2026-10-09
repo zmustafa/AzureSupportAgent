@@ -164,7 +164,7 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter by name or app id…"
-          className="w-72 rounded border px-2 py-1 text-sm"
+          className="w-72 rounded-sm border px-2 py-1 text-sm"
         />
         <label className="flex items-center gap-1 text-xs text-gray-600">
           <input type="checkbox" checked={ownerless} onChange={(e) => setOwnerless(e.target.checked)} />
@@ -175,7 +175,7 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
           <input
             type="number" min={0} max={100} value={riskMin}
             onChange={(e) => setRiskMin(Number(e.target.value) || 0)}
-            className="w-16 rounded border px-1 py-0.5 text-xs"
+            className="w-16 rounded-sm border px-1 py-0.5 text-xs"
           />
         </label>
         <span className="ml-auto text-xs text-gray-400">
@@ -245,7 +245,7 @@ function SignInOutcomeBanner({ signin, connectionId }: { signin: SignInMeta; con
   if (signin.scope === "off") {
     return (
       <div data-testid="appsinv-signin-off"
-           className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-600">
+           className="mb-3 rounded-sm border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-600">
         Per-application sign-in outcomes are turned off, so a rejected sign-in cannot be told
         apart from a successful one. Set <code>entra_signin_outcome_scope</code> to
         {" "}<code>visible</code> to turn them back on.
@@ -272,7 +272,7 @@ function SignInOutcomeBanner({ signin, connectionId }: { signin: SignInMeta; con
 
   return (
     <div data-testid="appsinv-signin-pending"
-         className="mb-3 flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+         className="mb-3 flex flex-wrap items-center gap-2 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
       <span>
         {signin.pending
           ? <>Sign-in outcomes are still being read — <b>{signin.pending_count}</b> application(s) to go.
@@ -283,7 +283,7 @@ function SignInOutcomeBanner({ signin, connectionId }: { signin: SignInMeta; con
         onClick={run}
         disabled={busy}
         data-testid="appsinv-signin-run"
-        className="ml-auto rounded border border-amber-300 bg-white px-2 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50"
+        className="ml-auto rounded-sm border border-amber-300 bg-white px-2 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50"
       >
         {busy ? "Reading…" : "Read now"}
       </button>
@@ -319,17 +319,17 @@ function AppRow({ app, signin, onOpen }: { app: EntraAppRow; signin: SignInMeta;
       </td>
       <td className="px-2 py-1.5">
         {app.granted_permissions ? (
-          <span className={`rounded px-1.5 py-0.5 text-[11px] ${TIER_CHIP[app.max_permission_tier] ?? ""}`}>
+          <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${TIER_CHIP[app.max_permission_tier] ?? ""}`}>
             {app.granted_permissions} granted · {app.max_permission_tier}
           </span>
         ) : (
           <span className="text-xs text-gray-400">none</span>
         )}
         {app.consent_grant_capable && (
-          <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">self-grant</span>
+          <span className="ml-1 rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">self-grant</span>
         )}
         {app.tenant_wide && (
-          <span className="ml-1 rounded bg-orange-100 px-1.5 py-0.5 text-[11px] text-orange-700">tenant-wide</span>
+          <span className="ml-1 rounded-sm bg-orange-100 px-1.5 py-0.5 text-[11px] text-orange-700">tenant-wide</span>
         )}
       </td>
       <td className="px-2 py-1.5 text-gray-600">
@@ -346,7 +346,7 @@ function AppRow({ app, signin, onOpen }: { app: EntraAppRow; signin: SignInMeta;
           app.owner_count ? (
             <span className="text-gray-600">{app.owner_count}</span>
           ) : (
-            <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">none</span>
+            <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">none</span>
           )
         ) : (
           <span className="text-xs text-gray-400">unknown</span>
@@ -376,7 +376,7 @@ function AppRow({ app, signin, onOpen }: { app: EntraAppRow; signin: SignInMeta;
         {app.last_failed_signin ? (
           <span
             title={`${new Date(app.last_failed_signin).toLocaleString()}\nThis sign-in was rejected.`}
-            className="whitespace-nowrap rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600"
+            className="whitespace-nowrap rounded-sm bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600"
           >
             {daysAgo(app.last_failed_signin)}
           </span>
@@ -420,7 +420,7 @@ function App360Drawer({
     queryFn: () => api.entraApp360(objectId, connectionId),
   });
   return (
-    <div className="fixed inset-y-0 right-0 z-30 w-[34rem] overflow-auto border-l bg-white shadow-xl">
+    <div className="fixed inset-y-0 right-0 z-30 w-136 overflow-auto border-l bg-white shadow-xl">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="text-sm font-semibold">Application 360</div>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-700">✕</button>
@@ -479,7 +479,7 @@ function App360Body({ data }: { data: EntraApp360 }) {
             {data.owners.map((o) => <li key={o.id}>{o.name}</li>)}
           </ul>
         ) : (
-          <div className="rounded bg-red-50 px-2 py-1 text-red-700">
+          <div className="rounded-sm bg-red-50 px-2 py-1 text-red-700">
             No owner — nobody is accountable for rotating credentials or retiring this application.
           </div>
         )}
@@ -489,7 +489,7 @@ function App360Body({ data }: { data: EntraApp360 }) {
         {data.granted_application_permissions.length ? (
           <div className="flex flex-wrap gap-1">
             {data.granted_application_permissions.map((p, i) => (
-              <span key={i} className={`rounded px-1.5 py-0.5 text-[11px] ${TIER_CHIP[p.tier] ?? ""}`}
+              <span key={i} className={`rounded-sm px-1.5 py-0.5 text-[11px] ${TIER_CHIP[p.tier] ?? ""}`}
                     title={`${p.resource} · ${p.tier}`}>
                 {p.permission}
               </span>
@@ -519,7 +519,7 @@ function App360Body({ data }: { data: EntraApp360 }) {
         <Section title="Requested but NOT granted">
           <div className="flex flex-wrap gap-1">
             {data.requested_not_granted.map((p, i) => (
-              <span key={i} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">
+              <span key={i} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">
                 {p.permission}
               </span>
             ))}
@@ -557,7 +557,7 @@ function App360Body({ data }: { data: EntraApp360 }) {
         ) : data.conditional_access.covered_by.length ? (
           <div className="text-gray-700">{data.conditional_access.covered_by.join(", ")}</div>
         ) : (
-          <div className="rounded bg-amber-50 px-2 py-1 text-amber-800">
+          <div className="rounded-sm bg-amber-50 px-2 py-1 text-amber-800">
             Not covered by any enforced policy.
           </div>
         )}
@@ -721,7 +721,7 @@ function Consent({ connectionId }: { connectionId: string | null }) {
                   <td className="px-2 py-1.5 text-gray-600">{g.resource}</td>
                   <td className="px-2 py-1.5 text-gray-700">{g.scopes.join(", ")}</td>
                   <td className="px-2 py-1.5">
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] ${TIER_CHIP[g.max_tier] ?? ""}`}>
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${TIER_CHIP[g.max_tier] ?? ""}`}>
                       {g.max_tier}
                     </span>
                   </td>

@@ -41,7 +41,7 @@ function PercentPill({ value }: { value: number | null }) {
   const tone = value >= 90 ? "bg-green-100 text-green-700"
     : value >= 60 ? "bg-amber-100 text-amber-700"
       : "bg-red-100 text-red-700";
-  return <span className={`inline-block min-w-[3rem] rounded px-1.5 py-0.5 text-center font-semibold tabular-nums ${tone}`}>{value}%</span>;
+  return <span className={`inline-block min-w-12 rounded-sm px-1.5 py-0.5 text-center font-semibold tabular-nums ${tone}`}>{value}%</span>;
 }
 
 export function BackupManagerFleet({ onOpenWorkload }: {
@@ -236,14 +236,14 @@ export function BackupManagerFleet({ onOpenWorkload }: {
                               className="text-left font-medium text-gray-800 hover:text-brand hover:underline">{row.name}</button>
                             <div className="flex gap-1 text-[10px] text-gray-400">
                               {row.environment && <span>{row.environment}</span>}
-                              {row.demo && <span className="rounded bg-indigo-50 px-1 text-indigo-600">demo</span>}
-                              {row.partial && <span className="rounded bg-amber-50 px-1 text-amber-600" title={row.errors.join(", ")}>partial</span>}
+                              {row.demo && <span className="rounded-sm bg-indigo-50 px-1 text-indigo-600">demo</span>}
+                              {row.partial && <span className="rounded-sm bg-amber-50 px-1 text-amber-600" title={row.errors.join(", ")}>partial</span>}
                             </div>
                           </td>
                           <td className="px-2 py-1.5">
                             {state === "running" ? <span className="inline-flex items-center gap-1 text-brand"><span className="animate-spin">↻</span>analyzing…</span>
                               : state === "queued" ? <span className="text-gray-400">queued</span>
-                                : state === "failed" ? <span className="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700" title={error}>⚠ failed</span>
+                                : state === "failed" ? <span className="rounded-sm bg-red-50 px-1.5 py-0.5 font-medium text-red-700" title={error}>⚠ failed</span>
                                   : !row.has_analysis ? <span className="text-gray-400">never</span>
                                     : <PercentPill value={row.pct_protected} />}
                           </td>
@@ -262,7 +262,7 @@ export function BackupManagerFleet({ onOpenWorkload }: {
                           </td>
                           <td className="px-2 py-1.5">
                             <button onClick={() => onOpenWorkload(row.workload_id, row.connection_id)}
-                              className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
+                              className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
                           </td>
                         </tr>
                       );

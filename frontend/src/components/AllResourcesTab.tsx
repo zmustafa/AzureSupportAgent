@@ -70,7 +70,7 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Search resources…"
-          className="w-52 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400"
+          className="w-52 rounded-lg border px-2.5 py-1.5 outline-hidden focus:border-gray-400"
         />
         <select value={typeSel} onChange={(e) => setTypeSel(e.target.value)} className="rounded-lg border px-2 py-1.5">
           <option value="all">All types ({types.length})</option>
@@ -106,7 +106,7 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
       ) : (
         <div ref={scrollRef} className="max-h-[60vh] overflow-auto rounded-xl border bg-white">
           <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10 bg-gray-50 text-left text-gray-500 shadow-sm">
+            <thead className="sticky top-0 z-10 bg-gray-50 text-left text-gray-500 shadow-xs">
               <tr>
                 <th className="px-3 py-2 font-medium">Resource</th>
                 <th className="px-3 py-2 font-medium">Type</th>
@@ -127,9 +127,9 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
                   <td className="px-3 py-2 text-gray-600">{r.location || "—"}</td>
                   <td className="px-3 py-2 text-center">
                     {r.in_reference ? (
-                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">covered</span>
+                      <span className="rounded-sm bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">covered</span>
                     ) : (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">not in reference</span>
+                      <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">not in reference</span>
                     )}
                   </td>
                 </tr>

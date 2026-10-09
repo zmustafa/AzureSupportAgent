@@ -106,7 +106,7 @@ export function FleetCockpit({
                           aria-label={`${e}, ${c} criticality: ${n} workload${n === 1 ? "" : "s"}`}
                           aria-pressed={on ? activeFilter === `env:${e}` : undefined}
                           onClick={() => onFilter(activeFilter === `env:${e}` ? "" : `env:${e}`)}
-                          className={`flex h-6 w-full items-center justify-center rounded tabular-nums ${on ? "font-semibold text-white" : "text-gray-300"}`}
+                          className={`flex h-6 w-full items-center justify-center rounded-sm tabular-nums ${on ? "font-semibold text-white" : "text-gray-300"}`}
                           style={{ backgroundColor: on ? (c === "critical" ? "#dc2626" : c === "high" ? "#c2410c" : c === "medium" ? "#b45309" : "#475569") : "#f8fafc" }}
                         >
                           {on ? n : ""}
@@ -120,10 +120,10 @@ export function FleetCockpit({
           </table>
         </div>
         <div className="mt-2 flex flex-wrap gap-1">
-          {retiring > 0 && <button onClick={() => onFilter(activeFilter === "risk:retiring" ? "" : "risk:retiring")} className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">⚠ {retiring} retiring</button>}
-          {criticals > 0 && <button onClick={() => onFilter(activeFilter === "risk:critical" ? "" : "risk:critical")} className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🔴 {criticals} critical</button>}
-          {unowned > 0 && <button onClick={() => onFilter(activeFilter === "risk:unowned" ? "" : "risk:unowned")} className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">🪪 {unowned} under-owned</button>}
-          {notAnalyzed > 0 && <button onClick={() => onFilter(activeFilter === "band:unknown" ? "" : "band:unknown")} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">○ {notAnalyzed} not analyzed</button>}
+          {retiring > 0 && <button onClick={() => onFilter(activeFilter === "risk:retiring" ? "" : "risk:retiring")} className="rounded-sm bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">⚠ {retiring} retiring</button>}
+          {criticals > 0 && <button onClick={() => onFilter(activeFilter === "risk:critical" ? "" : "risk:critical")} className="rounded-sm bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🔴 {criticals} critical</button>}
+          {unowned > 0 && <button onClick={() => onFilter(activeFilter === "risk:unowned" ? "" : "risk:unowned")} className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">🪪 {unowned} under-owned</button>}
+          {notAnalyzed > 0 && <button onClick={() => onFilter(activeFilter === "band:unknown" ? "" : "band:unknown")} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">○ {notAnalyzed} not analyzed</button>}
         </div>
       </div>
     </div>

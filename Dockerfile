@@ -107,9 +107,11 @@ RUN apt-get update \
     # Azure CLI ships its own private Python under /opt/az and lags upstream security fixes in
     # it. PyJWT < 2.14 there carries a fixable CRITICAL (CVE-2026-102268, HS/asymmetric
     # key-confusion guard bypass) that fails the image gate; 2.15 also clears the rest of the
-    # 2.13.x advisory set. az's msal/azure-cli-core accept any PyJWT 2.x.
+    # 2.13.x advisory set. az's msal/azure-cli-core accept any PyJWT 2.x. Application
+    # requirements cannot patch this private environment's urllib3 or OAuthlib either.
     && /opt/az/bin/python3 -m pip install --no-cache-dir \
         "cryptography>=50.0.0" "setuptools>=83.0.0" "PyJWT>=2.15.0" \
+        "urllib3>=2.8.0,<3" "oauthlib>=4.0.0,<5" \
     && npm install -g "npm@${NPM_VERSION}" \
     && npm install -g "@azure/mcp@${AZURE_MCP_VERSION}" \
     && npm cache clean --force \

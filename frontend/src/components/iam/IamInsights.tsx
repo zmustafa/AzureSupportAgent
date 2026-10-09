@@ -18,8 +18,8 @@ function PivotCard({ title, items }: { title: string; items: { label: string; co
           {items.slice(0, 8).map((it) => (
             <div key={it.label} className="flex items-center gap-2 text-xs">
               <div className="w-40 truncate text-gray-600" title={it.label}>{it.label}</div>
-              <div className="h-3 flex-1 rounded bg-gray-100">
-                <div className="h-3 rounded bg-brand/70" style={{ width: `${(it.count / max) * 100}%` }} />
+              <div className="h-3 flex-1 rounded-sm bg-gray-100">
+                <div className="h-3 rounded-sm bg-brand/70" style={{ width: `${(it.count / max) * 100}%` }} />
               </div>
               <div className="w-8 text-right tabular-nums text-gray-500">{it.count}</div>
             </div>
@@ -66,7 +66,7 @@ export function InsightsTab() {
             type="button"
             onClick={() => download.start(api.iamWorkbookUrl(exportFilter), "iam-access-review.xlsx")}
             disabled={download.phase !== "idle"}
-            className="ml-auto rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+            className="ml-auto rounded-sm border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
           >
             ⬇ Excel (all tabs)
           </button>

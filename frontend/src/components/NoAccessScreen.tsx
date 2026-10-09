@@ -24,7 +24,7 @@ export function NoAccessScreen({
         <UserMenu user={user} onLogout={onLogout} onRefresh={onRefresh} />
       </header>
       <main className="flex flex-1 items-center justify-center p-6">
-        <section className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-8 text-center shadow-sm">
+        <section className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-8 text-center shadow-xs">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-2xl" aria-hidden>
             🔒
           </div>

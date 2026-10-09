@@ -168,7 +168,7 @@ function OverviewSection() {
           ["Total runs", metrics.total_runs],
           ...(has("connectors.manage") ? [["Connectors", connectorCount] as [string, number]] : []),
         ].map(([k, v]) => (
-          <div key={k as string} className="rounded-lg border bg-white p-4 text-center shadow-sm">
+          <div key={k as string} className="rounded-lg border bg-white p-4 text-center shadow-xs">
             <div className="text-2xl font-semibold text-gray-800">{v as number}</div>
             <div className="text-xs text-gray-500">{k as string}</div>
           </div>
@@ -180,7 +180,7 @@ function OverviewSection() {
           <Link
             key={n.id}
             to={`/automations/${n.id}`}
-            className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-brand hover:shadow"
+            className="group rounded-xl border bg-white p-5 shadow-xs transition hover:border-brand hover:shadow-sm"
           >
             <div className="mb-2 flex items-center gap-2 text-base font-semibold text-gray-800">
               <span className="text-xl">{n.icon}</span>
@@ -200,7 +200,7 @@ function OverviewSection() {
 
 function Card({ title, children, action }: { title: React.ReactNode; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <section className="rounded-lg border bg-white p-4 shadow-sm">
+    <section className="rounded-lg border bg-white p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-medium">{title}</h2>
         {action}
@@ -217,7 +217,7 @@ function StatusDot({ status }: { status: string }) {
 }
 
 const input =
-  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 
 // ===========================================================================
@@ -303,12 +303,12 @@ export function ConnectorsSection() {
                 <div className="flex items-center gap-2">
                   <BrandIcon type={c.type} className="h-5 w-5" />
                   <span className="font-medium">{c.name}</span>
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] uppercase text-gray-500">
+                  <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] uppercase text-gray-500">
                     {c.type} · {c.mode}
                   </span>
                   <StatusDot status={c.status} />
                   {c.disabled && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">disabled</span>
+                    <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">disabled</span>
                   )}
                 </div>
                 {c.status_detail && (
@@ -319,12 +319,12 @@ export function ConnectorsSection() {
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5 text-xs">
-                <button onClick={() => void test(c.id)} disabled={busyId === c.id} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50">Test</button>
+                <button onClick={() => void test(c.id)} disabled={busyId === c.id} className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50">Test</button>
                 {TEST_MESSAGE_TYPES.has(c.type) && (
-                  <button onClick={() => void sendTest(c.id)} disabled={busyId === c.id || c.disabled} title={c.disabled ? "Enable the connector first" : "Deliver a real test message"} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50">Send test</button>
+                  <button onClick={() => void sendTest(c.id)} disabled={busyId === c.id || c.disabled} title={c.disabled ? "Enable the connector first" : "Deliver a real test message"} className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50">Send test</button>
                 )}
-                <button onClick={() => setWizard({ initial: toEdit(c) })} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
-                <button onClick={() => void remove(c.id)} disabled={busyId === c.id} className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
+                <button onClick={() => setWizard({ initial: toEdit(c) })} className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
+                <button onClick={() => void remove(c.id)} disabled={busyId === c.id} className="rounded-sm border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
               </div>
             </div>
           </div>
@@ -436,7 +436,7 @@ function ConnectorGallery({
   if (leftovers.length > 0) groups.push({ label: "More", blurb: "", items: leftovers });
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-gradient-to-b from-brand/5 to-white p-5">
+    <div className="rounded-xl border border-gray-200 bg-linear-to-b from-brand/5 to-white p-5">
       <div className="mb-5 text-center">
         <h3 className="text-base font-semibold text-gray-800">
           {hasConnectors ? "Add another connector" : "Connect the agent to your stack"}
@@ -459,7 +459,7 @@ function ConnectorGallery({
                 <button
                   key={ty.id}
                   onClick={() => onPick(ty)}
-                  className="group flex flex-col rounded-xl border border-gray-200 bg-white p-3.5 text-left transition hover:border-brand hover:shadow-sm"
+                  className="group flex flex-col rounded-xl border border-gray-200 bg-white p-3.5 text-left transition hover:border-brand hover:shadow-xs"
                 >
                   <div className="mb-1.5 flex items-center gap-2.5">
                     <BrandIcon type={ty.id} className="h-6 w-6" />
@@ -488,11 +488,11 @@ function CmdBlock({ cmd }: { cmd: string }) {
         type="button"
         onClick={() => { void navigator.clipboard?.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
         title="Copy command"
-        className="shrink-0 rounded border border-gray-200 bg-white px-1.5 text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+        className="shrink-0 rounded-sm border border-gray-200 bg-white px-1.5 text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700"
       >
         {copied ? "✓ Copied" : "⧉ Copy"}
       </button>
-      <pre className="flex-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">{cmd}</pre>
+      <pre className="flex-1 overflow-x-auto rounded-sm bg-white px-2 py-1 font-mono text-[11px] text-gray-800">{cmd}</pre>
     </div>
   );
 }
@@ -522,24 +522,24 @@ function OutlookSetupGuide({ mode }: { mode: string }) {
             Under <strong>API permissions</strong>, add these Microsoft Graph{" "}
             <strong>Application</strong> permissions, then click <strong>Grant admin consent</strong>:
             <ul className="mt-1 list-disc space-y-0.5 pl-4">
-              <li><code className="rounded bg-white px-1">Mail.Send</code> — required to send.</li>
+              <li><code className="rounded-sm bg-white px-1">Mail.Send</code> — required to send.</li>
               {isOffice365 && (
                 <>
-                  <li><code className="rounded bg-white px-1">Mail.ReadWrite</code> — required to reply to threads.</li>
-                  <li><code className="rounded bg-white px-1">Mail.Read</code> — required to read the inbox.</li>
+                  <li><code className="rounded-sm bg-white px-1">Mail.ReadWrite</code> — required to reply to threads.</li>
+                  <li><code className="rounded-sm bg-white px-1">Mail.Read</code> — required to read the inbox.</li>
                 </>
               )}
             </ul>
           </li>
           <li>
-            Prefer the CLI? Add + consent <code className="rounded bg-white px-1">Mail.Send</code> in one go:
+            Prefer the CLI? Add + consent <code className="rounded-sm bg-white px-1">Mail.Send</code> in one go:
             <CmdBlock cmd="az ad app permission add --id <CLIENT_ID> --api 00000003-0000-0000-c000-000000000000 --api-permissions b633e1c5-b582-4048-a93e-9f11b44c7e96=Role" />
             <CmdBlock cmd="az ad app permission admin-consent --id <CLIENT_ID>" />
           </li>
           <li>
             Set <strong>{isOffice365 ? "Connected mailbox" : "From mailbox"}</strong> below to a
             licensed mailbox the app may send as (Graph sends via{" "}
-            <code className="rounded bg-white px-1">/users/&#123;mailbox&#125;/sendMail</code>).
+            <code className="rounded-sm bg-white px-1">/users/&#123;mailbox&#125;/sendMail</code>).
           </li>
           <li>
             Save, then use <strong>Send test</strong> on the connector row to confirm delivery.
@@ -602,7 +602,7 @@ function LogicAppSetupGuide() {
           <li>
             Copy the trigger’s <strong>HTTP POST URL</strong> and paste it into{" "}
             <strong>HTTP trigger URL</strong> above. It ends in{" "}
-            <code className="rounded bg-white px-1">…&amp;sig=…</code>.
+            <code className="rounded-sm bg-white px-1">…&amp;sig=…</code>.
           </li>
           <li>
             (Optional) Add <strong>custom headers</strong> or <strong>static payload</strong> values
@@ -614,10 +614,10 @@ function LogicAppSetupGuide() {
         </ol>
         <div className="mt-2 text-[11px] text-blue-800">
           The agent sends a{" "}
-          <code className="rounded bg-white px-1">&#123;title, message, severity, facts&#125;</code>{" "}
+          <code className="rounded-sm bg-white px-1">&#123;title, message, severity, facts&#125;</code>{" "}
           JSON body by default. Design your flow’s trigger schema to match, or accept any JSON:
         </div>
-        <pre className="mt-1 overflow-x-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-gray-800">{`{
+        <pre className="mt-1 overflow-x-auto rounded-sm bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-gray-800">{`{
   "title": "High CPU on vm-prod-01",
   "message": "CPU has been above 90% for 15 minutes.",
   "severity": "warning",
@@ -635,7 +635,7 @@ function LogicAppSetupGuide() {
         <p>
           The trigger URL contains a SAS signature — anyone with it can start your workflow, and{" "}
           <strong>Send test</strong> runs whatever the flow does (emails, tickets, deployments). Only{" "}
-          <code className="mx-1 rounded bg-white px-1">*.logic.azure.com</code> URLs are accepted. See the{" "}
+          <code className="mx-1 rounded-sm bg-white px-1">*.logic.azure.com</code> URLs are accepted. See the{" "}
           <a
             href="https://learn.microsoft.com/en-us/azure/logic-apps/logic-apps-http-endpoint"
             target="_blank"
@@ -667,7 +667,7 @@ function SumoLogicSetupGuide() {
       </ol>
       <div className="mt-2 text-[11px] text-blue-800">
         The agent sends a{" "}
-        <code className="rounded bg-white px-1">&#123;title, message, severity, facts&#125;</code>{" "}
+        <code className="rounded-sm bg-white px-1">&#123;title, message, severity, facts&#125;</code>{" "}
         JSON event by default; search it in Sumo by the source category you set.
       </div>
     </div>
@@ -691,10 +691,10 @@ function CrowdStrikeSetupGuide() {
       </ol>
       <div className="mt-2 text-[11px] text-blue-800">
         Events are sent HEC-style as{" "}
-        <code className="rounded bg-white px-1">&#123;&quot;event&quot;: &#123;…&#125;&#125;</code>; query them in
+        <code className="rounded-sm bg-white px-1">&#123;&quot;event&quot;: &#123;…&#125;&#125;</code>; query them in
         Next-Gen SIEM with CQL. The API key is stored as a secret. Only{" "}
-        <code className="rounded bg-white px-1">*.crowdstrike.com</code> /{" "}
-        <code className="rounded bg-white px-1">*.humio.com</code> hosts are accepted.
+        <code className="rounded-sm bg-white px-1">*.crowdstrike.com</code> /{" "}
+        <code className="rounded-sm bg-white px-1">*.humio.com</code> hosts are accepted.
       </div>
     </div>
   );
@@ -735,9 +735,9 @@ const SETUP_GUIDES: Record<string, GuideDef> = {
     title: "How to set up Slack",
     intro: "Post via an Incoming Webhook or a bot token.",
     steps: [
-      <>Create or open an app at <code className="rounded bg-white px-1">api.slack.com/apps</code>.</>,
+      <>Create or open an app at <code className="rounded-sm bg-white px-1">api.slack.com/apps</code>.</>,
       <>Webhook mode: enable <strong>Incoming Webhooks</strong> → Add New Webhook to Workspace → pick a channel → copy the URL.</>,
-      <>Token mode: under <strong>OAuth &amp; Permissions</strong> add the <code className="rounded bg-white px-1">chat:write</code> scope, install the app, copy the Bot token (<code className="rounded bg-white px-1">xoxb-…</code>), and set a default channel.</>,
+      <>Token mode: under <strong>OAuth &amp; Permissions</strong> add the <code className="rounded-sm bg-white px-1">chat:write</code> scope, install the app, copy the Bot token (<code className="rounded-sm bg-white px-1">xoxb-…</code>), and set a default channel.</>,
     ],
     note: "Send test posts a Block Kit message.",
   },
@@ -755,8 +755,8 @@ const SETUP_GUIDES: Record<string, GuideDef> = {
     title: "How to set up Jira",
     intro: "Create issues, comment, and search via the Jira Cloud REST API.",
     steps: [
-      <>Enter your site base URL (<code className="rounded bg-white px-1">https://your-org.atlassian.net</code>).</>,
-      <>Create an API token at <code className="rounded bg-white px-1">id.atlassian.com/manage-profile/security/api-tokens</code>.</>,
+      <>Enter your site base URL (<code className="rounded-sm bg-white px-1">https://your-org.atlassian.net</code>).</>,
+      <>Create an API token at <code className="rounded-sm bg-white px-1">id.atlassian.com/manage-profile/security/api-tokens</code>.</>,
       <>Enter your Atlassian <strong>account email</strong> + the <strong>token</strong>; optionally set a default project + issue type.</>,
     ],
   },
@@ -764,7 +764,7 @@ const SETUP_GUIDES: Record<string, GuideDef> = {
     title: "How to set up ServiceNow",
     intro: "Create/update incidents, add work notes, and search via the Table API.",
     steps: [
-      <>Enter your instance URL (<code className="rounded bg-white px-1">https://your-instance.service-now.com</code>).</>,
+      <>Enter your instance URL (<code className="rounded-sm bg-white px-1">https://your-instance.service-now.com</code>).</>,
       <>Use a dedicated integration user with the <strong>itil</strong> (or a scoped) role; enter its username + password.</>,
       <>Optionally set a default assignment group, caller, urgency, and impact.</>,
     ],
@@ -1043,7 +1043,7 @@ function ConnectorWizard({
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search"
-                    className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand"
                   />
                 </div>
                 <div className="space-y-5">
@@ -1058,7 +1058,7 @@ function ConnectorWizard({
                           <button
                             key={ty.id}
                             onClick={() => pickType(ty)}
-                            className="group flex flex-col rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand hover:shadow-sm"
+                            className="group flex flex-col rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand hover:shadow-xs"
                           >
                             <div className="mb-2 flex items-start gap-2.5">
                               <BrandIcon type={ty.id} className="h-6 w-6" />
@@ -1415,13 +1415,13 @@ function AgentsSection() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className={`font-medium ${a.enabled === false ? "text-gray-400" : ""}`}>{a.name}</span>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500" title={`Category: ${cat.label}`}>{cat.icon} {cat.label}</span>
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500" title={`Category: ${cat.label}`}>{cat.icon} {cat.label}</span>
                 {a.enabled === false && (
-                  <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">Disabled</span>
+                  <span className="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">Disabled</span>
                 )}
-                <span className={`rounded px-1.5 py-0.5 text-[10px] ${a.run_mode === "autonomous" ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-500"}`}>{a.run_mode}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${a.run_mode === "autonomous" ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-500"}`}>{a.run_mode}</span>
                 {a.model && (
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+                  <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
                     {(a.provider && PROVIDER_LABELS[a.provider]) || a.provider} · {a.model}
                   </span>
                 )}
@@ -1430,7 +1430,7 @@ function AgentsSection() {
               {a.connector_tools.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1">
                   {a.connector_tools.map((t) => (
-                    <span key={t} className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-mono text-brand">{t}</span>
+                    <span key={t} className="rounded-sm bg-brand/10 px-1.5 py-0.5 text-[10px] font-mono text-brand">{t}</span>
                   ))}
                 </div>
               )}
@@ -1445,21 +1445,21 @@ function AgentsSection() {
               onClick={() => void toggleEnabled(a)}
               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${a.enabled !== false ? "bg-green-500" : "bg-gray-300"}`}
             >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${a.enabled !== false ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${a.enabled !== false ? "translate-x-[18px]" : "translate-x-0.5"}`} />
             </button>
             <Link
               to={`/chat?agent=${encodeURIComponent(a.id)}`}
               title={a.enabled === false ? "Enable the agent to chat with it" : `Start a chat with ${a.name}`}
               aria-disabled={a.enabled === false}
               onClick={(e) => { if (a.enabled === false) e.preventDefault(); }}
-              className={`rounded border px-2 py-1 font-medium ${a.enabled === false ? "cursor-not-allowed border-gray-200 text-gray-300" : "border-brand/40 text-brand hover:bg-brand/5"}`}
+              className={`rounded-sm border px-2 py-1 font-medium ${a.enabled === false ? "cursor-not-allowed border-gray-200 text-gray-300" : "border-brand/40 text-brand hover:bg-brand/5"}`}
             >
               💬 Chat
             </Link>
-            <button onClick={() => setEnhancing(a)} title="Enhance this agent with AI" className="rounded border border-brand/40 px-2 py-1 font-medium text-brand hover:bg-brand/5">✨ Enhance</button>
-            <button onClick={() => setEditing(a)} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
-            <button onClick={() => void exportOne(a)} title="Export config as JSON" className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Export</button>
-            <button onClick={() => void remove(a.id)} className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50">Delete</button>
+            <button onClick={() => setEnhancing(a)} title="Enhance this agent with AI" className="rounded-sm border border-brand/40 px-2 py-1 font-medium text-brand hover:bg-brand/5">✨ Enhance</button>
+            <button onClick={() => setEditing(a)} className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
+            <button onClick={() => void exportOne(a)} title="Export config as JSON" className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50">Export</button>
+            <button onClick={() => void remove(a.id)} className="rounded-sm border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50">Delete</button>
           </div>
         </div>
       </div>
@@ -1624,7 +1624,7 @@ function AgentsSection() {
             <span>Group by category</span>
             <button type="button" role="switch" aria-checked={grouped} aria-label="Group by category" onClick={() => setGrouped((v) => !v)}
               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${grouped ? "bg-brand" : "bg-gray-300"}`}>
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${grouped ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${grouped ? "translate-x-[18px]" : "translate-x-0.5"}`} />
             </button>
           </label>
         </div>
@@ -2305,13 +2305,13 @@ function AgentEnhanceWizard({
               <span className="font-mono font-semibold text-brand">{afterLen}</span> chars
             </span>
             {draft.run_mode !== (baseline?.run_mode ?? agent.run_mode) && (
-              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">
+              <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-amber-700">
                 run mode → {draft.run_mode}
               </span>
             )}
             <button
               onClick={() => setShowDiff((v) => !v)}
-              className="rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50"
+              className="rounded-sm border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50"
             >
               {showDiff ? "Hide" : "Compare before / after"}
             </button>
@@ -2612,7 +2612,7 @@ function AgentForm({
           <>
             {/* Filter controls */}
             <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-              <div className="relative min-w-[10rem] flex-1">
+              <div className="relative min-w-40 flex-1">
                 <svg
                   className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400"
                   viewBox="0 0 20 20"
@@ -2689,7 +2689,7 @@ function AgentForm({
                         </button>
                       </div>
                       {g.items.map((t) => (
-                        <label key={t.name} className="flex items-start gap-2 rounded px-1 py-0.5 text-sm hover:bg-gray-50">
+                        <label key={t.name} className="flex items-start gap-2 rounded-sm px-1 py-0.5 text-sm hover:bg-gray-50">
                           <input
                             type="checkbox"
                             className="mt-1"
@@ -2927,9 +2927,9 @@ function TasksSection() {
                 onClick={() => act(() => api.toggleTask(t.id))}
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${t.status === "on" ? "bg-green-500" : "bg-gray-300"}`}
               >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${t.status === "on" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${t.status === "on" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
               </button>
-              <span className={`rounded px-1.5 py-0.5 text-[10px] ${statusClass(t.status)}`}>{statusLabel(t.status)}</span>
+              <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${statusClass(t.status)}`}>{statusLabel(t.status)}</span>
             </div>
           </td>
           <td className="py-2 pr-3 text-gray-600">{t.schedule_label}</td>
@@ -2962,11 +2962,11 @@ function TasksSection() {
           <td className="py-2 pr-3 text-gray-500">{t.completed_runs}</td>
           <td className="py-2 text-right">
             <div className="flex items-center justify-end gap-0.5 text-xs">
-              <button title="Run now" aria-label="Run now" onClick={() => runNow(t.id)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-brand">▶</button>
-              <button title="Run history" aria-label="Run history" onClick={() => setOpenRuns(openRuns === t.id ? null : t.id)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700">🕒</button>
-              <button title="Edit" aria-label="Edit" onClick={() => setEditing(t)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700">✎</button>
+              <button title="Run now" aria-label="Run now" onClick={() => runNow(t.id)} className="rounded-sm p-1.5 text-gray-500 hover:bg-gray-100 hover:text-brand">▶</button>
+              <button title="Run history" aria-label="Run history" onClick={() => setOpenRuns(openRuns === t.id ? null : t.id)} className="rounded-sm p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700">🕒</button>
+              <button title="Edit" aria-label="Edit" onClick={() => setEditing(t)} className="rounded-sm p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700">✎</button>
               <span className="mx-0.5 h-4 w-px bg-gray-200" />
-              <button title="Delete" aria-label="Delete" onClick={() => { if (confirm("Archive this schedule? It stops running but its run history is preserved. You can restore or permanently delete it later.")) act(() => api.deleteTask(t.id)); }} className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
+              <button title="Delete" aria-label="Delete" onClick={() => { if (confirm("Archive this schedule? It stops running but its run history is preserved. You can restore or permanently delete it later.")) act(() => api.deleteTask(t.id)); }} className="rounded-sm p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
             </div>
           </td>
         </tr>
@@ -3013,7 +3013,7 @@ function TasksSection() {
             type="button"
             disabled={!onClick}
             onClick={onClick ?? undefined}
-            className={`rounded-lg border bg-white p-4 text-center shadow-sm transition ${onClick ? "cursor-pointer hover:border-brand/50 hover:shadow" : "cursor-default"} ${activeTile ? "border-brand ring-1 ring-brand/30" : ""}`}
+            className={`rounded-lg border bg-white p-4 text-center shadow-xs transition ${onClick ? "cursor-pointer hover:border-brand/50 hover:shadow-sm" : "cursor-default"} ${activeTile ? "border-brand ring-1 ring-brand/30" : ""}`}
           >
             <div className={`text-2xl font-semibold ${color}`}>{v}</div>
             <div className="text-xs text-gray-500">{k}</div>
@@ -3068,7 +3068,7 @@ function TasksSection() {
               <span>Group by type</span>
               <button type="button" role="switch" aria-checked={groupByType} aria-label="Group by type" onClick={() => setGroupByType(!groupByType)}
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${groupByType ? "bg-brand" : "bg-gray-300"}`}>
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${groupByType ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${groupByType ? "translate-x-[18px]" : "translate-x-0.5"}`} />
               </button>
             </label>
           </div>
@@ -3082,9 +3082,9 @@ function TasksSection() {
         {selected.size > 0 && (
           <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs">
             <span className="font-medium text-gray-700">{selected.size} selected</span>
-            <button onClick={() => void bulkToggle(true)} className="rounded border border-gray-200 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50">Enable</button>
-            <button onClick={() => void bulkToggle(false)} className="rounded border border-gray-200 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50">Disable</button>
-            <button onClick={() => void bulkDelete()} className="rounded border border-red-200 bg-white px-2 py-1 text-red-600 hover:bg-red-50">Delete</button>
+            <button onClick={() => void bulkToggle(true)} className="rounded-sm border border-gray-200 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50">Enable</button>
+            <button onClick={() => void bulkToggle(false)} className="rounded-sm border border-gray-200 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50">Disable</button>
+            <button onClick={() => void bulkDelete()} className="rounded-sm border border-red-200 bg-white px-2 py-1 text-red-600 hover:bg-red-50">Delete</button>
             <button onClick={clearSelection} className="ml-auto text-gray-500 hover:text-gray-700">Clear</button>
           </div>
         )}
@@ -3155,9 +3155,9 @@ function TasksSection() {
                       <td className="py-2 pr-3 text-gray-500">{t.run_count ?? 0}</td>
                       <td className="py-2 text-right">
                         <div className="flex justify-end gap-1 text-xs">
-                          <button onClick={() => setOpenRuns(openRuns === t.id ? null : t.id)} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">History</button>
-                          <button onClick={() => act(() => api.restoreTask(t.id))} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Restore</button>
-                          <button onClick={() => { if (confirm("Permanently delete this schedule AND its run history? This cannot be undone.")) act(() => api.purgeTask(t.id)); }} className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50">Delete permanently</button>
+                          <button onClick={() => setOpenRuns(openRuns === t.id ? null : t.id)} className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50">History</button>
+                          <button onClick={() => act(() => api.restoreTask(t.id))} className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50">Restore</button>
+                          <button onClick={() => { if (confirm("Permanently delete this schedule AND its run history? This cannot be undone.")) act(() => api.purgeTask(t.id)); }} className="rounded-sm border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50">Delete permanently</button>
                         </div>
                       </td>
                     </tr>
@@ -3259,7 +3259,7 @@ function TaskRuns({ taskId }: { taskId: string }) {
     <div className="space-y-1">
       {runs.map((r: TaskRunInfo) => (
         <div key={r.id} className="flex items-center gap-3 text-xs">
-          <span className={`rounded px-1.5 py-0.5 ${statusClass(r.status === "succeeded" ? "on" : r.status === "failed" ? "failed" : "")}`}>{r.status}</span>
+          <span className={`rounded-sm px-1.5 py-0.5 ${statusClass(r.status === "succeeded" ? "on" : r.status === "failed" ? "failed" : "")}`}>{r.status}</span>
           <span className="text-gray-400">{formatTimestamp(r.started_at)}</span>
           <span className="text-gray-400">{r.trigger}</span>
           <span className="min-w-0 flex-1 truncate text-gray-600">{r.error || r.summary || ""}</span>
@@ -3522,7 +3522,7 @@ function TaskForm({
             <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border bg-white p-1.5">
               {workloads.length === 0 && <div className="px-2 py-2 text-xs text-gray-400">{workloadsQ.isLoading ? "Loading…" : "No workloads."}</div>}
               {workloads.map((w) => (
-                <label key={w.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
+                <label key={w.id} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm hover:bg-gray-50">
                   <input type="checkbox" checked={cfgWorkloadIds.includes(w.id)} onChange={() => setCfg({ workload_ids: cfgWorkloadIds.includes(w.id) ? cfgWorkloadIds.filter((x) => x !== w.id) : [...cfgWorkloadIds, w.id] })} />
                   <span className="truncate text-gray-700">{w.name}</span>
                 </label>
@@ -3557,13 +3557,13 @@ function TaskForm({
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 text-xs text-gray-600"><input type="checkbox" checked={cfg.use_ai !== false} onChange={(e) => setCfg({ use_ai: e.target.checked })} />AI executive summary</label>
             <label className="flex items-center gap-2 text-xs text-gray-600"><input type="checkbox" checked={cfg.alert_on_new_findings !== false} onChange={(e) => setCfg({ alert_on_new_findings: e.target.checked })} />Alert on new findings ≥
-              <select value={(cfg.alert_min_severity as string) ?? "warning"} onChange={(e) => setCfg({ alert_min_severity: e.target.value })} className="rounded border px-1.5 py-0.5 text-[11px]"><option value="warning">Warning</option><option value="error">Error</option><option value="critical">Critical</option></select>
+              <select value={(cfg.alert_min_severity as string) ?? "warning"} onChange={(e) => setCfg({ alert_min_severity: e.target.value })} className="rounded-sm border px-1.5 py-0.5 text-[11px]"><option value="warning">Warning</option><option value="error">Error</option><option value="critical">Critical</option></select>
             </label>
           </div>
           <label className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
             <input type="checkbox" checked={!!cfg.alert_on_low_confidence} onChange={(e) => setCfg({ alert_on_low_confidence: e.target.checked })} />
             Alert when result confidence is low (&lt;
-            <select value={String((cfg.min_completeness_pct as number) ?? 98)} onChange={(e) => setCfg({ min_completeness_pct: Number(e.target.value) })} className="rounded border px-1.5 py-0.5 text-[11px]">
+            <select value={String((cfg.min_completeness_pct as number) ?? 98)} onChange={(e) => setCfg({ min_completeness_pct: Number(e.target.value) })} className="rounded-sm border px-1.5 py-0.5 text-[11px]">
               <option value="98">98%</option><option value="90">90%</option><option value="80">80%</option><option value="70">70%</option>
             </select>
             controls evaluated)
@@ -3643,7 +3643,7 @@ function TaskForm({
                 ["Monthly 1st", "0 9 1 * *"],
               ].map(([lbl, expr]) => (
                 <button key={expr} type="button" onClick={() => set({ cron_expr: expr })}
-                  className="rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700">{lbl}</button>
+                  className="rounded-sm border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700">{lbl}</button>
               ))}
             </div>
           </div>
@@ -3753,7 +3753,7 @@ function TaskForm({
           onClick={() => set({ status: (form.status ?? "on") === "on" ? "off" : "on" })}
           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${(form.status ?? "on") === "on" ? "bg-green-500" : "bg-gray-300"}`}
         >
-          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${(form.status ?? "on") === "on" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${(form.status ?? "on") === "on" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
         </button>
         <span className="font-medium">Schedule enabled</span>
         <span className="text-xs text-gray-400">{(form.status ?? "on") === "on" ? "Runs automatically on its schedule" : "Paused — won't run until enabled"}</span>

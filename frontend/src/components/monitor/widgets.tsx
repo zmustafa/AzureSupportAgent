@@ -378,7 +378,7 @@ function ListWidget({ widget, params, live }: WidgetProps) {
                 <span className="truncate text-gray-700">{r.label}</span>
                 <span className="tabular-nums text-gray-500">{r.value}</span>
               </div>
-              {r.value && <div className="mt-0.5 h-1 rounded bg-gray-100"><div className="h-1 rounded bg-brand/60" style={{ width: `${(v / max) * 100}%` }} /></div>}
+              {r.value && <div className="mt-0.5 h-1 rounded-sm bg-gray-100"><div className="h-1 rounded-sm bg-brand/60" style={{ width: `${(v / max) * 100}%` }} /></div>}
             </div>
           );
         })}
@@ -410,7 +410,7 @@ function MapWidget({ widget, params, live }: WidgetProps) {
               <span className="truncate text-gray-700">🌍 {r.region}</span>
               <span className="tabular-nums text-gray-500">{r.count}</span>
             </div>
-            <div className="mt-0.5 h-1.5 rounded bg-gray-100"><div className="h-1.5 rounded bg-sky-500/70" style={{ width: `${(r.count / max) * 100}%` }} /></div>
+            <div className="mt-0.5 h-1.5 rounded-sm bg-gray-100"><div className="h-1.5 rounded-sm bg-sky-500/70" style={{ width: `${(r.count / max) * 100}%` }} /></div>
           </div>
         ))}
       </div>

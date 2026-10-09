@@ -35,7 +35,7 @@ export { SECURITY_NAV, ACCESS_NAV, ACCESS_SUB_IDS };
 // ------------------------------------------------------------------ shared bits
 function Card({ title, children, actions }: { title: string; children: React.ReactNode; actions?: React.ReactNode }) {
   return (
-    <section className="rounded-lg border bg-white p-4 shadow-sm">
+    <section className="rounded-lg border bg-white p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-medium">{title}</h2>
         {actions}
@@ -88,7 +88,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputCls =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none";
+  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden";
 
 function errMsg(e: unknown): string {
   return e instanceof HttpError ? e.detail : "Something went wrong.";
@@ -118,7 +118,7 @@ function UsersCard() {
         </Btn>
       }
     >
-      {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
       {creating && (
         <UserForm
           roles={roles.data ?? []}
@@ -168,7 +168,7 @@ function UsersCard() {
                   <div className="flex flex-wrap gap-1">
                     {u.role_names.length === 0 && <span className="text-xs text-slate-400">—</span>}
                     {u.role_names.map((n) => (
-                      <span key={n} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{roleLabel(n)}</span>
+                      <span key={n} className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs">{roleLabel(n)}</span>
                     ))}
                   </div>
                 </td>
@@ -184,7 +184,7 @@ function UsersCard() {
                     {u.status}
                   </span>
                   {u.locked && (
-                    <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">locked</span>
+                    <span className="ml-1 rounded-sm bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">locked</span>
                   )}
                 </td>
                 <td className="py-2 pr-3 text-xs text-slate-500">
@@ -473,7 +473,7 @@ function RolesCard() {
       title="Roles"
       actions={<Btn variant="primary" onClick={() => { setCreating(true); setEditing(null); setErr(null); }}>+ New role</Btn>}
     >
-      {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
       {(creating || editing) && (
         <RoleForm
           role={editing}
@@ -485,12 +485,12 @@ function RolesCard() {
       )}
       <div className="space-y-2">
         {roles.data?.map((r) => (
-          <div key={r.id} className="rounded border p-3">
+          <div key={r.id} className="rounded-sm border p-3">
             <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-800">{roleLabel(r.name)}</span>
-                  {r.is_system && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">system</span>}
+                  {r.is_system && <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">system</span>}
                 </div>
                 <div className="text-xs text-slate-500">{r.description}</div>
               </div>
@@ -512,7 +512,7 @@ function RolesCard() {
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {r.permissions.map((p) => (
-                <span key={p} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{p}</span>
+                <span key={p} className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{p}</span>
               ))}
             </div>
           </div>
@@ -579,7 +579,7 @@ function RoleForm({
             const allOn = keys.every((k) => selected.includes(k));
             const someOn = keys.some((k) => selected.includes(k));
             return (
-              <div key={group} className="rounded border bg-white">
+              <div key={group} className="rounded-sm border bg-white">
                 <div className="flex items-center justify-between border-b bg-slate-50 px-3 py-1.5">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{group}</span>
                   <button
@@ -592,7 +592,7 @@ function RoleForm({
                 </div>
                 <div className="grid grid-cols-1 gap-1.5 p-2 sm:grid-cols-2">
                   {items.map((p) => (
-                    <label key={p.key} className="flex items-start gap-2 rounded border bg-white px-2 py-1.5 text-sm">
+                    <label key={p.key} className="flex items-start gap-2 rounded-sm border bg-white px-2 py-1.5 text-sm">
                       <input type="checkbox" checked={selected.includes(p.key)} onChange={() => toggle(p.key)} className="mt-0.5" />
                       <span>
                         <span className="font-medium text-slate-700">{p.label}</span>
@@ -631,7 +631,7 @@ function GroupsCard() {
       title="Groups"
       actions={<Btn variant="primary" onClick={() => { setCreating(true); setEditing(null); setErr(null); }}>+ New group</Btn>}
     >
-      {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
       {(creating || editing) && (
         <GroupForm
           group={editing}
@@ -644,13 +644,13 @@ function GroupsCard() {
       <div className="space-y-2">
         {groups.data?.length === 0 && <p className="text-sm text-slate-500">No groups yet.</p>}
         {groups.data?.map((g) => (
-          <div key={g.id} className="flex items-start justify-between rounded border p-3">
+          <div key={g.id} className="flex items-start justify-between rounded-sm border p-3">
             <div>
               <div className="font-medium text-slate-800">{g.name}</div>
               <div className="text-xs text-slate-500">{g.description}</div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {g.role_ids.map((rid) => (
-                  <span key={rid} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">
+                  <span key={rid} className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs">
                     {roles.data?.find((r) => r.id === rid)?.name ?? rid}
                   </span>
                 ))}
@@ -772,7 +772,7 @@ function IdentityProvidersCard() {
         </div>
       }
     >
-      {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
       <p className="mb-3 text-sm text-slate-500">
         Connect Microsoft Entra ID, Okta, Auth0, Google, ADFS, PingFederate, or any
         OIDC/SAML 2.0 provider. Local password sign-in is configured under{" "}
@@ -793,12 +793,12 @@ function IdentityProvidersCard() {
       <div className="space-y-2">
         {idps.data?.length === 0 && <p className="text-sm text-slate-500">No identity providers configured.</p>}
         {idps.data?.map((p) => (
-          <div key={p.id} className="flex items-center justify-between rounded border p-3">
+          <div key={p.id} className="flex items-center justify-between rounded-sm border p-3">
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-slate-800">{p.name}</span>
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs uppercase text-slate-500">{p.type}</span>
-                <span className={`rounded px-1.5 py-0.5 text-xs ${p.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs uppercase text-slate-500">{p.type}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-xs ${p.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
                   {p.enabled ? "enabled" : "disabled"}
                 </span>
               </div>
@@ -874,7 +874,7 @@ function CopyBtn({ value }: { value: string }) {
           setTimeout(() => setCopied(false), 1500);
         } catch { /* clipboard blocked */ }
       }}
-      className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+      className="shrink-0 rounded-sm border border-slate-300 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
       title="Copy"
     >
       {copied ? "✓ Copied" : "Copy"}
@@ -903,7 +903,7 @@ function SsoSetupGuide({ type, redirectUri, metadataUrl, hasId }: { type: string
       {open && (
         <div className="space-y-3 border-t border-indigo-100 px-4 py-3 text-xs text-slate-600">
           {!hasId && (
-            <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-700">
+            <div className="rounded-sm border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-700">
               Tip: <b>Create the provider first</b> (button below), then re-open this guide — the
               Redirect URI will then contain the real provider ID to paste into Entra.
             </div>
@@ -984,7 +984,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mt-1.5 flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1">
+    <div className="mt-1.5 flex items-center gap-2 rounded-sm border border-slate-200 bg-white px-2 py-1">
       <span className="shrink-0 text-[11px] font-medium text-slate-400">{label}</span>
       <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-700" title={value}>{value}</span>
       <CopyBtn value={value} />
@@ -1111,7 +1111,7 @@ function IdpForm({
           </span>
         </label>
       )}
-      <div className="mt-3 rounded border border-slate-200 bg-white p-3 text-xs text-slate-500">
+      <div className="mt-3 rounded-sm border border-slate-200 bg-white p-3 text-xs text-slate-500">
         <div className="font-medium text-slate-600">Configure at your IdP:</div>
         {type === "saml" ? (
           <>
@@ -1210,7 +1210,7 @@ function SessionsCard() {
         </div>
       }
     >
-      {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
       <label className="mb-3 flex items-center gap-2 text-xs text-slate-500">
         <input type="checkbox" checked={showExpired} onChange={(e) => setShowExpired(e.target.checked)} />
         Show expired sessions{expiredCount > 0 ? ` (${expiredCount})` : ""}
@@ -1305,7 +1305,7 @@ function PoliciesCard() {
     </Field>
   );
   const boolRow = (k: keyof AuthPolicies, label: string, hint?: string) => (
-    <label className="flex items-start gap-2 rounded border bg-white px-3 py-2 text-sm">
+    <label className="flex items-start gap-2 rounded-sm border bg-white px-3 py-2 text-sm">
       <input type="checkbox" checked={values[k] as boolean} onChange={(e) => set(k, e.target.checked as never)} className="mt-0.5" />
       <span>
         <span className="font-medium text-slate-700">{label}</span>
@@ -1323,8 +1323,8 @@ function PoliciesCard() {
         </Btn>
       }
     >
-      {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
-      {saved && <div className="mb-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Policy saved.</div>}
+      {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {saved && <div className="mb-3 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Policy saved.</div>}
 
       <h3 className="mb-2 text-sm font-semibold text-slate-700">Sign-in methods</h3>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1464,7 +1464,7 @@ function FirewallExportMenu({ dirty, onError }: { dirty: boolean; onError: (mess
           type="button"
           disabled={!!busy}
           onClick={() => void download("txt")}
-          className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+          className="block w-full rounded-sm px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
         >
           <span className="block font-medium text-slate-700">Active ranges — TXT</span>
           <span className="block text-xs text-slate-500">One active CIDR per line.</span>
@@ -1473,7 +1473,7 @@ function FirewallExportMenu({ dirty, onError }: { dirty: boolean; onError: (mess
           type="button"
           disabled={!!busy}
           onClick={() => void download("csv")}
-          className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+          className="block w-full rounded-sm px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
         >
           <span className="block font-medium text-slate-700">All rules — CSV</span>
           <span className="block text-xs text-slate-500">Includes labels and disabled rules.</span>
@@ -1636,7 +1636,7 @@ function FirewallImportPanel({
           {!!sourceName && sourceName !== "pasted-ranges.txt" && (
             <div className="mt-3">
               <p className="text-xs font-medium text-slate-700">{sourceName}</p>
-              <pre className="mt-1 max-h-32 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-100">
+              <pre className="mt-1 max-h-32 overflow-auto rounded-sm bg-slate-950 p-2 text-[10px] text-slate-100">
                 {text.slice(0, 8_000)}{text.length > 8_000 ? "\n…" : ""}
               </pre>
             </div>
@@ -1671,7 +1671,7 @@ function FirewallImportPanel({
         </fieldset>
       </div>
 
-      {error && <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</div>}
+      {error && <div className="mt-3 rounded-sm border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</div>}
 
       <div className="mt-3 flex flex-wrap gap-2">
         <Btn variant="primary" disabled={busy || !text.trim()} onClick={() => void runPreview()}>
@@ -1701,7 +1701,7 @@ function FirewallImportPanel({
               ["Result", preview.summary.result_total],
               ["Active", preview.summary.enabled_total],
             ] as const).map(([labelText, value]) => (
-              <div key={labelText} className="rounded border bg-white px-2 py-1.5">
+              <div key={labelText} className="rounded-sm border bg-white px-2 py-1.5">
                 <div className="text-slate-400">{labelText}</div>
                 <div className="font-semibold tabular-nums text-slate-800">{value.toLocaleString()}</div>
               </div>
@@ -1709,19 +1709,19 @@ function FirewallImportPanel({
           </div>
 
           {preview.errors.length > 0 && (
-            <ul className="list-disc space-y-0.5 rounded border border-rose-200 bg-rose-50 p-3 pl-7 text-xs text-rose-800">
+            <ul className="list-disc space-y-0.5 rounded-sm border border-rose-200 bg-rose-50 p-3 pl-7 text-xs text-rose-800">
               {preview.errors.map((message) => <li key={message}>{message}</li>)}
             </ul>
           )}
 
-          <div className={`rounded border px-3 py-2 text-xs ${preview.your_ip_covered ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+          <div className={`rounded-sm border px-3 py-2 text-xs ${preview.your_ip_covered ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
             {preview.your_ip_covered
               ? `The resulting list covers your current address (${preview.your_ip ?? "unknown"}).`
               : `The resulting list does not cover your current address (${preview.your_ip ?? "unknown"}). Enforce-mode Save remains blocked until you add it.`}
           </div>
 
           {preview.overlap_count > 0 && (
-            <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            <div className="rounded-sm border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               <div className="font-medium">{preview.overlap_count.toLocaleString()} overlapping range pair(s) — retained as entered.</div>
               <ul className="mt-1 list-disc pl-5">
                 {preview.overlaps.slice(0, 10).map((item) => <li key={`${item.cidr}-${item.overlaps}`}>{item.message}</li>)}
@@ -1731,7 +1731,7 @@ function FirewallImportPanel({
           )}
 
           {visibleDiagnostics.length > 0 && (
-            <div className="overflow-x-auto rounded border bg-white">
+            <div className="overflow-x-auto rounded-sm border bg-white">
               <table className="w-full text-xs">
                 <thead className="bg-slate-50 text-left text-slate-500">
                   <tr><th className="px-2 py-1.5">Line</th><th className="px-2 py-1.5">Input</th><th className="px-2 py-1.5">Normalized</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Detail</th></tr>
@@ -1742,7 +1742,7 @@ function FirewallImportPanel({
                       <td className="px-2 py-1.5 tabular-nums text-slate-500">{item.line}</td>
                       <td className="max-w-56 break-all px-2 py-1.5 font-mono text-slate-700">{item.input || "—"}</td>
                       <td className="px-2 py-1.5 font-mono text-slate-700">{item.cidr ?? "—"}</td>
-                      <td className="px-2 py-1.5"><span className={`rounded px-1.5 py-0.5 ${statusStyle[item.status] ?? statusStyle.valid}`}>{item.status}</span></td>
+                      <td className="px-2 py-1.5"><span className={`rounded-sm px-1.5 py-0.5 ${statusStyle[item.status] ?? statusStyle.valid}`}>{item.status}</span></td>
                       <td className="max-w-80 px-2 py-1.5 text-slate-600">{item.message || item.label}</td>
                     </tr>
                   ))}
@@ -1908,21 +1908,21 @@ function FirewallCard() {
               {save.isPending ? "Saving…" : "Save"}
             </Btn>
           ) : (
-            <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Read-only</span>
+            <span className="rounded-sm bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Read-only</span>
           )
         }
       >
-        {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
-        {saved && <div className="mb-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Network access saved.</div>}
+        {err && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+        {saved && <div className="mb-3 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Network access saved.</div>}
         {!canManage && (
-          <div className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          <div className="mb-3 rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
             You can view the network access policy but not change it. Changing it requires the
             <strong> Change network access control</strong> permission.
           </div>
         )}
 
         {server?.break_glass_active && (
-          <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="mb-3 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <strong>Break-glass is active.</strong> <code>IP_ALLOWLIST_DISABLED</code> is set on the
             container, so no address is being blocked regardless of the settings below. Remove that
             environment variable to resume enforcement.
@@ -1930,7 +1930,7 @@ function FirewallCard() {
         )}
 
         {countdown && (
-          <div className="mb-3 flex items-center justify-between gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <span>
               <strong>Enforcing provisionally</strong> — reverts to Monitor in {countdown} unless you
               confirm you still have access.
@@ -1985,7 +1985,7 @@ function FirewallCard() {
         </div>
 
         {needsTypedConfirm && !enforceBlocked && (
-          <div className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <div className="mt-4 rounded-sm border border-red-300 bg-red-50 p-3 text-sm text-red-800">
             <p className="font-semibold">Restrict access to this application?</p>
             <p className="mt-1">
               Everyone outside the {rules.filter((r) => r.enabled).length} enabled range(s) will get a
@@ -2046,7 +2046,7 @@ function FirewallCard() {
         }
       >
         {importApplied && (
-          <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <div className="mb-4 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
             Imported into the draft — review the resulting list and press <strong>Save</strong> to activate it.
           </div>
         )}
@@ -2122,7 +2122,7 @@ function FirewallCard() {
                 onChange={(event) => { setRuleSearch(event.target.value); setRulePage(0); }}
                 aria-label="Search allowed sources"
                 placeholder="Search range, label, scope, or status…"
-                className="w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-dark focus:outline-none"
+                className="w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-dark focus:outline-hidden"
               />
               <span className="text-xs text-slate-500">
                 {filteredRules.length.toLocaleString()} of {rules.length.toLocaleString()} rule(s)
@@ -2130,7 +2130,7 @@ function FirewallCard() {
             </div>
 
             {visibleRules.length === 0 ? (
-              <p className="rounded border bg-slate-50 px-3 py-4 text-sm text-slate-500">No rules match this search.</p>
+              <p className="rounded-sm border bg-slate-50 px-3 py-4 text-sm text-slate-500">No rules match this search.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -2243,9 +2243,9 @@ function FirewallResolutionDetail({ resolution }: { resolution: FirewallResoluti
         {open ? "Hide" : "How was my address determined?"}
       </button>
       {open && (
-        <div className="mt-2 rounded border bg-slate-50 p-3 text-xs text-slate-600">
+        <div className="mt-2 rounded-sm border bg-slate-50 p-3 text-xs text-slate-600">
           <p className="mb-2">{resolution.reason}</p>
-          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
             <dt className="text-slate-500">Resolved as</dt>
             <dd className="font-mono">{resolution.resolved_ip ?? "— (caller not identifiable)"}</dd>
             <dt className="text-slate-500">Connection peer</dt>
@@ -2375,12 +2375,12 @@ function FirewallBlocksCard({
       actions={
         <div className="flex items-center gap-2">
           {effectiveMode === "monitor" && (
-            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            <span className="rounded-sm bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
               MONITOR — WOULD HAVE BEEN BLOCKED
             </span>
           )}
           {effectiveMode === "enforce" && (
-            <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+            <span className="rounded-sm bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
               BLOCKED
             </span>
           )}
@@ -2495,7 +2495,7 @@ export function SecurityPanel({ section, fullWidth = false }: { section: Securit
   }, [section]);
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className={`mx-auto w-full space-y-6 p-6 ${fullWidth ? "max-w-none" : "max-w-6xl 2xl:max-w-screen-2xl"}`}>{body}</div>
+      <div className={`mx-auto w-full space-y-6 p-6 ${fullWidth ? "max-w-none" : "max-w-6xl 2xl:max-w-(--breakpoint-2xl)"}`}>{body}</div>
     </div>
   );
 }

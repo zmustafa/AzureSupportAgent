@@ -99,7 +99,7 @@ const PILLAR_STATE_STYLE: Record<string, string> = {
 
 function SevChip({ severity }: { severity: string }) {
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEV_STYLE[severity] ?? SEV_STYLE.info}`}>
+    <span className={`rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEV_STYLE[severity] ?? SEV_STYLE.info}`}>
       {severity}
     </span>
   );
@@ -126,7 +126,7 @@ function ScoreCard() {
             </>
           ) : (
             // Deliberately not a letter, not a dash-in-a-circle that reads like a bad grade.
-            <div className="max-w-[9rem] text-xs text-gray-500">
+            <div className="max-w-36 text-xs text-gray-500">
               <div className="mb-1 text-lg font-semibold text-gray-400">No grade</div>
               {s.grade_withheld_reason}
             </div>
@@ -141,8 +141,8 @@ function ScoreCard() {
             Measured <b className="tabular-nums">{pct}%</b> of the weighted checks
             {pct < floorPct && <span className="text-amber-700"> · below the {floorPct}% needed for a grade</span>}
           </div>
-          <div className="mt-1 h-2 w-full rounded bg-gray-100" title={`${pct}% coverage`}>
-            <div className={`h-2 rounded ${pct < floorPct ? "bg-amber-400" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+          <div className="mt-1 h-2 w-full rounded-sm bg-gray-100" title={`${pct}% coverage`}>
+            <div className={`h-2 rounded-sm ${pct < floorPct ? "bg-amber-400" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
           </div>
         </div>
       </div>
@@ -220,8 +220,8 @@ function FindingCard({ f, onState }: { f: IamFinding; onState: (fp: string, stat
           </div>
           <div className="mt-1 text-xs text-gray-700">{f.detail}</div>
         </div>
-        {f.count > 1 && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] tabular-nums text-gray-600">{f.count}</span>}
-        <span className={`rounded border px-1.5 py-0.5 text-[10px] ${STATE_STYLE[f.state] ?? STATE_STYLE.open}`}>{f.state.replace("_", " ")}</span>
+        {f.count > 1 && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] tabular-nums text-gray-600">{f.count}</span>}
+        <span className={`rounded-sm border px-1.5 py-0.5 text-[10px] ${STATE_STYLE[f.state] ?? STATE_STYLE.open}`}>{f.state.replace("_", " ")}</span>
       </div>
       {open && (
         <div className="mt-3 space-y-2 border-t pt-2 text-xs">
@@ -238,14 +238,14 @@ function FindingCard({ f, onState }: { f: IamFinding; onState: (fp: string, stat
           {f.frameworks.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {f.frameworks.map((fr) => (
-                <span key={fr} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{fr}</span>
+                <span key={fr} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{fr}</span>
               ))}
             </div>
           )}
           {Object.keys(f.evidence ?? {}).length > 0 && (
             <div>
               <div className="font-semibold text-gray-700">Evidence</div>
-              <pre className="mt-1 max-h-40 overflow-auto rounded bg-gray-50 p-2 text-[11px] text-gray-700">
+              <pre className="mt-1 max-h-40 overflow-auto rounded-sm bg-gray-50 p-2 text-[11px] text-gray-700">
                 {JSON.stringify(f.evidence, null, 2)}
               </pre>
             </div>
@@ -262,7 +262,7 @@ function FindingCard({ f, onState }: { f: IamFinding; onState: (fp: string, stat
                 type="button"
                 disabled={st === f.state}
                 onClick={() => onState(f.id, st)}
-                className="rounded border px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-40"
               >
                 {st.replace("_", " ")}
               </button>
@@ -482,7 +482,7 @@ export function FindingsTab() {
             key={s}
             type="button"
             onClick={() => setSeverity(severity === s ? "" : s)}
-            className={`rounded border px-2 py-0.5 text-xs ${severity === s ? SEV_STYLE[s] : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
+            className={`rounded-sm border px-2 py-0.5 text-xs ${severity === s ? SEV_STYLE[s] : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
           >
             {/* An em dash, not 0, until the count is actually known. This screen can take tens
                 of seconds on a large tenant, and "critical 0" beside "Loading findings…" is the
@@ -493,7 +493,7 @@ export function FindingsTab() {
         <select
           value={pillar}
           onChange={(e) => setPillar(e.target.value)}
-          className="rounded border border-gray-300 px-2 py-0.5 text-xs"
+          className="rounded-sm border border-gray-300 px-2 py-0.5 text-xs"
           aria-label="Filter by pillar"
         >
           <option value="">All pillars</option>
@@ -506,7 +506,7 @@ export function FindingsTab() {
         <select
           value={groupBy}
           onChange={(e) => setGroupBy(e.target.value as GroupKey)}
-          className="rounded border border-gray-300 px-2 py-0.5 text-xs"
+          className="rounded-sm border border-gray-300 px-2 py-0.5 text-xs"
           aria-label="Group findings"
         >
           {GROUP_OPTIONS.map((o) => (
@@ -517,7 +517,7 @@ export function FindingsTab() {
           <select
             value={subGroupBy}
             onChange={(e) => setSubGroupBy(e.target.value as GroupKey)}
-            className="rounded border border-gray-300 px-2 py-0.5 text-xs"
+            className="rounded-sm border border-gray-300 px-2 py-0.5 text-xs"
             aria-label="Sub-group findings"
           >
             {/* The primary dimension is omitted: nesting a section inside itself yields one
@@ -536,14 +536,14 @@ export function FindingsTab() {
             <button
               type="button"
               onClick={() => setCollapsed(new Set(allGroupKeys))}
-              className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+              className="rounded-sm border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
             >
               Collapse all
             </button>
             <button
               type="button"
               onClick={() => setCollapsed(new Set())}
-              className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+              className="rounded-sm border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
             >
               Expand all
             </button>
@@ -567,7 +567,7 @@ export function FindingsTab() {
         ) : (
           <>
             {data?.truncated && (
-              <div className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
+              <div className="rounded-sm border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
                 Showing the first {data.limit} of {data.total} findings.
               </div>
             )}
@@ -591,7 +591,7 @@ export function FindingsTab() {
                         <span className="truncate text-[11px] text-amber-700">{g.note}</span>
                       ) : (
                         <>
-                          <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[11px] tabular-nums text-gray-600">
+                          <span className="shrink-0 rounded-sm bg-white px-1.5 py-0.5 text-[11px] tabular-nums text-gray-600">
                             {g.total}
                           </span>
                           {/* The count above is the true size of the group for the current
@@ -627,7 +627,7 @@ export function FindingsTab() {
                                   <button
                                     type="button"
                                     onClick={() => toggleGroup(subKey)}
-                                    className="flex w-full items-center gap-2 rounded border bg-white px-3 py-1 text-left"
+                                    className="flex w-full items-center gap-2 rounded-sm border bg-white px-3 py-1 text-left"
                                   >
                                     <span className="w-3 shrink-0 text-[10px] text-gray-400">
                                       {collapsed.has(subKey) ? "▸" : "▾"}
@@ -638,7 +638,7 @@ export function FindingsTab() {
                                         no authoritative count for a (section, sub-section) pair.
                                         Exact while the section is whole, and the section header
                                         above already says when it is not. */}
-                                    <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] tabular-nums text-gray-600">
+                                    <span className="shrink-0 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] tabular-nums text-gray-600">
                                       {g.items.length < g.total ? `${s.items.length} shown` : s.items.length}
                                     </span>
                                     <span className="ml-auto shrink-0 text-[11px] text-gray-400">

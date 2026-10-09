@@ -167,7 +167,7 @@ export function GuidedFill({
           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
             <span className="truncate font-medium text-gray-700">{scopeLabel}</span>
             {onClearScope && (
-              <button onClick={onClearScope} className="ml-auto shrink-0 rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50">Fill whole document</button>
+              <button onClick={onClearScope} className="ml-auto shrink-0 rounded-sm border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50">Fill whole document</button>
             )}
           </div>
         )}
@@ -249,7 +249,7 @@ export function GuidedFill({
                     onChange={(e) => setDraftAssignee(e.target.value)}
                     placeholder="Assignee (who should fill this in?)"
                     aria-label="Field assignee"
-                    className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-hidden"
                   />
                   <textarea
                     value={draftNote}
@@ -257,7 +257,7 @@ export function GuidedFill({
                     placeholder="Note / request for information…"
                     aria-label="Field note"
                     rows={2}
-                    className="w-full resize-y rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-none"
+                    className="w-full resize-y rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] focus:border-brand focus:outline-hidden"
                   />
                 </div>
               )}

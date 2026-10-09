@@ -26,7 +26,7 @@ function scoreTone(score: number | null): string {
 function ScorePill({ score }: { score: number | null }) {
   if (score == null) return <span className="text-xs text-gray-400">—</span>;
   const bg = score >= 80 ? "bg-green-100 text-green-700" : score >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
-  return <span className={`inline-block min-w-[2.25rem] rounded px-1.5 py-0.5 text-center text-xs font-semibold tabular-nums ${bg}`}>{score}</span>;
+  return <span className={`inline-block min-w-9 rounded-sm px-1.5 py-0.5 text-center text-xs font-semibold tabular-nums ${bg}`}>{score}</span>;
 }
 
 function relTime(iso: string): string {
@@ -282,7 +282,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
             <span>{batch.completed}/{batch.total} complete</span>
             <span>{batch.succeeded} succeeded · {batch.partial} partial · {batch.failed} failed{batch.cancelled ? ` · ${batch.cancelled} cancelled` : ""}</span>
             {batchActive && (
-              <button onClick={() => void cancelBatch()} disabled={busy !== ""} className="ml-auto rounded border border-current/30 px-2 py-0.5 font-medium disabled:opacity-50">
+              <button onClick={() => void cancelBatch()} disabled={busy !== ""} className="ml-auto rounded-sm border border-current/30 px-2 py-0.5 font-medium disabled:opacity-50">
                 {busy === "cancel" ? "Cancelling…" : "Cancel pending"}
               </button>
             )}
@@ -339,7 +339,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                       </button>
                       <div className="flex items-center gap-1">
                         {r.environment && <span className="text-[10px] text-gray-400">{r.environment}</span>}
-                        {r.stale && r.has_runs && <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-600" title="Older than the cache window">stale</span>}
+                        {r.stale && r.has_runs && <span className="rounded-sm bg-amber-50 px-1 text-[10px] text-amber-600" title="Older than the cache window">stale</span>}
                       </div>
                     </td>
                     <td className="px-2 py-1.5">
@@ -348,9 +348,9 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                       ) : queued ? (
                         <span className="text-[11px] text-gray-400">queued</span>
                       ) : partial ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={err}>⚠ partial</span>
+                        <span className="inline-flex items-center gap-1 rounded-sm bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={err}>⚠ partial</span>
                       ) : failed ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700" title={err}>⚠ failed</span>
+                        <span className="inline-flex items-center gap-1 rounded-sm bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700" title={err}>⚠ failed</span>
                       ) : r.has_runs ? (
                         <ScorePill score={r.workload_score} />
                       ) : (
@@ -383,7 +383,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                       {r.has_runs && r.window && !running && !queued && !partial && !failed && <div className="text-[10px] text-gray-400">{r.window}</div>}
                     </td>
                     <td className="px-2 py-1.5">
-                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
+                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
                     </td>
                   </tr>
                 );

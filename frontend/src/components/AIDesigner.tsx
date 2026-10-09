@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { AgentAnswer, AgentInterviewResult, AgentWizardQuestion } from "../api";
 import { formatError } from "../utils/format";
 
-const input = "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+const input = "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 
 type Stage = "intent" | "interview" | "generating" | "error";

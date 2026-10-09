@@ -6,7 +6,7 @@ import { SeverityBadge } from "./WorkbooksView";
 import { AIDesigner } from "./AIDesigner";
 
 const input =
-  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 
 export function PlaybooksSection() {
@@ -178,7 +178,7 @@ export function PlaybooksSection() {
 
       <div className="space-y-3">
         {playbooks.map((p) => (
-          <div key={p.id} className="rounded-xl border bg-white p-4 shadow-sm">
+          <div key={p.id} className="rounded-xl border bg-white p-4 shadow-xs">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <span className="font-semibold text-gray-800">{p.name}</span>
@@ -238,7 +238,7 @@ export function PlaybooksSection() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-gray-700">{s.name || s.step_id}</span>
                     {s.skipped ? (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">skipped</span>
+                      <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">skipped</span>
                     ) : (
                       <SeverityBadge severity={s.severity} />
                     )}
@@ -281,7 +281,7 @@ function PlaybookHistory({ playbook, onRun }: { playbook: Playbook; onRun: () =>
       ) : runs.length === 0 ? (
         <div className="flex items-center justify-between px-1 py-2">
           <span className="text-[11px] text-gray-400">No runs yet.</span>
-          <button onClick={onRun} className="rounded border border-brand/40 px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5">▶ Run now</button>
+          <button onClick={onRun} className="rounded-sm border border-brand/40 px-2 py-0.5 text-[11px] text-brand hover:bg-brand/5">▶ Run now</button>
         </div>
       ) : (
         <div className="max-h-72 space-y-1 overflow-y-auto">
@@ -290,7 +290,7 @@ function PlaybookHistory({ playbook, onRun }: { playbook: Playbook; onRun: () =>
             const done = r.steps.filter((s) => !s.skipped).length;
             const skipped = r.steps.filter((s) => s.skipped).length;
             return (
-              <div key={r.id} className="rounded border bg-white">
+              <div key={r.id} className="rounded-sm border bg-white">
                 <button
                   onClick={() => setOpenId(open ? null : r.id)}
                   className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px]"
@@ -298,7 +298,7 @@ function PlaybookHistory({ playbook, onRun }: { playbook: Playbook; onRun: () =>
                   <span className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}>▸</span>
                   <SeverityBadge severity={r.severity} />
                   <span className={`shrink-0 font-medium ${r.status === "succeeded" ? "text-green-600" : r.status === "running" ? "text-blue-600" : "text-red-600"}`}>{r.status}</span>
-                  {r.trigger && r.trigger !== "manual" && <span className="shrink-0 rounded bg-gray-100 px-1 text-[9px] text-gray-500">{r.trigger}</span>}
+                  {r.trigger && r.trigger !== "manual" && <span className="shrink-0 rounded-sm bg-gray-100 px-1 text-[9px] text-gray-500">{r.trigger}</span>}
                   <span className="min-w-0 flex-1 truncate text-gray-500">{done} step{done === 1 ? "" : "s"}{skipped > 0 ? ` · ${skipped} skipped` : ""}</span>
                   {r.duration_ms != null && <span className="shrink-0 text-gray-400">{formatDuration(r.duration_ms)}</span>}
                   <span className="shrink-0 text-gray-400" title={r.started_at ? formatTimestamp(r.started_at) : ""}>{r.started_at ? formatRelativeFromNow(r.started_at) : ""}</span>
@@ -306,11 +306,11 @@ function PlaybookHistory({ playbook, onRun }: { playbook: Playbook; onRun: () =>
                 {open && (
                   <div className="space-y-1 border-t px-2 py-2">
                     {r.steps.map((s, i) => (
-                      <div key={i} className="rounded border bg-gray-50/60 p-1.5 text-[11px]">
+                      <div key={i} className="rounded-sm border bg-gray-50/60 p-1.5 text-[11px]">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-gray-700">{s.name || s.step_id}</span>
                           {s.skipped ? (
-                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-500">skipped</span>
+                            <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-500">skipped</span>
                           ) : (
                             <>
                               <SeverityBadge severity={s.severity} />
@@ -368,7 +368,7 @@ function PlaybookForm({ value, onClose, onSaved }: { value: Partial<Playbook>; o
       <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-lg font-semibold text-gray-800">{form.id ? "Edit playbook" : "New playbook"}</h2>
-          <button onClick={onClose} className="rounded p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">

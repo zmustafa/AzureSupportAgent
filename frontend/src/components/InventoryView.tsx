@@ -577,7 +577,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
       {/* Filters sidebar */}
       {filtersCollapsed ? (
       <aside data-testid="inventory-filter-sidebar" className="hidden w-11 shrink-0 flex-col items-center border-r bg-white py-3 lg:flex">
-        <button type="button" onClick={() => setFiltersCollapsed(false)} aria-label="Expand inventory filters" title="Expand inventory filters" className="flex h-8 w-8 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+        <button type="button" onClick={() => setFiltersCollapsed(false)} aria-label="Expand inventory filters" title="Expand inventory filters" className="flex h-8 w-8 items-center justify-center rounded-sm text-gray-500 hover:bg-gray-100 hover:text-gray-800">
           <PanelLeftIcon className="h-[18px] w-[18px]" collapsed />
         </button>
         {!!hasFilters && <span className="mt-2 h-2 w-2 rounded-full bg-brand" title="Inventory filters are active" />}
@@ -587,7 +587,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
         <div className="mb-3">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Scope</span>
-            <button type="button" onClick={() => setFiltersCollapsed(true)} aria-label="Collapse inventory filters" title="Collapse inventory filters" className="flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+            <button type="button" onClick={() => setFiltersCollapsed(true)} aria-label="Collapse inventory filters" title="Collapse inventory filters" className="flex h-6 w-6 items-center justify-center rounded-sm text-gray-400 hover:bg-gray-100 hover:text-gray-700">
               <PanelLeftIcon className="h-4 w-4" />
             </button>
           </div>
@@ -935,7 +935,7 @@ function NlSearchBar({
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && run()}
             placeholder='Ask in plain English — e.g. "all virtual machines in eastus with D-series SKU"'
-            className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-brand focus:outline-none"
+            className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-brand focus:outline-hidden"
           />
         </div>
         <button
@@ -1015,7 +1015,7 @@ function FilterChipsBar({ p, hasFilters, onClearAll }: { p: FilterChipsProps; ha
       {p.kqlText && (
         <span className="flex items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">
           🔧 KQL
-          <code className="max-w-[28rem] truncate font-mono">{p.kqlText}</code>
+          <code className="max-w-md truncate font-mono">{p.kqlText}</code>
           <button onClick={() => { p.setKqlIds(null); p.setKqlText(""); }} className="text-violet-400 hover:text-violet-600">✕</button>
         </span>
       )}
@@ -1145,9 +1145,9 @@ function Grid({
   function ResourceRow({ r, measureRef, index }: { r: InventoryResource; measureRef: (el: HTMLElement | null) => void; index: number }) {
     const c = costByRes[r.id.toLowerCase()];
     return (
-      <tr ref={measureRef} data-index={index} onClick={() => onSelect(r)} className={`group cursor-pointer ${selected?.id === r.id ? "bg-brand/5" : picked.has(r.id) ? "bg-brand/[0.03]" : "bg-white hover:bg-gray-50"}`}>
+      <tr ref={measureRef} data-index={index} onClick={() => onSelect(r)} className={`group cursor-pointer ${selected?.id === r.id ? "bg-brand/5" : picked.has(r.id) ? "bg-brand/3" : "bg-white hover:bg-gray-50"}`}>
         <td className={`px-2 ${pad} w-8`} onClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={picked.has(r.id)} onChange={() => onPick(r.id)} className="h-3.5 w-3.5 rounded border-gray-300" />
+          <input type="checkbox" checked={picked.has(r.id)} onChange={() => onPick(r.id)} className="h-3.5 w-3.5 rounded-sm border-gray-300" />
         </td>
         <td className={`px-2 ${pad}`}>
           <div className="flex items-center gap-2">
@@ -1166,7 +1166,7 @@ function Grid({
           <td className={`px-2 ${pad}`}>
             <div className="flex flex-wrap gap-1">
               {r.flags.filter((f) => f !== "untagged").map((f) => (
-                <span key={f} className={`rounded px-1.5 py-0.5 text-[9px] ${FLAG_META[f]?.tone || "bg-gray-100 text-gray-600"}`}>{FLAG_META[f]?.label || f}</span>
+                <span key={f} className={`rounded-sm px-1.5 py-0.5 text-[9px] ${FLAG_META[f]?.tone || "bg-gray-100 text-gray-600"}`}>{FLAG_META[f]?.label || f}</span>
               ))}
               {r.flags.length === 0 && <span className="text-[11px] text-green-500">✓</span>}
             </div>
@@ -1177,7 +1177,7 @@ function Grid({
           <td className={`px-2 ${pad}`}>
             <div className="flex flex-wrap gap-1">
               {r.workloads.length === 0 ? <span className="text-[11px] text-gray-600">—</span> :
-                r.workloads.slice(0, 2).map((w) => <span key={w.id} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600">🧩 {w.name}</span>)}
+                r.workloads.slice(0, 2).map((w) => <span key={w.id} className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-600">🧩 {w.name}</span>)}
               {r.workloads.length > 2 && <span className="text-[10px] text-gray-600">+{r.workloads.length - 2}</span>}
             </div>
           </td>
@@ -1193,10 +1193,10 @@ function Grid({
   return (
     <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
       <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 z-10 bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500 shadow-sm">
+        <thead className="sticky top-0 z-10 bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500 shadow-xs">
           <tr>
             <th className={`px-2 ${pad} w-8`}>
-              <input type="checkbox" checked={allPicked} title="Select all filtered resources" onChange={(e) => onPickAll(resources.map((r) => r.id), e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-300" />
+              <input type="checkbox" checked={allPicked} title="Select all filtered resources" onChange={(e) => onPickAll(resources.map((r) => r.id), e.target.checked)} className="h-3.5 w-3.5 rounded-sm border-gray-300" />
             </th>
             <SortTh k="name" label="Name" />
             {cols.has("type") && <SortTh k="type" label="Type" />}
@@ -1265,8 +1265,8 @@ function ColumnChooser({ cols, setCols }: { cols: Set<ColKey>; setCols: (s: Set<
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div className="absolute right-0 z-30 mt-1 w-44 rounded-lg border bg-white p-2 shadow-lg">
             {ALL_COLS.map((c) => (
-              <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12px] text-gray-700 hover:bg-gray-50">
-                <input type="checkbox" checked={cols.has(c.key)} onChange={() => { const n = new Set(cols); if (n.has(c.key)) n.delete(c.key); else n.add(c.key); setCols(n); }} className="h-3.5 w-3.5 rounded border-gray-300" />
+              <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-[12px] text-gray-700 hover:bg-gray-50">
+                <input type="checkbox" checked={cols.has(c.key)} onChange={() => { const n = new Set(cols); if (n.has(c.key)) n.delete(c.key); else n.add(c.key); setCols(n); }} className="h-3.5 w-3.5 rounded-sm border-gray-300" />
                 {c.label}
               </label>
             ))}
@@ -1367,7 +1367,7 @@ function DetailDrawer({
             <div className="truncate text-base font-semibold text-gray-800" title={r.name}>{r.name}</div>
             <div className="text-xs text-gray-500">{friendlyResourceType(r.type)}</div>
           </div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">✕</button>
         </div>
 
         {/* Tabs */}
@@ -1380,7 +1380,7 @@ function DetailDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm">
           {tab === "overview" && (
             <div className="space-y-4">
-              <div className="rounded-lg border bg-gradient-to-br from-brand/5 to-violet-50 p-3">
+              <div className="rounded-lg border bg-linear-to-br from-brand/5 to-violet-50 p-3">
                 {explain ? <p className="text-[13px] leading-relaxed text-gray-700">{explain}</p> : (
                   <div className="flex items-center gap-3">
                     <button onClick={doExplain} disabled={busy} className="text-sm font-medium text-brand hover:underline disabled:opacity-50">{busy ? "✨ Thinking…" : "✨ Explain this resource"}</button>
@@ -1391,15 +1391,15 @@ function DetailDrawer({
 
               <Field label="Resource ID">
                 <div className="flex items-start gap-1">
-                  <code className="block flex-1 break-all rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-600">{r.id}</code>
-                  <button onClick={() => { navigator.clipboard?.writeText(r.id); setCopied(true); }} className="shrink-0 rounded border px-1.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50">{copied ? "✓" : "Copy"}</button>
+                  <code className="block flex-1 break-all rounded-sm bg-gray-50 px-2 py-1 text-[11px] text-gray-600">{r.id}</code>
+                  <button onClick={() => { navigator.clipboard?.writeText(r.id); setCopied(true); }} className="shrink-0 rounded-sm border px-1.5 py-1 text-[11px] text-gray-500 hover:bg-gray-50">{copied ? "✓" : "Copy"}</button>
                 </div>
               </Field>
 
               {r.flags.length > 0 && (
                 <Field label="Health">
                   <div className="flex flex-wrap gap-1.5">
-                    {r.flags.map((f) => <span key={f} className={`rounded px-2 py-0.5 text-[11px] ${FLAG_META[f]?.tone || "bg-gray-100 text-gray-600"}`}>{FLAG_META[f]?.label || f}</span>)}
+                    {r.flags.map((f) => <span key={f} className={`rounded-sm px-2 py-0.5 text-[11px] ${FLAG_META[f]?.tone || "bg-gray-100 text-gray-600"}`}>{FLAG_META[f]?.label || f}</span>)}
                   </div>
                 </Field>
               )}
@@ -1490,7 +1490,7 @@ function OwnerField({ resourceId, connectionId }: { resourceId: string; connecti
   if (!d || d.unowned) {
     return (
       <div className="space-y-1">
-        <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[12px] text-rose-700">Unowned</span>
+        <span className="rounded-sm bg-rose-50 px-1.5 py-0.5 text-[12px] text-rose-700">Unowned</span>
         <div className="text-[11px] text-gray-400">Assign an owner in the Ownership section.</div>
       </div>
     );
@@ -1501,7 +1501,7 @@ function OwnerField({ resourceId, connectionId }: { resourceId: string; connecti
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
         <span className="text-[13px] font-medium text-gray-800">{primary?.display_name}</span>
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{SRC[d.source] ?? d.source}</span>
+        <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{SRC[d.source] ?? d.source}</span>
         {d.inherited_from && <span className="text-[11px] text-gray-400">via {d.inherited_from.kind} {d.inherited_from.name}</span>}
       </div>
       {wbQ.data?.enabled ? (
@@ -1568,10 +1568,10 @@ function AccessTab({ resourceId, connectionId }: { resourceId: string; connectio
                   {p.principalName || p.principalId}
                 </span>
                 {p.privileged && (
-                  <span className="shrink-0 rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-800">privileged</span>
+                  <span className="shrink-0 rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] text-red-800">privileged</span>
                 )}
                 {p.principalExists === "false" && (
-                  <span className="shrink-0 rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-800">deleted principal</span>
+                  <span className="shrink-0 rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] text-red-800">deleted principal</span>
                 )}
                 {p.principalType && (
                   <span className="shrink-0 text-[10px] text-gray-400">{p.principalType}</span>
@@ -1665,7 +1665,7 @@ function GovernanceTab({ resourceId, connectionId }: { resourceId: string; conne
         <div key={p.id} className="rounded-lg border p-2.5">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-gray-800">{p.display_name}</span>
-            {p.effect && <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{p.effect}</span>}
+            {p.effect && <span className="shrink-0 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{p.effect}</span>}
           </div>
           <div className="mt-0.5 text-[11px] text-gray-500">{p.is_inherited ? `Inherited from ${p.inherited_from}` : "Assigned at this scope"}</div>
         </div>
@@ -1688,10 +1688,10 @@ function FindingsTab({ resourceId }: { resourceId: string }) {
         <div key={`${f.run_id}-${f.check_id}`} className="rounded-lg border border-amber-200 bg-amber-50/40 p-2.5">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-gray-800">{f.title}</span>
-            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${sevTone[f.severity] || sevTone.info}`}>{f.severity}</span>
+            <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] ${sevTone[f.severity] || sevTone.info}`}>{f.severity}</span>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500">
-            <span className="rounded bg-gray-100 px-1.5 py-0.5">{f.pillar}</span>
+            <span className="rounded-sm bg-gray-100 px-1.5 py-0.5">{f.pillar}</span>
             <span>🧩 {f.workload_name}</span>
           </div>
           {f.ai_rationale && <div className="mt-1 text-[11px] text-gray-600">{f.ai_rationale}</div>}
@@ -1718,7 +1718,7 @@ function CostTab({ cost, costCurrency, loaded, onLoad, loading }: { cost?: numbe
   }
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border bg-gradient-to-br from-emerald-50 to-white p-4 text-center">
+      <div className="rounded-lg border bg-linear-to-br from-emerald-50 to-white p-4 text-center">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Last 30 days cost</div>
         <div className="mt-1 text-2xl font-bold text-gray-800">{moneyFmt(cost, costCurrency)}</div>
       </div>
@@ -1773,7 +1773,7 @@ function FacetRow({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[12px] ${active ? "bg-brand/10 text-blue-700" : dimmed ? "text-gray-500 hover:bg-gray-50" : "text-gray-600 hover:bg-gray-100"}`}
+      className={`flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-[12px] ${active ? "bg-brand/10 text-blue-700" : dimmed ? "text-gray-500 hover:bg-gray-50" : "text-gray-600 hover:bg-gray-100"}`}
     >
       {icon}
       <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
@@ -1809,7 +1809,7 @@ function Donut({ data, total }: { data: { label: string; value: number }[]; tota
       <div className="min-w-0 flex-1 space-y-0.5">
         {top.map((d, i) => (
           <div key={d.label} className="flex items-center gap-1.5 text-[11px]">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+            <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
             <span className="min-w-0 flex-1 truncate text-gray-600" title={d.label}>{d.label}</span>
             <span className="shrink-0 font-medium text-gray-700">{d.value}</span>
           </div>
@@ -1840,7 +1840,7 @@ function BarList({ data, total }: { data: { label: string; value: number }[]; to
 
 function OverviewCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border bg-white p-4 shadow-xs">
       <h3 className="mb-3 text-sm font-semibold text-gray-700">{title}</h3>
       {children}
     </div>
@@ -1884,20 +1884,20 @@ function OverviewMode({ inv, connectionId }: {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-(--breakpoint-2xl) space-y-4">
         {/* AI insights */}
-        <div className="rounded-xl border bg-gradient-to-br from-brand/5 to-violet-50 p-4 shadow-sm">
+        <div className="rounded-xl border bg-linear-to-br from-brand/5 to-violet-50 p-4 shadow-xs">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">✨ Estate insights{insights?.source === "local" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-normal text-gray-500">heuristic</span>}</h3>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">✨ Estate insights{insights?.source === "local" && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[9px] font-normal text-gray-500">heuristic</span>}</h3>
             {aiGenerating ? (
-              <button type="button" onClick={() => aiController.current?.abort()} className="rounded border px-2 py-1 text-[11px] text-gray-600">Cancel AI</button>
+              <button type="button" onClick={() => aiController.current?.abort()} className="rounded-sm border px-2 py-1 text-[11px] text-gray-600">Cancel AI</button>
             ) : (
-              <button type="button" onClick={() => void generateInsights()} className="rounded border px-2 py-1 text-[11px] text-brand">Generate AI insights</button>
+              <button type="button" onClick={() => void generateInsights()} className="rounded-sm border px-2 py-1 text-[11px] text-brand">Generate AI insights</button>
             )}
           </div>
           {insQ.isLoading ? <Skeleton rows={3} className="max-w-xl" /> : (
             <>
-              {aiError && <div role="alert" className="mb-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">{aiError}</div>}
+              {aiError && <div role="alert" className="mb-2 rounded-sm border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">{aiError}</div>}
               {insights?.headline && <p className="mb-2 text-[13px] text-gray-700">{insights.headline}</p>}
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {(insights?.insights ?? []).map((ins, i) => (
@@ -1944,7 +1944,7 @@ function OverviewMode({ inv, connectionId }: {
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: "ok" | "warn" }) {
   return (
-    <div className="rounded-xl border bg-white p-3 text-center shadow-sm">
+    <div className="rounded-xl border bg-white p-3 text-center shadow-xs">
       <div className={`text-2xl font-bold ${tone === "warn" ? "text-amber-600" : "text-gray-800"}`}>{value}</div>
       <div className="text-[11px] text-gray-500">{label}</div>
     </div>
@@ -1965,7 +1965,7 @@ function CostSplitBars({ rows, currency, colorAt }: {
         <div key={r.label + i} className="text-[12px]">
           <div className="flex items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-1 truncate text-gray-700" title={r.label}>
-              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: colorAt ? colorAt(i) : "#10b981" }} />
+              <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: colorAt ? colorAt(i) : "#10b981" }} />
               {r.href ? (
                 <a href={r.href} target="_blank" rel="noopener noreferrer" className="truncate hover:text-brand hover:underline" title={r.label}>{r.label}</a>
               ) : (
@@ -2012,7 +2012,7 @@ function CostDonut({ data, total, currency }: { data: { label: string; value: nu
       <div className="min-w-0 flex-1 space-y-0.5">
         {top.map((d, i) => (
           <div key={d.label} className="flex items-center gap-1.5 text-[11px]">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+            <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
             <span className="min-w-0 flex-1 truncate text-gray-600" title={d.label}>{d.label}</span>
             <span className="shrink-0 font-medium text-gray-700">{moneyFmt(d.value, currency)}</span>
           </div>
@@ -2102,12 +2102,12 @@ function OptimizationRowActions({ id }: { id: string }) {
         target="_blank"
         rel="noopener noreferrer"
         title="Open in Azure Portal"
-        className="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+        className="rounded-sm border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
       >↗ Portal</a>
       <button
         onClick={() => { navigator.clipboard?.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
         title={`Copy: ${cmd}`}
-        className="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+        className="rounded-sm border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
       >{copied ? "✓ Copied" : "⧉ az delete"}</button>
     </div>
   );
@@ -2153,9 +2153,9 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-(--breakpoint-2xl) space-y-4">
         {/* Header: estimated monthly savings */}
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-linear-to-br from-emerald-50 to-white p-4 shadow-xs">
           <div>
             <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700">Potential monthly savings</div>
             <div className="text-2xl font-bold text-emerald-800">
@@ -2189,7 +2189,7 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
             {/* Category summary cards */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {categories.map((c) => (
-                <div key={c.flag} className="rounded-xl border bg-white p-3 shadow-sm">
+                <div key={c.flag} className="rounded-xl border bg-white p-3 shadow-xs">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-800">{c.label}</span>
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{c.count}</span>
@@ -2203,7 +2203,7 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
             </div>
 
             {/* Detail table */}
-            <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+            <div className="overflow-hidden rounded-xl border bg-white shadow-xs">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
                   <tr>
@@ -2228,7 +2228,7 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
                         </div>
                       </td>
                       <td className="px-3 py-2">
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${FLAG_META[it.category]?.tone || "bg-amber-100 text-amber-700"}`} title={it.reason}>
+                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${FLAG_META[it.category]?.tone || "bg-amber-100 text-amber-700"}`} title={it.reason}>
                           {it.category_label}
                         </span>
                       </td>
@@ -2290,7 +2290,7 @@ function CostRefreshProgress({ job, subName, error }: {
   const subscriptionLabel = (id?: string) => id ? (subName[id] || `${id.slice(0, 8)}…`) : "Subscription";
 
   return (
-    <div data-testid="inventory-cost-progress" className={`rounded-xl border px-4 py-3 shadow-sm ${tone}`}>
+    <div data-testid="inventory-cost-progress" className={`rounded-xl border px-4 py-3 shadow-xs ${tone}`}>
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -2341,7 +2341,7 @@ function CostRefreshProgress({ job, subName, error }: {
           <div className="text-[10px] font-semibold uppercase tracking-wide opacity-60">Recent subscription updates</div>
           <div className="mt-1 grid gap-1 lg:grid-cols-2">
             {recent.map((event, index) => (
-              <div key={`${event.at}-${event.subscription_id}-${index}`} className="flex min-w-0 items-center gap-2 rounded bg-white/60 px-2 py-1 text-[11px]">
+              <div key={`${event.at}-${event.subscription_id}-${index}`} className="flex min-w-0 items-center gap-2 rounded-sm bg-white/60 px-2 py-1 text-[11px]">
                 <span>{event.type === "subscription_done" ? "✓" : event.type === "subscription_retry" ? "↻" : "⚠"}</span>
                 <span className="min-w-0 flex-1 truncate" title={event.error || event.message}>{subscriptionLabel(event.subscription_id)}</span>
                 {event.resource_cost_rows != null && <span className="shrink-0 opacity-70">{event.resource_cost_rows} rows</span>}
@@ -2387,9 +2387,9 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-(--breakpoint-2xl) space-y-4">
         {/* Header: total + refresh */}
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-linear-to-br from-emerald-50 to-white p-4 shadow-xs">
           <span className="text-2xl">💰</span>
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-gray-700">Cost by workload</h2>
@@ -2439,7 +2439,7 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
 
         {/* Active filters — removable one-by-one, same as the Grid tab. */}
         {(chipProps.kqlText || hasFilters) && (
-          <div className="rounded-xl border bg-white px-4 py-2.5 shadow-sm">
+          <div className="rounded-xl border bg-white px-4 py-2.5 shadow-xs">
             <FilterChipsBar p={chipProps} hasFilters={hasFilters} onClearAll={onClearFilters} />
           </div>
         )}
@@ -2452,7 +2452,7 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
         )}
 
         {notLoaded && !busy ? (
-          <div className="rounded-xl border bg-white p-10 text-center shadow-sm">
+          <div className="rounded-xl border bg-white p-10 text-center shadow-xs">
             <div className="mb-1 text-3xl">💲</div>
             <div className="text-sm font-medium text-gray-700">No cost loaded yet</div>
             <p className="mx-auto mt-1 max-w-md text-[12px] text-gray-500">
@@ -2472,7 +2472,7 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
             <div className="mt-1 text-[11px] text-amber-600">The connection needs the <b>Cost Management Reader</b> role on the subscriptions.</div>
           </div>
         ) : r && r.total === 0 ? (
-          <div className="rounded-xl border bg-white p-10 text-center text-sm text-gray-500 shadow-sm">
+          <div className="rounded-xl border bg-white p-10 text-center text-sm text-gray-500 shadow-xs">
             No cost for the current filter selection.
           </div>
         ) : r ? (
@@ -2562,7 +2562,7 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-(--breakpoint-2xl) space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-gray-700">Inventory drift</h3>
@@ -2603,7 +2603,7 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
                 <div key={sn.id} className="flex items-center gap-2 rounded-lg border p-2 text-sm">
                   <span className="flex-1 text-gray-700">{new Date(sn.created_at).toLocaleString()}</span>
                   <span className="text-[11px] text-gray-500">{sn.total_resources.toLocaleString()} resources · {sn.tag_coverage_pct}% tagged</span>
-                  <button onClick={() => del(sn.id)} title="Delete snapshot" className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500">🗑</button>
+                  <button onClick={() => del(sn.id)} title="Delete snapshot" className="rounded-sm p-1 text-gray-300 hover:bg-red-50 hover:text-red-500">🗑</button>
                 </div>
               ))}
             </div>
@@ -2618,7 +2618,7 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
 
 function DriftList({ title, tone, items }: { title: string; tone: string; items: string[] }) {
   return (
-    <div className="rounded-xl border bg-white p-3 shadow-sm">
+    <div className="rounded-xl border bg-white p-3 shadow-xs">
       <div className={`mb-2 text-[12px] font-semibold ${tone}`}>{title} ({items.length})</div>
       {items.length === 0 ? <div className="text-[11px] text-gray-400">None.</div> : (
         <div className="max-h-64 space-y-0.5 overflow-y-auto">

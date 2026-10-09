@@ -37,7 +37,7 @@ function Card({ s, onRun, running }: { s: IamScannerCard; onRun: () => void; run
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="truncate text-sm font-semibold text-gray-800">{s.name}</span>
-            <span className="shrink-0 rounded bg-gray-100 px-1.5 text-[10px] uppercase tracking-wide text-gray-600">
+            <span className="shrink-0 rounded-sm bg-gray-100 px-1.5 text-[10px] uppercase tracking-wide text-gray-600">
               {s.cadence}
             </span>
             <span className="shrink-0 text-[10px] text-gray-500">
@@ -50,7 +50,7 @@ function Card({ s, onRun, running }: { s: IamScannerCard; onRun: () => void; run
           type="button"
           onClick={onRun}
           disabled={running}
-          className="shrink-0 rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+          className="shrink-0 rounded-sm border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
         >
           {running ? "Running…" : "Run now"}
         </button>
@@ -78,7 +78,7 @@ function Card({ s, onRun, running }: { s: IamScannerCard; onRun: () => void; run
             {Object.entries(s.by_severity ?? {})
               .filter(([, n]) => n > 0)
               .map(([sev, n]) => (
-                <span key={sev} className={`rounded border px-1.5 text-[10px] ${SEV_CLASS[sev] ?? ""}`}>
+                <span key={sev} className={`rounded-sm border px-1.5 text-[10px] ${SEV_CLASS[sev] ?? ""}`}>
                   {sev} {n}
                 </span>
               ))}
@@ -175,7 +175,7 @@ export function ScannersTab() {
           severity floor. Running one records a baseline so the next run can report what changed.
         </span>
         {blockedCount > 0 && (
-          <span className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-900">
+          <span className="rounded-sm border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-900">
             {blockedCount} blocked
           </span>
         )}
@@ -183,7 +183,7 @@ export function ScannersTab() {
           type="button"
           onClick={() => runAll.mutate()}
           disabled={runAll.isPending}
-          className="ml-auto rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700 disabled:opacity-50"
+          className="ml-auto rounded-sm bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700 disabled:opacity-50"
         >
           {runAll.isPending ? "Running…" : "Run all now"}
         </button>
@@ -192,7 +192,7 @@ export function ScannersTab() {
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {q.isLoading && <div className="text-sm text-gray-500">Loading scanners…</div>}
         {ran && !runAll.isPending && !runOne.isPending && (
-          <div className="mb-2 rounded border border-green-300 bg-green-50 px-3 py-1.5 text-[11px] text-green-900">
+          <div className="mb-2 rounded-sm border border-green-300 bg-green-50 px-3 py-1.5 text-[11px] text-green-900">
             Baseline recorded. The counts below now describe changes since that run, and any new
             findings have been delivered to the notification center.
           </div>
@@ -208,7 +208,7 @@ export function ScannersTab() {
           ))}
         </div>
         {!q.isLoading && scanners.length === 0 && (
-          <div className="rounded border bg-white p-3 text-xs text-gray-600">
+          <div className="rounded-sm border bg-white p-3 text-xs text-gray-600">
             No scanners are registered.
           </div>
         )}

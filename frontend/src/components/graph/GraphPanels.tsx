@@ -30,7 +30,7 @@ export function AnalyticsPanel({ connectionId, onFocus, onClose }: { connectionI
               return rows.map((c) => {
                 const pct = Math.round((c.betweenness / max) * 100);
                 return (
-                  <button key={c.id} onClick={() => onFocus(c.id)} className="block w-full rounded px-1.5 py-1 text-left hover:bg-slate-50">
+                  <button key={c.id} onClick={() => onFocus(c.id)} className="block w-full rounded-sm px-1.5 py-1 text-left hover:bg-slate-50">
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate">{KIND_META[c.kind as keyof typeof KIND_META]?.glyph} {c.label}</span>
                       <span className="shrink-0 text-[10px] text-slate-400">{loadLabel(pct)} · {c.degree} links</span>
@@ -63,7 +63,7 @@ export function AnalyticsPanel({ connectionId, onFocus, onClose }: { connectionI
           </Section>
           <Section title={`Communities (${q.data.community_count})`}>
             {q.data.communities.slice(0, 6).map((c, i) => (
-              <div key={i} className="rounded px-1.5 py-1">
+              <div key={i} className="rounded-sm px-1.5 py-1">
                 <div className="flex items-center gap-2">
                   <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: COMMUNITY_COLORS[i % COMMUNITY_COLORS.length] }} />
                   <span className="font-medium text-slate-700">Cluster {i + 1}</span>
@@ -76,7 +76,7 @@ export function AnalyticsPanel({ connectionId, onFocus, onClose }: { connectionI
           <Section title={`Candidate workloads (${q.data.candidate_workloads.length})`}>
             {q.data.candidate_workloads.length === 0 && <div className="text-[11px] text-slate-400">No unowned clusters of significance.</div>}
             {q.data.candidate_workloads.slice(0, 5).map((c, i) => (
-              <div key={i} className="rounded px-1.5 py-1">
+              <div key={i} className="rounded-sm px-1.5 py-1">
                 <div className="font-medium text-slate-700">{c.size} resources · {c.reason}</div>
                 <div className="truncate text-[11px] text-slate-400">{c.types.map((t) => `${t.type.split("/").pop()} ×${t.count}`).join(", ")}</div>
               </div>
@@ -245,7 +245,7 @@ export function ViewsPanel({ onApply, onSaveCurrent, onClose }: {
       <div className="space-y-1">
         {(q.data?.views || []).length === 0 && <div className="text-[11px] text-slate-400">No saved views yet.</div>}
         {(q.data?.views || []).map((v) => (
-          <div key={v.id} className="flex items-center justify-between gap-2 rounded px-1.5 py-1 hover:bg-slate-50">
+          <div key={v.id} className="flex items-center justify-between gap-2 rounded-sm px-1.5 py-1 hover:bg-slate-50">
             <button onClick={() => onApply(v)} className="flex-1 truncate text-left text-slate-700">{v.name || "Untitled"}</button>
             <span className="shrink-0 text-[10px] text-slate-400">{v.lens !== "none" ? v.lens : v.scope_kind}</span>
             <button onClick={() => void del(v.id)} className="shrink-0 text-slate-300 hover:text-red-500" title="Delete">✕</button>
@@ -293,8 +293,8 @@ export function ZoomControl({ cy, dark }: { cy: any; dark: boolean }) {
     : "border-slate-200 bg-white/90 text-slate-600 hover:bg-slate-50";
 
   return (
-    <div className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 shadow-sm ${dark ? "border-slate-700 bg-slate-800/80" : "border-slate-200 bg-white/85"}`}>
-      <button onClick={() => step(1.25)} className={`flex h-6 w-6 items-center justify-center rounded border text-sm ${btn}`} title="Zoom in (+)">+</button>
+    <div className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 shadow-xs ${dark ? "border-slate-700 bg-slate-800/80" : "border-slate-200 bg-white/85"}`}>
+      <button onClick={() => step(1.25)} className={`flex h-6 w-6 items-center justify-center rounded-sm border text-sm ${btn}`} title="Zoom in (+)">+</button>
       <input
         type="range"
         min={0}
@@ -306,8 +306,8 @@ export function ZoomControl({ cy, dark }: { cy: any; dark: boolean }) {
         title={`Zoom ${Math.round(zoom * 100)}%`}
         aria-label="Zoom level"
       />
-      <button onClick={() => step(0.8)} className={`flex h-6 w-6 items-center justify-center rounded border text-sm ${btn}`} title="Zoom out (−)">−</button>
-      <button onClick={() => { if (cy) cy.fit(undefined, 50); }} className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded border text-[11px] ${btn}`} title="Fit to screen">⤢</button>
+      <button onClick={() => step(0.8)} className={`flex h-6 w-6 items-center justify-center rounded-sm border text-sm ${btn}`} title="Zoom out (−)">−</button>
+      <button onClick={() => { if (cy) cy.fit(undefined, 50); }} className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-sm border text-[11px] ${btn}`} title="Fit to screen">⤢</button>
       <div className={`text-[9px] tabular-nums ${dark ? "text-slate-400" : "text-slate-400"}`}>{Math.round(zoom * 100)}%</div>
     </div>
   );
@@ -338,7 +338,7 @@ export function Minimap({ cy }: { cy: any }) {
       nodes.forEach((n: any) => {
         if (n.style("display") === "none") return;
         const p = n.position();
-        ctx.fillStyle = n.data("ring") || n.style("border-color") || "#94a3b8";
+        ctx.fillStyle = n.data("ring-3") || n.style("border-color") || "#94a3b8";
         ctx.beginPath();
         ctx.arc(p.x * scale + ox, p.y * scale + oy, 1.6, 0, Math.PI * 2);
         ctx.fill();
@@ -375,7 +375,7 @@ export function Minimap({ cy }: { cy: any }) {
     cy.animate({ pan: { x: vw / 2 - gx * z, y: vh / 2 - gy * z } }, { duration: 250 });
   };
 
-  return <canvas ref={ref} onClick={onClick} width={180} height={120} className="cursor-pointer rounded border border-slate-200 bg-white/90 shadow-sm" title="Click to jump" />;
+  return <canvas ref={ref} onClick={onClick} width={180} height={120} className="cursor-pointer rounded-sm border border-slate-200 bg-white/90 shadow-xs" title="Click to jump" />;
 }
 
 // ----------------------------------------------------------------- shared bits
@@ -384,7 +384,7 @@ function SidePanel({ title, onClose, children }: { title: string; onClose: () =>
     <div className="absolute left-0 top-0 z-30 flex h-full w-72 flex-col border-r bg-white shadow-xl">
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <span className="text-sm font-semibold text-slate-800">{title}</span>
-        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100">✕</button>
+        <button onClick={onClose} className="rounded-sm p-1 text-slate-400 hover:bg-slate-100">✕</button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 text-sm">{children}</div>
     </div>

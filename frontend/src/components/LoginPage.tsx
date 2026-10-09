@@ -60,7 +60,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-slate-100 p-6">
-      <div className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-sm">
+      <div className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-xs">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <span className="text-3xl">🤖</span>
           <h1 className="text-xl font-semibold text-slate-800">Azure Support Agent</h1>
@@ -104,7 +104,7 @@ export default function LoginPage() {
             <label className="text-sm font-medium text-slate-700">
               Username or email
               <input
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoFocus
@@ -115,7 +115,7 @@ export default function LoginPage() {
               Password
               <input
                 type="password"
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
@@ -198,7 +198,7 @@ export function ForcePasswordChange() {
     <div className="flex min-h-full items-center justify-center bg-slate-100 p-6">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-sm"
+        className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-xs"
       >
         <h1 className="mb-1 text-lg font-semibold text-slate-800">Set a new password</h1>
         <p className="mb-5 text-sm text-slate-500">
@@ -214,7 +214,7 @@ export function ForcePasswordChange() {
           New password
           <input
             type="password"
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
             value={pw}
             onChange={(e) => setPw(e.target.value)}
             autoFocus
@@ -224,7 +224,7 @@ export function ForcePasswordChange() {
           Confirm password
           <input
             type="password"
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
           />

@@ -109,7 +109,7 @@ export function GraphInspector({
           </div>
           <div className="truncate text-sm font-semibold text-slate-800">{node?.label || "…"}</div>
         </div>
-        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100" title="Close">✕</button>
+        <button onClick={onClose} className="rounded-sm p-1 text-slate-400 hover:bg-slate-100" title="Close">✕</button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm">

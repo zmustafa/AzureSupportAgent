@@ -83,8 +83,8 @@ export function WorkloadTable({
                 })}
                 <td className="px-2 py-2 text-right tabular-nums text-gray-600">{p?.composition.total ?? w.summary?.total_resources ?? 0}</td>
                 <td className="px-2 py-2 text-right">
-                  {p?.risk.retirements_90d ? <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-700">⚠{p.risk.retirements_90d}</span> : null}
-                  {p?.risk.criticals ? <span className="ml-1 rounded bg-red-50 px-1 text-[10px] text-red-700">🔴{p.risk.criticals}</span> : null}
+                  {p?.risk.retirements_90d ? <span className="rounded-sm bg-amber-50 px-1 text-[10px] text-amber-700">⚠{p.risk.retirements_90d}</span> : null}
+                  {p?.risk.criticals ? <span className="ml-1 rounded-sm bg-red-50 px-1 text-[10px] text-red-700">🔴{p.risk.criticals}</span> : null}
                 </td>
               </tr>
             );
@@ -124,7 +124,7 @@ export function WorkloadBoard({
             {byEnv[env].map((w) => {
               const p = profileById[w.id];
               return (
-                <button key={w.id} onClick={() => onOpen(w.id)} className="block w-full rounded-lg border bg-white p-2.5 text-left transition hover:border-brand/40 hover:shadow-sm">
+                <button key={w.id} onClick={() => onOpen(w.id)} className="block w-full rounded-lg border bg-white p-2.5 text-left transition hover:border-brand/40 hover:shadow-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-gray-800">{w.name}</span>
                     <ScoreBadge score={p?.health.score ?? null} band={p?.health.band ?? "unknown"} size="sm" />
@@ -135,8 +135,8 @@ export function WorkloadBoard({
                   </div>
                   {(p?.risk.retirements_90d || p?.risk.criticals) ? (
                     <div className="mt-1 flex gap-1">
-                      {p?.risk.retirements_90d ? <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-700">⚠{p.risk.retirements_90d}</span> : null}
-                      {p?.risk.criticals ? <span className="rounded bg-red-50 px-1 text-[10px] text-red-700">🔴{p.risk.criticals}</span> : null}
+                      {p?.risk.retirements_90d ? <span className="rounded-sm bg-amber-50 px-1 text-[10px] text-amber-700">⚠{p.risk.retirements_90d}</span> : null}
+                      {p?.risk.criticals ? <span className="rounded-sm bg-red-50 px-1 text-[10px] text-red-700">🔴{p.risk.criticals}</span> : null}
                     </div>
                   ) : null}
                 </button>

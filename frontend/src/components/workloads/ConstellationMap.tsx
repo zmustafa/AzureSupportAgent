@@ -38,7 +38,7 @@ export function ConstellationMap({
   if (workloads.length === 0) return null;
 
   return (
-    <div className="relative rounded-xl border bg-gradient-to-b from-slate-50 to-white p-4">
+    <div className="relative rounded-xl border bg-linear-to-b from-slate-50 to-white p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Estate constellation</div>
         <div className="flex items-center gap-3 text-[10px] text-gray-500">
@@ -72,7 +72,7 @@ export function ConstellationMap({
                       onMouseEnter={(e) => setHover({ id: w.id, x: e.clientX, y: e.clientY })}
                       onMouseMove={(e) => setHover({ id: w.id, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setHover(null)}
-                      className="relative flex items-center justify-center rounded-full font-semibold text-white shadow-sm transition hover:scale-105 hover:shadow"
+                      className="relative flex items-center justify-center rounded-full font-semibold text-white shadow-xs transition hover:scale-105 hover:shadow-sm"
                       style={{ width: r, height: r, backgroundColor: color, fontSize: Math.max(9, r / 4) }}
                       title={`${w.name} · ${n} resources${p?.health.score != null ? ` · score ${p.health.score}` : ""}`}
                     >

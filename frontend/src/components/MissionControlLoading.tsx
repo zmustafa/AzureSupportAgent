@@ -9,15 +9,15 @@ export function MissionControlLoading({ detail = false }: { detail?: boolean }) 
       aria-label={label}
       className="flex h-full min-h-52 items-center justify-center bg-gray-50 p-6"
     >
-      <div className="w-full max-w-sm rounded-2xl border border-blue-100 bg-white/90 px-6 py-5 text-center shadow-sm backdrop-blur">
+      <div className="w-full max-w-sm rounded-2xl border border-blue-100 bg-white/90 px-6 py-5 text-center shadow-xs backdrop-blur-sm">
         <div aria-hidden="true" className="relative mx-auto h-16 w-48 overflow-hidden">
-          <div className="absolute inset-x-3 top-8 h-px bg-gradient-to-r from-transparent via-blue-200 to-transparent" />
+          <div className="absolute inset-x-3 top-8 h-px bg-linear-to-r from-transparent via-blue-200 to-transparent" />
           <div className="absolute left-3 top-2 animate-hourglass-slide motion-reduce:left-1/2 motion-reduce:-translate-x-1/2 motion-reduce:animate-none">
             <div className="animate-hourglass-hover motion-reduce:animate-none">
               <svg
                 data-testid="mission-control-hourglass"
                 viewBox="0 0 32 40"
-                className="h-11 w-9 text-brand drop-shadow-sm"
+                className="h-11 w-9 text-brand drop-shadow-xs"
               >
                 <path d="M7 3h18M7 37h18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                 <path d="M9 5c0 8 2.2 10.2 7 14-4.8 3.8-7 6-7 14h14c0-8-2.2-10.2-7-14 4.8-3.8 7-6 7-14H9Z" fill="white" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />

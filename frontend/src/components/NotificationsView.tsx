@@ -7,7 +7,7 @@ import { notificationLink, SEVERITY_DOT } from "../utils/notificationLink";
 import { useAuth } from "./AuthContext";
 
 const input =
-  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 
 const EVENT_TYPES = [
@@ -64,7 +64,7 @@ export function NotificationsSection() {
 
       <div className="space-y-2">
         {rules.map((r) => (
-          <div key={r.id} className="flex items-center gap-3 rounded-xl border bg-white p-4 shadow-sm">
+          <div key={r.id} className="flex items-center gap-3 rounded-xl border bg-white p-4 shadow-xs">
             <div className={`h-2 w-2 shrink-0 rounded-full ${r.enabled ? "bg-green-500" : "bg-gray-300"}`} />
             <div className="min-w-0 flex-1">
               <div className="font-medium text-gray-800">{r.name || "(unnamed rule)"}</div>
@@ -138,7 +138,7 @@ function RuleForm({
       <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-lg font-semibold text-gray-800">{form.id ? "Edit rule" : "New rule"}</h2>
-          <button onClick={onClose} className="rounded p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
@@ -297,12 +297,12 @@ export function NotificationsPanel() {
             <button onClick={() => setTab("unread")} className={`border-l px-2.5 py-1 ${tab === "unread" ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Unread ({unreadCount})</button>
           </div>
           {sources.length > 1 && (
-            <select value={src} onChange={(e) => setSrc(e.target.value)} className="rounded-md border px-2 py-1 text-xs text-gray-600 focus:outline-none focus:ring-1 focus:ring-brand">
+            <select value={src} onChange={(e) => setSrc(e.target.value)} className="rounded-md border px-2 py-1 text-xs text-gray-600 focus:outline-hidden focus:ring-1 focus:ring-brand">
               <option value="all">All sources</option>
               {sources.map((s) => <option key={s} value={s}>{NOTE_SOURCE_LABEL[s] ?? s}</option>)}
             </select>
           )}
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="w-44 rounded-md border px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="w-44 rounded-md border px-2.5 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-brand" />
           {unreadCount > 0 && (
             <button onClick={() => void markAll()} className="ml-auto rounded-md border px-2.5 py-1 text-xs text-brand hover:bg-brand/5">Mark all read</button>
           )}
@@ -325,18 +325,18 @@ export function NotificationsPanel() {
                 role={to ? "button" : undefined}
                 tabIndex={to ? 0 : undefined}
                 onKeyDown={to ? (e) => { if (e.key === "Enter") open(n); } : undefined}
-                className={`flex gap-3 rounded-xl border bg-white p-3 shadow-sm transition ${to ? "cursor-pointer hover:border-brand/40 hover:shadow-md" : ""} ${n.read ? "" : "border-brand/30 bg-brand/5"}`}
+                className={`flex gap-3 rounded-xl border bg-white p-3 shadow-xs transition ${to ? "cursor-pointer hover:border-brand/40 hover:shadow-md" : ""} ${n.read ? "" : "border-brand/30 bg-brand/5"}`}
               >
                 <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${SEVERITY_DOT[n.severity] ?? "bg-gray-400"}`} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-gray-800">{n.title}</span>
                     {!n.read && <span className="shrink-0 rounded-full bg-brand px-1.5 py-0.5 text-[9px] font-medium text-white">new</span>}
-                    <span className={`ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${NOTE_SEV_BADGE[n.severity] ?? NOTE_SEV_BADGE.info}`}>{n.severity}</span>
+                    <span className={`ml-auto shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${NOTE_SEV_BADGE[n.severity] ?? NOTE_SEV_BADGE.info}`}>{n.severity}</span>
                   </div>
                   {n.body && <p className="mt-0.5 whitespace-pre-wrap text-xs text-gray-600">{n.body}</p>}
                   <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{NOTE_SOURCE_LABEL[n.source] ?? n.source}</span>
+                    <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-600">{NOTE_SOURCE_LABEL[n.source] ?? n.source}</span>
                     {n.created_at && <span title={formatTimestamp(n.created_at)}>{formatRelativeFromNow(n.created_at)}</span>}
                     {to && <span className="text-brand">· Open →</span>}
                     {!n.read && (

@@ -185,7 +185,7 @@ export function useExportDownload(label: string): ExportDownloadState {
   const dialog =
     phase === "idle" ? null : (
       <div
-        className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
+        className="fixed inset-0 z-80 flex items-center justify-center bg-black/40 p-4"
         role="dialog"
         aria-modal="true"
         aria-labelledby="export-progress-title"
@@ -210,7 +210,7 @@ export function useExportDownload(label: string): ExportDownloadState {
                 {phase === "done" && "Saved. Check your downloads."}
               </p>
 
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-gray-200">
+              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-sm bg-gray-200">
                 {phase === "downloading" && pct !== null ? (
                   <div className="h-full bg-brand transition-[width] duration-200" style={{ width: `${pct}%` }} />
                 ) : phase === "done" ? (
@@ -235,7 +235,7 @@ export function useExportDownload(label: string): ExportDownloadState {
             <button
               type="button"
               onClick={cancel}
-              className="rounded border px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
+              className="rounded-sm border px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
             >
               {phase === "error" || phase === "done" ? "Close" : "Cancel"}
             </button>

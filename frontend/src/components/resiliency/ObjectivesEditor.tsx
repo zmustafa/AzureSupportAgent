@@ -88,14 +88,14 @@ export function ObjectivesEditor({
   return (
     <div className="space-y-3" data-testid="resiliency-objectives-editor">
       {!canEdit && (
-        <div className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
+        <div className="rounded-sm border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
           You can see every constant behind these numbers, but changing them needs
           <code className="mx-1">resiliency.admin</code>.
         </div>
       )}
 
       {!!rejected.length && (
-        <div className="rounded border border-rose-200 bg-rose-50 p-2 text-[11px] text-rose-800"
+        <div className="rounded-sm border border-rose-200 bg-rose-50 p-2 text-[11px] text-rose-800"
              data-testid="resiliency-rejected">
           <div className="font-semibold">Some values were refused</div>
           <ul className="ml-4 list-disc">{rejected.map((r, i) => <li key={i}>{r}</li>)}</ul>
@@ -137,7 +137,7 @@ export function ObjectivesEditor({
                           data-testid="objective-rto"
                           onChange={(e) => setTarget(tier.id, s.id,
                             { rto_class: e.target.value as ResiliencyRtoClass })}
-                          className="rounded border px-1 py-0.5 text-xs disabled:bg-gray-50"
+                          className="rounded-sm border px-1 py-0.5 text-xs disabled:bg-gray-50"
                         >
                           {classes.map((c) => (
                             <option key={c.id} value={c.id}>{c.label}</option>
@@ -151,7 +151,7 @@ export function ObjectivesEditor({
                           data-testid="objective-rpo"
                           onChange={(e) => setTarget(tier.id, s.id,
                             { rpo_minutes: Number(e.target.value) })}
-                          className="w-24 rounded border px-1 py-0.5 text-xs tabular-nums disabled:bg-gray-50"
+                          className="w-24 rounded-sm border px-1 py-0.5 text-xs tabular-nums disabled:bg-gray-50"
                         />
                       </td>
                       <td className="py-1 text-[11px] text-gray-400">
@@ -185,7 +185,7 @@ export function ObjectivesEditor({
                   type="number" min={1} value={value} disabled={!canEdit}
                   data-testid="restore-rate"
                   onChange={(e) => setRate(key, Number(e.target.value))}
-                  className="w-24 rounded border px-1 py-0.5 text-xs tabular-nums disabled:bg-gray-50"
+                  className="w-24 rounded-sm border px-1 py-0.5 text-xs tabular-nums disabled:bg-gray-50"
                 />
               </label>
             ))}
@@ -201,7 +201,7 @@ export function ObjectivesEditor({
                   type="number" min={0} value={value} disabled={!canEdit}
                   data-testid="mechanism-minutes"
                   onChange={(e) => setMechanism(key, Number(e.target.value))}
-                  className="w-24 rounded border px-1 py-0.5 text-xs tabular-nums disabled:bg-gray-50"
+                  className="w-24 rounded-sm border px-1 py-0.5 text-xs tabular-nums disabled:bg-gray-50"
                 />
               </label>
             ))}
@@ -214,7 +214,7 @@ export function ObjectivesEditor({
           onClick={() => void save()}
           disabled={!canEdit || !dirty || saving}
           data-testid="resiliency-save-objectives"
-          className="rounded bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          className="rounded-sm bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save objectives and rates"}
         </button>

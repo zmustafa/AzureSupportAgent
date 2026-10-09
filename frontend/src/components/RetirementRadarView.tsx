@@ -89,7 +89,7 @@ function Stat({ label, value, tone, active, onClick }: { label: string; value: s
   const base = `rounded-lg border bg-white px-3 py-2 text-left transition ${active ? "ring-2 ring-brand border-brand" : ""}`;
   const inner = (<><div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div><div className="truncate text-[11px] text-gray-500">{label}</div></>);
   if (!onClick) return <div className={base}>{inner}</div>;
-  return <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-sm`} title={active ? "Click to clear filter" : `Filter to ${label}`}>{inner}</button>;
+  return <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-xs`} title={active ? "Click to clear filter" : `Filter to ${label}`}>{inner}</button>;
 }
 
 export function RetirementRadarPanel() {
@@ -417,7 +417,7 @@ export function RetirementRadarPanel() {
             {data.stale_cache && !data.never_loaded && (
               <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                 Radar snapshot is {agoText(data.age_seconds)} — service retirements may have changed.
-                <button onClick={doRefresh} disabled={refreshing} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
+                <button onClick={doRefresh} disabled={refreshing} className="rounded-sm border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
               </div>
             )}
 
@@ -432,7 +432,7 @@ export function RetirementRadarPanel() {
                     <button
                       key={c.id}
                       onClick={() => setDrawer(events.find((e) => e.id === c.id) ?? null)}
-                      className={`rounded-lg border px-3 py-2 text-left transition hover:shadow ${SEV_BORDER[c.severity]}`}
+                      className={`rounded-lg border px-3 py-2 text-left transition hover:shadow-sm ${SEV_BORDER[c.severity]}`}
                     >
                       <div className={`text-lg font-semibold ${SEV_TEXT[c.severity]}`}>{daysLabel(c.days_until)}</div>
                       <div className="truncate text-[12px] font-medium text-gray-800" title={c.title}>{c.title}</div>
@@ -520,12 +520,12 @@ export function RetirementRadarPanel() {
                         <div className="flex items-center gap-2"><span className={`inline-block h-2 w-2 rounded-full ${SEV_DOT[e.severity]}`} /><span className="truncate font-medium text-gray-900">{e.title || e.service}</span></div>
                         <div className="truncate text-[11px] text-gray-400">{e.tracking_id}</div>
                       </div>
-                      <div><span className={`rounded px-1.5 py-0.5 text-[11px] ${e.change_type === "breaking_change" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{e.change_type === "breaking_change" ? "Breaking" : "Retirement"}</span></div>
+                      <div><span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${e.change_type === "breaking_change" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{e.change_type === "breaking_change" ? "Breaking" : "Retirement"}</span></div>
                       <div className="text-gray-600">{e.retirement_date || "TBD"}</div>
                       <div className={`font-medium ${SEV_TEXT[e.severity]}`}>{daysLabel(e.days_until)}</div>
                       <div className="text-gray-600">{impactCountLabel(e)}</div>
                       <div className="truncate text-gray-600" title={e.recommended_replacement}>{e.recommended_replacement || "—"}</div>
-                      <div className="truncate">{!impactCountKnown(e) ? <span className="text-gray-400">Not resolved</span> : e.unowned ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span> : <span className="text-gray-700">{e.owner || "—"}</span>}</div>
+                      <div className="truncate">{!impactCountKnown(e) ? <span className="text-gray-400">Not resolved</span> : e.unowned ? <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span> : <span className="text-gray-700">{e.owner || "—"}</span>}</div>
                       <div className="text-gray-600">{STATUS_LABEL[e.status || "new"]}</div>
                     </div>
                   )}
@@ -560,7 +560,7 @@ export function RetirementRadarPanel() {
                           <div className="text-[11px] text-gray-400">{e.tracking_id}</div>
                         </td>
                         <td className="px-3 py-2">
-                          <span className={`rounded px-1.5 py-0.5 text-[11px] ${e.change_type === "breaking_change" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>
+                          <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${e.change_type === "breaking_change" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>
                             {e.change_type === "breaking_change" ? "Breaking change" : "Retirement"}
                           </span>
                         </td>
@@ -572,7 +572,7 @@ export function RetirementRadarPanel() {
                           {!impactCountKnown(e) ? (
                             <span className="text-gray-400">Not resolved</span>
                           ) : e.unowned ? (
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span>
+                            <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span>
                           ) : (
                             <span className="text-gray-700">{e.owner || "—"}</span>
                           )}
@@ -613,7 +613,7 @@ export function RetirementRadarPanel() {
                           <td className="px-3 py-2 text-gray-900">{m.account}/{m.deployment}</td>
                           <td className="px-3 py-2 text-gray-600">{m.model} {m.model_version}</td>
                           <td className="px-3 py-2">
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] ${STAGE_TONE[m.stage] || STAGE_TONE.unknown}`}>{m.stage}</span>
+                            <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${STAGE_TONE[m.stage] || STAGE_TONE.unknown}`}>{m.stage}</span>
                           </td>
                           <td className="px-3 py-2 text-gray-600">{m.retirement_date || (m.matched ? "—" : "unknown")}</td>
                           <td className={`px-3 py-2 font-medium ${SEV_TEXT[m.severity]}`}>{daysLabel(m.days_until)}</td>
@@ -642,13 +642,13 @@ export function RetirementRadarPanel() {
                   </div>
                   <div className="text-[11px] text-gray-400">{drawer.tracking_id} · {drawer.sources.join(", ") || "—"}</div>
                 </div>
-                <button onClick={() => setDrawer(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+                <button onClick={() => setDrawer(null)} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
               </div>
             </div>
             <div className="space-y-4 px-5 py-4 text-sm">
               <div className="grid grid-cols-2 gap-2">
-                <div className="rounded border px-2 py-1.5"><div className="text-[11px] text-gray-500">Type</div><div>{drawer.change_type === "breaking_change" ? "Breaking change" : "Retirement"}</div></div>
-                <div className="rounded border px-2 py-1.5"><div className="text-[11px] text-gray-500">Planned date</div><div>{drawer.retirement_date || "TBD"} ({daysLabel(drawer.days_until)})</div></div>
+                <div className="rounded-sm border px-2 py-1.5"><div className="text-[11px] text-gray-500">Type</div><div>{drawer.change_type === "breaking_change" ? "Breaking change" : "Retirement"}</div></div>
+                <div className="rounded-sm border px-2 py-1.5"><div className="text-[11px] text-gray-500">Planned date</div><div>{drawer.retirement_date || "TBD"} ({daysLabel(drawer.days_until)})</div></div>
               </div>
               {drawer.summary && <AdvisoryMessage value={drawer.summary} />}
               {drawer.recommended_replacement && (
@@ -667,12 +667,12 @@ export function RetirementRadarPanel() {
                       key={k}
                       onClick={() => setState(drawer, { status: k })}
                       disabled={busy === `state:${drawer.tracking_id}`}
-                      className={`rounded border px-2 py-1 text-xs ${(drawer.status || "new") === k ? "bg-gray-900 text-white" : "bg-white hover:bg-gray-50"}`}
+                      className={`rounded-sm border px-2 py-1 text-xs ${(drawer.status || "new") === k ? "bg-gray-900 text-white" : "bg-white hover:bg-gray-50"}`}
                     >
                       {v}
                     </button>
                   ))}
-                  <button onClick={() => { setWaiveFor(drawer); setWaiveReason(drawer.waive_reason || ""); }} className={`rounded border px-2 py-1 text-xs ${drawer.status === "waived" ? "bg-gray-900 text-white" : "bg-white hover:bg-gray-50"}`}>Waive…</button>
+                  <button onClick={() => { setWaiveFor(drawer); setWaiveReason(drawer.waive_reason || ""); }} className={`rounded-sm border px-2 py-1 text-xs ${drawer.status === "waived" ? "bg-gray-900 text-white" : "bg-white hover:bg-gray-50"}`}>Waive…</button>
                 </div>
                 {drawer.status === "waived" && drawer.waive_reason && (
                   <div className="mt-1 text-[11px] text-gray-500">Waived: {drawer.waive_reason}</div>
@@ -683,7 +683,7 @@ export function RetirementRadarPanel() {
               <div>
                 <div className="mb-1 text-[11px] font-medium uppercase text-gray-500">Impacted resources ({impactCountLabel(drawer)})</div>
                 {(drawer.impact_scope?.length ?? 0) > 0 && (
-                  <div className="mb-2 rounded border border-sky-100 bg-sky-50 px-2.5 py-2 text-xs text-sky-900">
+                  <div className="mb-2 rounded-sm border border-sky-100 bg-sky-50 px-2.5 py-2 text-xs text-sky-900">
                     <div className="mb-1 font-medium">Scope reported by Azure Service Health</div>
                     {drawer.impact_scope!.map((scope, index) => (
                       <div key={`${scope.service}:${index}`}>
@@ -694,7 +694,7 @@ export function RetirementRadarPanel() {
                     ))}
                   </div>
                 )}
-                <div className="max-h-48 overflow-auto rounded border">
+                <div className="max-h-48 overflow-auto rounded-sm border">
                   <table className="w-full text-[12px]">
                     <tbody>
                       {drawer.impacted_resources.map((r) => (
@@ -704,7 +704,7 @@ export function RetirementRadarPanel() {
                             <div className="text-[10px] text-gray-400">{r.type} · {r.resource_group} · {r.region}</div>
                           </td>
                           <td className="px-2 py-1 text-right">
-                            {r.unowned ? <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] text-amber-700">unowned</span> : <span className="text-[11px] text-gray-600">{r.owner}</span>}
+                            {r.unowned ? <span className="rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] text-amber-700">unowned</span> : <span className="text-[11px] text-gray-600">{r.owner}</span>}
                           </td>
                         </tr>
                       ))}
@@ -749,7 +749,7 @@ export function RetirementRadarPanel() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setWaiveFor(null)}>
           <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-2 text-base font-semibold">Waive: {waiveFor.title || waiveFor.service}</h3>
-            <textarea value={waiveReason} onChange={(e) => setWaiveReason(e.target.value)} rows={3} placeholder="Reason for waiving (e.g. resource being decommissioned)…" className="w-full rounded border px-2 py-1.5 text-sm" />
+            <textarea value={waiveReason} onChange={(e) => setWaiveReason(e.target.value)} rows={3} placeholder="Reason for waiving (e.g. resource being decommissioned)…" className="w-full rounded-sm border px-2 py-1.5 text-sm" />
             <div className="mt-3 flex justify-end gap-2">
               <button onClick={() => setWaiveFor(null)} className="rounded-md border px-3 py-1.5 text-sm">Cancel</button>
               <button
@@ -779,11 +779,11 @@ export function RetirementRadarPanel() {
                     a.href = url; a.download = "migration-runbook.md"; a.click();
                     URL.revokeObjectURL(url);
                   }}
-                  className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                  className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50"
                 >
                   ⬇ Download
                 </button>
-                <button onClick={() => setRunbook(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+                <button onClick={() => setRunbook(null)} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
               </div>
             </div>
             <pre className="flex-1 overflow-auto whitespace-pre-wrap px-4 py-3 text-[12px] leading-relaxed text-gray-800">{runbook.text}</pre>

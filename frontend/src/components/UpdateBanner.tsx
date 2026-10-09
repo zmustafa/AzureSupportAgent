@@ -10,7 +10,7 @@ export function UpdateBanner() {
   if (!ready || dismissed) return null;
 
   return (
-    <div className="fixed bottom-4 left-1/2 z-[100] -translate-x-1/2">
+    <div className="fixed bottom-4 left-1/2 z-100 -translate-x-1/2">
       <div className="flex items-center gap-3 rounded-xl border border-brand/30 bg-white px-4 py-2.5 shadow-lg">
         <span className="text-lg">✨</span>
         <div className="text-sm text-gray-700">
@@ -25,7 +25,7 @@ export function UpdateBanner() {
         </button>
         <button
           onClick={() => setDismissed(true)}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          className="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           title="Dismiss (you can reload later)"
         >
           ✕

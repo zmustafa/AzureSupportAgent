@@ -45,7 +45,7 @@ function Caveats({ verdict }: { verdict: ResiliencyVerdict }) {
           key={i}
           data-testid="verdict-caveat"
           data-severity={c.severity}
-          className={`rounded border px-1.5 py-1 text-[10px] leading-snug ${CAVEAT_STYLE[c.severity] ?? CAVEAT_STYLE.info}`}
+          className={`rounded-sm border px-1.5 py-1 text-[10px] leading-snug ${CAVEAT_STYLE[c.severity] ?? CAVEAT_STYLE.info}`}
         >
           <span className="font-semibold uppercase tracking-wide">
             {c.kind === "mitigation" ? "Mitigation" : "Does not cover"}
@@ -140,7 +140,7 @@ export function ResourceDrawer({
               {resource.tier_label && ` · ${resource.tier_label}`}
             </div>
           </div>
-          <button onClick={onClose} className="rounded px-2 py-1 text-sm text-gray-500 hover:bg-gray-100">
+          <button onClick={onClose} className="rounded-sm px-2 py-1 text-sm text-gray-500 hover:bg-gray-100">
             Close
           </button>
         </div>
@@ -148,7 +148,7 @@ export function ResourceDrawer({
         <div className="mb-3 flex w-fit items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
           {(["scenarios", "config"] as const).map((t) => (
             <button key={t} type="button" aria-pressed={tab === t} onClick={() => setTab(t)}
-                    className={`rounded-md px-2.5 py-1 ${tab === t ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
+                    className={`rounded-md px-2.5 py-1 ${tab === t ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}>
               {t === "scenarios" ? "Recovery" : "Configuration"}
             </button>
           ))}
@@ -185,7 +185,7 @@ export function ResourceDrawer({
             <Section title="Protection">
               <Fact label="State" value={resource.protection.state} />
               {resource.protection.reason && (
-                <div className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
+                <div className="rounded-sm border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
                   {resource.protection.reason}
                 </div>
               )}
@@ -230,7 +230,7 @@ export function ResourceDrawer({
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded border p-2">
+    <div className="rounded-sm border p-2">
       <div className="mb-1 text-[11px] font-semibold uppercase text-gray-500">{title}</div>
       <div className="space-y-1">{children}</div>
     </div>

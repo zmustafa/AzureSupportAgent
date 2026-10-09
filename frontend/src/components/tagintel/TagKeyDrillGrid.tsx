@@ -133,7 +133,7 @@ function DrillRow({
         <td className="px-2 text-right tabular-nums text-gray-600">{row.count ?? ""}</td>
         <td className="px-2 text-right">
           {onUseFilter && filterText && (
-            <button onClick={(e) => { e.stopPropagation(); onUseFilter(filterText); }} className="rounded border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-brand" title="Ask about this subset">⌕</button>
+            <button onClick={(e) => { e.stopPropagation(); onUseFilter(filterText); }} className="rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-brand" title="Ask about this subset">⌕</button>
           )}
         </td>
       </tr>
@@ -237,11 +237,11 @@ function KeyRow({
           <div className="flex items-center pl-2">
             <span className="mr-1 inline-block w-3 text-gray-400">{open ? "▾" : "▸"}</span>
             <span className="font-medium text-gray-800">{k.key}</span>
-            {k.casing_variants.length > 0 && <span className="ml-1 rounded bg-red-100 px-1 text-[10px] text-red-600" title={`Casing variants: ${k.casing_variants.join(", ")}`}>±{k.casing_variants.length}</span>}
-            {k.high_cardinality && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-700">high-card</span>}
+            {k.casing_variants.length > 0 && <span className="ml-1 rounded-sm bg-red-100 px-1 text-[10px] text-red-600" title={`Casing variants: ${k.casing_variants.join(", ")}`}>±{k.casing_variants.length}</span>}
+            {k.high_cardinality && <span className="ml-1 rounded-sm bg-amber-100 px-1 text-[10px] text-amber-700">high-card</span>}
           </div>
         </td>
-        <td className="px-2"><span className="rounded px-1.5 py-0.5 text-[10px] font-medium text-white" style={{ background: CAT_COLORS[k.category] }}>{k.category}</span></td>
+        <td className="px-2"><span className="rounded-sm px-1.5 py-0.5 text-[10px] font-medium text-white" style={{ background: CAT_COLORS[k.category] }}>{k.category}</span></td>
         <td className="px-2 text-right tabular-nums text-gray-700">{k.count.toLocaleString()}</td>
         <td className="px-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -299,7 +299,7 @@ function ValueRow({
         <td className="px-2" />
         <td className="px-2 text-right tabular-nums text-gray-600">{row.count ?? ""}</td>
         <td className="px-2 text-right">
-          {onUseFilter && <button onClick={(e) => { e.stopPropagation(); onUseFilter(`resources where ${node.key}=${node.value}`); }} className="rounded border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-brand" title="Ask about this value">⌕</button>}
+          {onUseFilter && <button onClick={(e) => { e.stopPropagation(); onUseFilter(`resources where ${node.key}=${node.value}`); }} className="rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-brand" title="Ask about this value">⌕</button>}
         </td>
       </tr>
       {open && (

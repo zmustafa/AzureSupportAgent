@@ -211,7 +211,7 @@ function SettingsOverview() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search settings…"
-            className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
+            className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden"
           />
         </div>
 
@@ -230,7 +230,7 @@ function SettingsOverview() {
                   <Link
                     key={i.id}
                     to={`/admin/${i.id}`}
-                    className="group flex items-start gap-3 rounded-xl border bg-white p-4 transition hover:border-brand-dark/40 hover:shadow-sm"
+                    className="group flex items-start gap-3 rounded-xl border bg-white p-4 transition hover:border-brand-dark/40 hover:shadow-xs"
                   >
                     <span className="text-xl leading-none">{i.icon}</span>
                     <span className="min-w-0">
@@ -364,7 +364,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border bg-white p-4 shadow-sm">
+    <section className="rounded-lg border bg-white p-4 shadow-xs">
       <h2 className="mb-3 font-medium">{title}</h2>
       {children}
     </section>
@@ -970,23 +970,23 @@ function ConnectionsCard() {
                   <div className="flex items-center gap-2">
                     <span className={`font-medium ${c.disabled ? "text-gray-400" : ""}`}>{c.display_name}</span>
                     {c.is_default && (
-                      <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                      <span className="rounded-sm bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
                         default
                       </span>
                     )}
                     {c.disabled ? (
-                      <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+                      <span className="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
                         disabled
                       </span>
                     ) : (
                       <StatusDot status={c.status} />
                     )}
                     {c.read_only ? (
-                      <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-800">
+                      <span className="rounded-sm bg-green-100 px-1.5 py-0.5 text-[10px] text-green-800">
                         read-only
                       </span>
                     ) : (
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
+                      <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
                         writes enabled
                       </span>
                     )}
@@ -1013,7 +1013,7 @@ function ConnectionsCard() {
                   <button
                     onClick={() => void test(c.id)}
                     disabled={busyId === c.id}
-                    className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                   >
                     Test
                   </button>
@@ -1021,7 +1021,7 @@ function ConnectionsCard() {
                     onClick={() => void validateEntra(c.id)}
                     disabled={busyId === `entra-${c.id}`}
                     title="Check the app's Microsoft Graph permissions for the EntraID MCP server"
-                    className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                   >
                     {busyId === `entra-${c.id}` ? "Checking…" : "Test EntraID"}
                   </button>
@@ -1030,7 +1030,7 @@ function ConnectionsCard() {
                       onClick={() => void makeDefault(c.id)}
                       disabled={busyId === c.id || c.disabled}
                       title={c.disabled ? "Enable this tenant first" : undefined}
-                      className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                      className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                     >
                       Set default
                     </button>
@@ -1039,20 +1039,20 @@ function ConnectionsCard() {
                     onClick={() => void toggleDisabled(c)}
                     disabled={busyId === c.id}
                     title={c.disabled ? "Enable this tenant" : "Disable — hide from the chat tenant picker"}
-                    className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                   >
                     {c.disabled ? "Enable" : "Disable"}
                   </button>
                   <button
                     onClick={() => startEdit(c)}
-                    className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50"
+                    className="rounded-sm border px-2 py-1 text-gray-600 hover:bg-gray-50"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => void remove(c.id)}
                     disabled={busyId === c.id}
-                    className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    className="rounded-sm border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
                     Delete
                   </button>
@@ -1114,7 +1114,7 @@ function ConnectionForm({
   const set = (patch: Partial<import("../api").ConnectionUpsert>) =>
     setForm({ ...form, ...patch });
   const input =
-    "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+    "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
   const label = "mb-1 block text-xs font-medium text-gray-600";
 
   // Live subscription discovery using the saved connection's credentials.
@@ -1277,7 +1277,7 @@ function ConnectionForm({
 
       {form.auth_method === "default_chain" && (
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-xs text-gray-600">
-          Uses the host's <code className="rounded bg-gray-100 px-1">az login</code> /
+          Uses the host's <code className="rounded-sm bg-gray-100 px-1">az login</code> /
           managed identity (DefaultAzureCredential). Best for a single tenant the server
           is already signed into.
         </div>
@@ -1381,11 +1381,11 @@ function CmdBlock({ cmd }: { cmd: string }) {
         type="button"
         onClick={() => { void navigator.clipboard?.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
         title="Copy command"
-        className="shrink-0 rounded border border-gray-200 bg-white px-1.5 text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+        className="shrink-0 rounded-sm border border-gray-200 bg-white px-1.5 text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700"
       >
         {copied ? "✓ Copied" : "⧉ Copy"}
       </button>
-      <pre className="flex-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">{cmd}</pre>
+      <pre className="flex-1 overflow-x-auto rounded-sm bg-white px-2 py-1 font-mono text-[11px] text-gray-800">{cmd}</pre>
     </div>
   );
 }
@@ -1398,7 +1398,7 @@ function AzCliTokenFields({
   set: (patch: Partial<import("../api").ConnectionUpsert>) => void;
 }) {
   const input =
-    "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+    "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
   const label = "mb-1 block text-xs font-medium text-gray-600";
   return (
     <div className="space-y-3">
@@ -1577,14 +1577,14 @@ function AzureMcpToolsCard() {
         </div>
       )}
       {saving && <p className="mb-2 text-xs text-gray-400">Saving…</p>}
-      {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
+      {error && <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
       {q.isError && <p className="text-sm text-red-600">MCP server unavailable. Check the connection and Azure sign-in.</p>}
-      {q.isLoading && <div className="h-24 animate-pulse rounded border bg-gray-100" />}
+      {q.isLoading && <div className="h-24 animate-pulse rounded-sm border bg-gray-100" />}
       {!q.isLoading && !q.isError && tools.length === 0 && <p className="text-sm text-gray-500">No tools are currently exposed.</p>}
       {tools.length > 0 && (
         <>
           <div className="mb-2 flex flex-wrap gap-2">
-            <input className="min-w-[14rem] flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search Azure tools…" aria-label="Search Azure tools" />
+            <input className="min-w-56 flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search Azure tools…" aria-label="Search Azure tools" />
             <select className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm" value={bundle} onChange={(e) => setBundle(e.target.value)} aria-label="Filter by Azure tool bundle">
               <option value="">All bundles</option>
               {bundles.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -1599,16 +1599,16 @@ function AzureMcpToolsCard() {
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {visible.map((tool) => (
-              <div key={tool.name} className="rounded border bg-white p-3 text-sm">
+              <div key={tool.name} className="rounded-sm border bg-white p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono font-medium">{tool.name}</span>
                   <div className="flex items-center gap-2">
-                    <span className={`rounded px-2 py-0.5 text-xs ${tool.kind === "write" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>{tool.kind}</span>
+                    <span className={`rounded-sm px-2 py-0.5 text-xs ${tool.kind === "write" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>{tool.kind}</span>
                     <Toggle label="" ariaLabel={`Enable Azure tool ${tool.name}`} checked={!disabled.has(tool.name)} onChange={(on) => toggleTool(tool.name, on)} />
                   </div>
                 </div>
                 <p className="mt-1 text-xs text-gray-500">{tool.description}</p>
-                <div className="mt-1 flex flex-wrap gap-1">{tool.bundles.map((name) => <span key={name} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{name}</span>)}</div>
+                <div className="mt-1 flex flex-wrap gap-1">{tool.bundles.map((name) => <span key={name} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{name}</span>)}</div>
               </div>
             ))}
           </div>
@@ -1681,7 +1681,7 @@ function BuiltinToolsCard() {
       {q.isLoading && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-16 animate-pulse rounded border bg-gray-100" />
+            <div key={i} className="h-16 animate-pulse rounded-sm border bg-gray-100" />
           ))}
         </div>
       )}
@@ -1690,11 +1690,11 @@ function BuiltinToolsCard() {
         {allTools.map((t) => {
           const off = disabled.has(t.name);
           return (
-            <div key={t.name} className="rounded border bg-white p-3 text-sm">
+            <div key={t.name} className="rounded-sm border bg-white p-3 text-sm">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono font-medium">{t.name}</span>
                 <div className="flex items-center gap-2">
-                  <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-800">read</span>
+                  <span className="rounded-sm bg-green-100 px-2 py-0.5 text-xs text-green-800">read</span>
                   <Toggle
                     label=""
                     ariaLabel={`Enable tool ${t.name}`}
@@ -1864,7 +1864,7 @@ function EntraToolsCard() {
         {q.isLoading && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-16 animate-pulse rounded border bg-gray-100" />
+              <div key={i} className="h-16 animate-pulse rounded-sm border bg-gray-100" />
             ))}
           </div>
         )}
@@ -1875,7 +1875,7 @@ function EntraToolsCard() {
           <>
             <div className="mb-2 flex flex-wrap gap-2">
               <input
-                className="min-w-[14rem] flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm"
+                className="min-w-56 flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search Entra tools…"
@@ -1911,11 +1911,11 @@ function EntraToolsCard() {
         )}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {visibleTools.map((t) => (
-            <div key={t.name} className={`rounded border bg-white p-3 text-sm ${t.permission_withheld ? "opacity-60" : ""}`}>
+            <div key={t.name} className={`rounded-sm border bg-white p-3 text-sm ${t.permission_withheld ? "opacity-60" : ""}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono font-medium">{t.name}</span>
                 <div className="flex items-center gap-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${t.kind === "write" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>{t.kind}</span>
+                  <span className={`rounded-sm px-2 py-0.5 text-xs ${t.kind === "write" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>{t.kind}</span>
                   <Toggle
                     label=""
                     ariaLabel={`Enable Entra tool ${t.name}`}
@@ -1926,8 +1926,8 @@ function EntraToolsCard() {
               </div>
               <p className="mt-1 text-xs text-gray-500">{t.description}</p>
               <div className="mt-1 flex flex-wrap gap-1">
-                {t.bundles.map((name) => <span key={name} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{name}</span>)}
-                {t.permission_withheld && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">permission withheld</span>}
+                {t.bundles.map((name) => <span key={name} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{name}</span>)}
+                {t.permission_withheld && <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">permission withheld</span>}
               </div>
             </div>
           ))}
@@ -1992,7 +1992,7 @@ function SiemExportCard() {
   }
 
   return (
-    <section className="rounded-lg border bg-white p-4 shadow-sm">
+    <section className="rounded-lg border bg-white p-4 shadow-xs">
       <div className="mb-1 flex items-center justify-between gap-2">
         <h2 className="font-medium">Continuous SIEM export</h2>
         <button
@@ -2251,7 +2251,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                 <input
                   value={cfg.name}
                   onChange={(e) => patch({ name: e.target.value })}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 />
               </label>
               <label className="block">
@@ -2259,7 +2259,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                 <select
                   value={cfg.type}
                   onChange={(e) => patch({ type: e.target.value })}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 >
                   <option value="splunk_hec">Splunk (HTTP Event Collector)</option>
                   <option value="http">Generic HTTP / webhook (Sentinel, Elastic, Datadog…)</option>
@@ -2275,7 +2275,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                 value={cfg.endpoint}
                 onChange={(e) => patch({ endpoint: e.target.value })}
                 placeholder={isSplunk ? "https://splunk.contoso.com:8088" : "https://siem.example.com/ingest"}
-                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
               />
             </label>
 
@@ -2297,7 +2297,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 placeholder={cfg.token_set ? "••••••••" : isSplunk ? "HEC token" : "Bearer token or API key"}
-                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
               />
             </label>
 
@@ -2309,7 +2309,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                     value={cfg.splunk_index}
                     onChange={(e) => patch({ splunk_index: e.target.value })}
                     placeholder="main"
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                   />
                 </label>
                 <label className="block">
@@ -2318,7 +2318,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                     value={cfg.splunk_sourcetype}
                     onChange={(e) => patch({ splunk_sourcetype: e.target.value })}
                     placeholder="azsupagent:audit"
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                   />
                 </label>
               </div>
@@ -2330,7 +2330,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                     value={cfg.auth_header}
                     onChange={(e) => patch({ auth_header: e.target.value })}
                     placeholder="Authorization"
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                   />
                 </label>
                 <label className="block">
@@ -2339,7 +2339,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                     value={cfg.auth_scheme}
                     onChange={(e) => patch({ auth_scheme: e.target.value })}
                     placeholder="Bearer"
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                   />
                 </label>
               </div>
@@ -2354,7 +2354,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
                   max={1000}
                   value={cfg.batch_size}
                   onChange={(e) => patch({ batch_size: Number(e.target.value) || 1 })}
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 />
               </label>
               <div className="flex items-end">
@@ -2607,7 +2607,7 @@ function AuditCard({ canManageSiem }: { canManageSiem: boolean }) {
       <fieldset disabled={!canManageSiem} className="contents">
         <SiemExportCard />
       </fieldset>
-      <section className="rounded-lg border bg-white p-4 shadow-sm">
+      <section className="rounded-lg border bg-white p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-medium">Audit Log</h2>
         <div className="flex items-center gap-2">
@@ -2686,14 +2686,14 @@ function AuditCard({ canManageSiem }: { canManageSiem: boolean }) {
           <button
             onClick={() => setPage(0)}
             disabled={page === 0}
-            className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
+            className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
           >
             « First
           </button>
           <button
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={page === 0}
-            className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
+            className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
           >
             ‹ Prev
           </button>
@@ -2703,14 +2703,14 @@ function AuditCard({ canManageSiem }: { canManageSiem: boolean }) {
           <button
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             disabled={page >= pageCount - 1}
-            className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
+            className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
           >
             Next ›
           </button>
           <button
             onClick={() => setPage(pageCount - 1)}
             disabled={page >= pageCount - 1}
-            className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
+            className="rounded-sm border px-2 py-1 hover:bg-gray-50 disabled:opacity-40"
           >
             Last »
           </button>
@@ -2847,7 +2847,7 @@ function SandboxVmsCard() {
     <Card title="Sandbox VMs">
       <p className="-mt-2 mb-4 text-sm text-gray-500">
         Onboard dedicated sandbox VMs (SSH) that sit inside a workload's network. The agent runs
-        diagnostic commands on them via <code className="rounded bg-gray-100 px-1">vm_exec</code> to reach
+        diagnostic commands on them via <code className="rounded-sm bg-gray-100 px-1">vm_exec</code> to reach
         private endpoints — in normal and deep chat. Link a VM to a workload to make it available
         when that workload is selected.
       </p>
@@ -2975,7 +2975,7 @@ function SandboxVmsCard() {
                 <span className="text-xs text-gray-400">{v.username}@{v.host}:{v.port}</span>
                 {v.strict_mode && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">strict</span>}
                 {v.disabled && <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">disabled</span>}
-                {v.os_info && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{v.os_info}</span>}
+                {v.os_info && <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{v.os_info}</span>}
                 {v.last_tested && (
                   !v.allow_sudo
                     ? <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500" title="Sudo is disabled for this VM by an operator — the agent will not elevate or auto-install tools.">sudo off</span>
@@ -2983,7 +2983,7 @@ function SandboxVmsCard() {
                     ? <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700" title={v.sudo_mode === "password" ? "This VM/user can sudo using its SSH login password — the agent can auto-install missing tools." : "This VM/user has passwordless sudo — the agent can auto-install missing tools."}>🔑 sudo{v.sudo_mode === "password" ? " (pw)" : v.sudo_mode === "passwordless" ? " (nopasswd)" : ""}</span>
                     : <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500" title="No usable sudo for this VM/user — the agent cannot auto-install missing tools.">no sudo</span>
                 )}
-                {v.pkg_manager && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="Package manager detected on the VM.">pkg: {v.pkg_manager}</span>}
+                {v.pkg_manager && <span className="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="Package manager detected on the VM.">pkg: {v.pkg_manager}</span>}
                 <span className="ml-auto flex gap-1">
                   <button onClick={() => void test(v.id)} disabled={busyId === v.id} className="rounded-lg border px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{busyId === v.id ? "Testing…" : "Test"}</button>
                   <button onClick={() => setRunFor(runFor === v.id ? null : v.id)} className="rounded-lg border px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50">Run</button>
@@ -2995,16 +2995,16 @@ function SandboxVmsCard() {
                 const linked = existingWorkloads(v.workload_ids);
                 return linked.length > 0 ? (
                   <div className="mt-1.5 flex flex-wrap gap-1 text-[11px] text-gray-500">
-                    {linked.map((wid) => <span key={wid} className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700">🧩 {wlName(wid)}</span>)}
+                    {linked.map((wid) => <span key={wid} className="rounded-sm bg-violet-50 px-1.5 py-0.5 text-violet-700">🧩 {wlName(wid)}</span>)}
                   </div>
                 ) : null;
               })()}
               {tm && (
                 <div className={`mt-1.5 text-xs ${tm.ok ? "text-green-600" : "text-red-600"}`}>
-                  {tm.text}{tm.pm ? <span className="ml-1 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">pkg: {tm.pm}</span> : null}
+                  {tm.text}{tm.pm ? <span className="ml-1 rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">pkg: {tm.pm}</span> : null}
                   {tm.caps && tm.caps.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
-                      {tm.caps.map((c) => <span key={c} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{c}</span>)}
+                      {tm.caps.map((c) => <span key={c} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{c}</span>)}
                     </div>
                   )}
                 </div>
@@ -3045,14 +3045,14 @@ function VmRunConsole({ vmId }: { vmId: string }) {
         <input value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void run()} placeholder="e.g. dig +short example.com" className="flex-1 rounded-lg border px-2.5 py-1.5 font-mono text-xs" />
         <button onClick={() => void run()} disabled={busy} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">{busy ? "Running…" : "Run"}</button>
       </div>
-      {out && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-gray-900 p-2 text-[11px] text-gray-100">{out}</pre>}
+      {out && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-sm bg-gray-900 p-2 text-[11px] text-gray-100">{out}</pre>}
       {runs.length > 0 && (
         <div className="mt-2">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Recent runs</div>
           <div className="max-h-40 space-y-1 overflow-auto">
             {runs.slice(0, 10).map((r) => (
               <div key={r.id} className="flex items-center gap-2 text-[11px]">
-                <span className={`rounded px-1 py-0.5 ${r.status === "succeeded" ? "bg-green-100 text-green-700" : r.status === "blocked" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{r.status}</span>
+                <span className={`rounded-sm px-1 py-0.5 ${r.status === "succeeded" ? "bg-green-100 text-green-700" : r.status === "blocked" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{r.status}</span>
                 <code className="truncate text-gray-700">{r.command}</code>
                 <span className="ml-auto text-gray-400">{r.trigger}{r.duration_ms != null ? ` · ${r.duration_ms}ms` : ""}</span>
               </div>
@@ -3135,7 +3135,7 @@ function NumberField({
             max={max}
             step={step}
             onChange={(e) => onChange(Number(e.target.value))}
-            className="w-28 rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+            className="w-28 rounded-lg border px-3 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
           />
           {suffix && <span className="text-xs text-gray-400">{suffix}</span>}
         </div>
@@ -3280,7 +3280,7 @@ function AiPromptsCard() {
         const modifiedCount = groupPrompts.filter((p) => p.is_overridden).length;
         const open = !!openGroups[group];
         return (
-          <section key={group} className="overflow-hidden rounded-lg border bg-white shadow-sm">
+          <section key={group} className="overflow-hidden rounded-lg border bg-white shadow-xs">
             <button
               onClick={() => setOpenGroups((o) => ({ ...o, [group]: !o[group] }))}
               className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-gray-50"
@@ -3317,18 +3317,18 @@ function AiPromptsCard() {
                 )}
                 <div className="space-y-5">
                   {groupPrompts.map((p) => (
-                    <div key={p.id} className="rounded-lg border bg-white p-3 shadow-sm">
+                    <div key={p.id} className="rounded-lg border bg-white p-3 shadow-xs">
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-gray-800">{p.label}</span>
                             {p.is_overridden && (
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                              <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
                                 modified
                               </span>
                             )}
                             {p.kind === "list" && (
-                              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">list</span>
+                              <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">list</span>
                             )}
                           </div>
                           <p className="mt-0.5 text-xs text-gray-500">{p.description}</p>
@@ -3336,7 +3336,7 @@ function AiPromptsCard() {
                         {savedId === p.id && <span className="shrink-0 text-xs text-green-600">Saved ✓</span>}
                       </div>
                       <textarea
-                        className="mt-2 w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand"
+                        className="mt-2 w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed focus:outline-hidden focus:ring-2 focus:ring-brand"
                         rows={p.kind === "list" ? 3 : 7}
                         value={valueOf(p)}
                         onChange={(e) => setEdits((ed) => ({ ...ed, [p.id]: e.target.value }))}
@@ -3347,7 +3347,7 @@ function AiPromptsCard() {
                           <summary className="cursor-pointer hover:text-gray-600">
                             Locked output format (appended automatically)
                           </summary>
-                          <pre className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-2 font-mono text-[11px] text-gray-500">
+                          <pre className="mt-1 whitespace-pre-wrap rounded-sm bg-gray-50 p-2 font-mono text-[11px] text-gray-500">
                             {p.contract}
                           </pre>
                         </details>
@@ -3501,7 +3501,7 @@ function ScoringTaxonomyCard() {
                 max={100}
                 value={weights[r.id] ?? 0}
                 onChange={(e) => setWeight(r.id, Number(e.target.value))}
-                className="w-20 rounded-lg border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="w-20 rounded-lg border px-2 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
               />
               <div className="hidden h-2 flex-1 overflow-hidden rounded-full bg-gray-100 sm:block">
                 <div
@@ -3527,7 +3527,7 @@ function ScoringTaxonomyCard() {
             type="checkbox"
             checked={!!form.assessments_include_recovery}
             onChange={(e) => set({ assessments_include_recovery: e.target.checked })}
-            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+            className="mt-0.5 h-4 w-4 rounded-sm border-gray-300 text-brand focus:ring-brand"
           />
           <span>
             Count Recovery Readiness against the Reliability pillar
@@ -3556,7 +3556,7 @@ function ScoringTaxonomyCard() {
                 max={100}
                 value={good}
                 onChange={(e) => set({ assessment_score_good: Number(e.target.value) })}
-                className="w-24 rounded-lg border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="w-24 rounded-lg border px-2 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
               />
               <span className="text-sm text-gray-400">/ 100</span>
             </div>
@@ -3570,15 +3570,15 @@ function ScoringTaxonomyCard() {
                 max={99}
                 value={warn}
                 onChange={(e) => set({ assessment_score_warn: Number(e.target.value) })}
-                className="w-24 rounded-lg border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="w-24 rounded-lg border px-2 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
               />
               <span className="text-sm text-gray-400">/ 100</span>
             </div>
           </label>
           <div className="flex items-center gap-2 text-xs">
-            <span className="rounded px-2 py-0.5 font-semibold bg-green-100 text-green-700">≥ {good} healthy</span>
-            <span className="rounded px-2 py-0.5 font-semibold bg-amber-100 text-amber-700">≥ {warn} at risk</span>
-            <span className="rounded px-2 py-0.5 font-semibold bg-red-100 text-red-700">&lt; {warn} poor</span>
+            <span className="rounded-sm px-2 py-0.5 font-semibold bg-green-100 text-green-700">≥ {good} healthy</span>
+            <span className="rounded-sm px-2 py-0.5 font-semibold bg-amber-100 text-amber-700">≥ {warn} at risk</span>
+            <span className="rounded-sm px-2 py-0.5 font-semibold bg-red-100 text-red-700">&lt; {warn} poor</span>
           </div>
         </div>
         {warn >= good && (
@@ -3605,7 +3605,7 @@ function ScoringTaxonomyCard() {
                 step={0.5}
                 value={wlWeights[s.id] ?? 1}
                 onChange={(e) => setWlWeight(s.id, Number(e.target.value))}
-                className="w-20 rounded-lg border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="w-20 rounded-lg border px-2 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
               />
               <div className="hidden h-2 flex-1 overflow-hidden rounded-full bg-gray-100 sm:block">
                 <div className="h-full rounded-full bg-brand" style={{ width: `${(Number(wlWeights[s.id] ?? 1) / wlMax) * 100}%` }} />
@@ -3642,7 +3642,7 @@ function ScoringTaxonomyCard() {
                     type="color"
                     value={effective}
                     onChange={(e) => setColor(c.id, e.target.value)}
-                    className="h-7 w-7 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0.5"
+                    className="h-7 w-7 shrink-0 cursor-pointer rounded-sm border border-gray-200 bg-white p-0.5"
                     aria-label={`${c.label} color`}
                   />
                   <span className="flex-1 truncate text-sm text-gray-700">{c.label}</span>
@@ -3724,7 +3724,7 @@ function AppSettingsCard() {
           onChange={(e) => set({ custom_instructions: e.target.value })}
           rows={5}
           placeholder="e.g. Always investigate the production subscription first. Prefer Azure CLI examples. Format findings as a table followed by next steps."
-          className="w-full resize-y rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+          className="w-full resize-y rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
         />
         <div className="mt-4">
           <label className="mb-1 block text-xs font-medium text-gray-600">Response style</label>
@@ -3755,7 +3755,7 @@ function AppSettingsCard() {
             step={256}
             value={form.max_tokens}
             onChange={(e) => set({ max_tokens: Number(e.target.value) })}
-            className="w-40 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+            className="w-40 rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
           />
         </div>
       </Card>
@@ -4752,7 +4752,7 @@ function AIProviderCard() {
   const activeProvider = cfg.data?.active_provider;
 
   return (
-    <section className="rounded-lg border bg-white shadow-sm">
+    <section className="rounded-lg border bg-white shadow-xs">
       <div className="border-b px-5 py-4">
         <h2 className="font-medium">AI Provider</h2>
         <p className="mt-0.5 text-xs text-gray-500">
@@ -4950,7 +4950,7 @@ function AIProviderCard() {
                         : "A key is set but looks unusually short — paste a new key to replace it"
                       : "Paste key to enable this provider"
                   }
-                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 />
                 <p className="mt-1 text-[11px] text-gray-400">{p.keyHint}</p>
               </div>
@@ -4973,7 +4973,7 @@ function AIProviderCard() {
                         ? "https://<resource>.services.ai.azure.com"
                         : "https://<resource>.openai.azure.com"
                     }
-                    className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                    className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                   />
                   <p className="mt-1 text-[11px] text-gray-400">
                     {p.id === "azure_foundry"
@@ -4992,7 +4992,7 @@ function AIProviderCard() {
                       setForms((m) => ({ ...m, [p.id]: { ...form, apiVersion: e.target.value } }))
                     }
                     placeholder={p.id === "azure_foundry" ? "2024-05-01-preview" : "2024-10-21"}
-                    className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                    className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                   />
                   <p className="mt-1 text-[11px] text-gray-400">
                     {p.id === "azure_foundry"
@@ -5015,7 +5015,7 @@ function AIProviderCard() {
                     setForms((m) => ({ ...m, [p.id]: { ...form, newKey: e.target.value } }))
                   }
                   placeholder={serverProv?.base_url || "http://localhost:11434/v1"}
-                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 />
                 <p className="mt-1 text-[11px] text-gray-400">{p.keyHint}</p>
               </div>
@@ -5062,12 +5062,12 @@ function AIProviderCard() {
                     </div>
                     <div className="flex items-center gap-2 text-gray-700">
                       <span>2. Enter code:</span>
-                      <code className="rounded bg-white px-2 py-1 text-base font-bold tracking-widest text-gray-900 border">
+                      <code className="rounded-sm bg-white px-2 py-1 text-base font-bold tracking-widest text-gray-900 border">
                         {ghDevice.user_code}
                       </code>
                       <button
                         onClick={() => void navigator.clipboard?.writeText(ghDevice.user_code)}
-                        className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                        className="rounded-sm border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
                       >
                         Copy
                       </button>
@@ -5169,7 +5169,7 @@ function AIProviderCard() {
                 <div className="mt-3 space-y-2 text-xs text-gray-600">
                     <p className="text-[11px] text-gray-500">
                       Open the link, sign in, then paste the URL you land on
-                      (it ends in <code className="rounded bg-white px-1">…/auth/callback?code=…</code>,
+                      (it ends in <code className="rounded-sm bg-white px-1">…/auth/callback?code=…</code>,
                       and won't load — that's expected).
                     </p>
                     {chatgptAuthUrl && (
@@ -5177,7 +5177,7 @@ function AIProviderCard() {
                         readOnly
                         value={chatgptAuthUrl}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="w-full rounded border bg-white px-2 py-1 text-[11px] text-gray-600"
+                        className="w-full rounded-sm border bg-white px-2 py-1 text-[11px] text-gray-600"
                       />
                     )}
                     <div className="flex gap-2">
@@ -5186,7 +5186,7 @@ function AIProviderCard() {
                         value={chatgptCallback}
                         onChange={(e) => setChatgptCallback(e.target.value)}
                         placeholder="Paste the redirected URL (…/auth/callback?code=…)"
-                        className="flex-1 rounded border bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand"
+                        className="flex-1 rounded-sm border bg-white px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-brand"
                       />
                       <button
                         onClick={() => void chatgptComplete()}
@@ -5262,14 +5262,14 @@ function AIProviderCard() {
                     <p className="text-[11px] text-gray-500">
                       Open the link, sign in, then paste the code shown on the
                       Claude callback page (it looks like{" "}
-                      <code className="rounded bg-white px-1">code#state</code>).
+                      <code className="rounded-sm bg-white px-1">code#state</code>).
                     </p>
                     {claudeAuthUrl && (
                       <input
                         readOnly
                         value={claudeAuthUrl}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="w-full rounded border bg-white px-2 py-1 text-[11px] text-gray-600"
+                        className="w-full rounded-sm border bg-white px-2 py-1 text-[11px] text-gray-600"
                       />
                     )}
                     <div className="flex gap-2">
@@ -5278,7 +5278,7 @@ function AIProviderCard() {
                         value={claudeCallback}
                         onChange={(e) => setClaudeCallback(e.target.value)}
                         placeholder="Paste the code shown (code#state)"
-                        className="flex-1 rounded border bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand"
+                        className="flex-1 rounded-sm border bg-white px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-brand"
                       />
                       <button
                         onClick={() => void claudeComplete()}
@@ -5338,7 +5338,7 @@ function AIProviderCard() {
                   onChange={(e) =>
                     setForms((m) => ({ ...m, [p.id]: { ...form, model: e.target.value } }))
                   }
-                  className="min-w-0 flex-1 truncate rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="min-w-0 flex-1 truncate rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 >
                   {form.model && !modelList.includes(form.model) && (
                     <option value={form.model}>{form.model}</option>
@@ -5358,7 +5358,7 @@ function AIProviderCard() {
                     setForms((m) => ({ ...m, [p.id]: { ...form, model: e.target.value } }))
                   }
                   placeholder="or type a model id"
-                  className="w-48 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                  className="w-48 rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand"
                 />
               </div>
 
@@ -5492,7 +5492,7 @@ function ModelVisibilityPanel({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter models…"
-          className="min-w-0 flex-1 rounded border bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand"
+          className="min-w-0 flex-1 rounded-sm border bg-white px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-brand"
         />
         <button
           onClick={onRefresh}
@@ -5523,7 +5523,7 @@ function ModelVisibilityPanel({
       ) : filtered.length === 0 ? (
         <p className="text-xs italic text-gray-500">No models match "{filter}".</p>
       ) : (
-        <ul className="max-h-64 space-y-0.5 overflow-y-auto rounded border border-gray-200 bg-white p-1">
+        <ul className="max-h-64 space-y-0.5 overflow-y-auto rounded-sm border border-gray-200 bg-white p-1">
           {filtered.map((m) => {
             const isHidden = hiddenSet.has(m);
             return (
@@ -5662,7 +5662,7 @@ function DiagnosticsPanel({
                 </div>
                 {s?.detail && (
                   <div
-                    className={`mt-0.5 break-words text-[12px] ${
+                    className={`mt-0.5 wrap-break-word text-[12px] ${
                       s.status === "error" ? "text-red-600" : "text-gray-500"
                     }`}
                   >
@@ -5743,22 +5743,22 @@ function AmbaChangeRequestsCard() {
           {requests.map((r) => (
             <div key={r.id} className="rounded-lg border bg-white">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-                <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status] ?? "bg-gray-100"}`}>{r.status}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status] ?? "bg-gray-100"}`}>{r.status}</span>
                 <span className="text-sm font-medium text-gray-800">{r.scope_name || r.scope_id}</span>
                 <span className="text-xs text-gray-500">{r.gap_count} gap(s) · {r.iac_format}</span>
                 <span className="text-[11px] text-gray-400">by {r.requested_by}</span>
                 <div className="ml-auto flex items-center gap-1.5">
-                  <button onClick={() => setOpen(open === r.id ? null : r.id)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">{open === r.id ? "Hide IaC" : "View IaC"}</button>
+                  <button onClick={() => setOpen(open === r.id ? null : r.id)} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50">{open === r.id ? "Hide IaC" : "View IaC"}</button>
                   {r.status === "pending" && (
                     <>
-                      <button onClick={() => void decide(r.id, "approved")} disabled={busy === r.id} className="rounded border border-green-300 px-2 py-0.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50">Approve</button>
-                      <button onClick={() => void decide(r.id, "rejected")} disabled={busy === r.id} className="rounded border border-red-300 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50">Reject</button>
+                      <button onClick={() => void decide(r.id, "approved")} disabled={busy === r.id} className="rounded-sm border border-green-300 px-2 py-0.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50">Approve</button>
+                      <button onClick={() => void decide(r.id, "rejected")} disabled={busy === r.id} className="rounded-sm border border-red-300 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50">Reject</button>
                     </>
                   )}
                   {r.status === "approved" && (
-                    <button onClick={() => void decide(r.id, "applied")} disabled={busy === r.id} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">Mark applied</button>
+                    <button onClick={() => void decide(r.id, "applied")} disabled={busy === r.id} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">Mark applied</button>
                   )}
-                  <button onClick={() => void remove(r.id)} disabled={busy === r.id} className="rounded border px-2 py-0.5 text-[11px] text-gray-400 hover:bg-gray-50 disabled:opacity-50">Delete</button>
+                  <button onClick={() => void remove(r.id)} disabled={busy === r.id} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-400 hover:bg-gray-50 disabled:opacity-50">Delete</button>
                 </div>
               </div>
               {open === r.id && (
@@ -5823,22 +5823,22 @@ function TelemetryChangeRequestsCard() {
           {requests.map((r) => (
             <div key={r.id} className="rounded-lg border bg-white">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-                <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status] ?? "bg-gray-100"}`}>{r.status}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status] ?? "bg-gray-100"}`}>{r.status}</span>
                 <span className="text-sm font-medium text-gray-800">{r.scope_name || r.scope_id}</span>
                 <span className="text-xs text-gray-500">{r.gap_count} gap(s) · {r.iac_format}</span>
                 <span className="text-[11px] text-gray-400">by {r.requested_by}</span>
                 <div className="ml-auto flex items-center gap-1.5">
-                  <button onClick={() => setOpen(open === r.id ? null : r.id)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">{open === r.id ? "Hide" : "View"}</button>
+                  <button onClick={() => setOpen(open === r.id ? null : r.id)} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50">{open === r.id ? "Hide" : "View"}</button>
                   {r.status === "pending" && (
                     <>
-                      <button onClick={() => void decide(r.id, "approved")} disabled={busy === r.id} className="rounded border border-green-300 px-2 py-0.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50">Approve</button>
-                      <button onClick={() => void decide(r.id, "rejected")} disabled={busy === r.id} className="rounded border border-red-300 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50">Reject</button>
+                      <button onClick={() => void decide(r.id, "approved")} disabled={busy === r.id} className="rounded-sm border border-green-300 px-2 py-0.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50">Approve</button>
+                      <button onClick={() => void decide(r.id, "rejected")} disabled={busy === r.id} className="rounded-sm border border-red-300 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50">Reject</button>
                     </>
                   )}
                   {r.status === "approved" && (
-                    <button onClick={() => void decide(r.id, "applied")} disabled={busy === r.id} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">Mark applied</button>
+                    <button onClick={() => void decide(r.id, "applied")} disabled={busy === r.id} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">Mark applied</button>
                   )}
-                  <button onClick={() => void remove(r.id)} disabled={busy === r.id} className="rounded border px-2 py-0.5 text-[11px] text-gray-400 hover:bg-gray-50 disabled:opacity-50">Delete</button>
+                  <button onClick={() => void remove(r.id)} disabled={busy === r.id} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-400 hover:bg-gray-50 disabled:opacity-50">Delete</button>
                 </div>
               </div>
               {open === r.id && (
@@ -5901,22 +5901,22 @@ function BackupDrChangeRequestsCard() {
           {requests.map((r) => (
             <div key={r.id} className="rounded-lg border bg-white">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-                <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status] ?? "bg-gray-100"}`}>{r.status}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status] ?? "bg-gray-100"}`}>{r.status}</span>
                 <span className="text-sm font-medium text-gray-800">{r.scope_name || r.scope_id}</span>
                 <span className="text-xs text-gray-500">{r.gap_count} gap(s) · {r.iac_format}</span>
                 <span className="text-[11px] text-gray-400">by {r.requested_by}</span>
                 <div className="ml-auto flex items-center gap-1.5">
-                  <button onClick={() => setOpen(open === r.id ? null : r.id)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">{open === r.id ? "Hide" : "View"}</button>
+                  <button onClick={() => setOpen(open === r.id ? null : r.id)} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50">{open === r.id ? "Hide" : "View"}</button>
                   {r.status === "pending" && (
                     <>
-                      <button onClick={() => void decide(r.id, "approved")} disabled={busy === r.id} className="rounded border border-green-300 px-2 py-0.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50">Approve</button>
-                      <button onClick={() => void decide(r.id, "rejected")} disabled={busy === r.id} className="rounded border border-red-300 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50">Reject</button>
+                      <button onClick={() => void decide(r.id, "approved")} disabled={busy === r.id} className="rounded-sm border border-green-300 px-2 py-0.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50">Approve</button>
+                      <button onClick={() => void decide(r.id, "rejected")} disabled={busy === r.id} className="rounded-sm border border-red-300 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50">Reject</button>
                     </>
                   )}
                   {r.status === "approved" && (
-                    <button onClick={() => void decide(r.id, "applied")} disabled={busy === r.id} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">Mark applied</button>
+                    <button onClick={() => void decide(r.id, "applied")} disabled={busy === r.id} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">Mark applied</button>
                   )}
-                  <button onClick={() => void remove(r.id)} disabled={busy === r.id} className="rounded border px-2 py-0.5 text-[11px] text-gray-400 hover:bg-gray-50 disabled:opacity-50">Delete</button>
+                  <button onClick={() => void remove(r.id)} disabled={busy === r.id} className="rounded-sm border px-2 py-0.5 text-[11px] text-gray-400 hover:bg-gray-50 disabled:opacity-50">Delete</button>
                 </div>
               </div>
               {open === r.id && (
@@ -6042,13 +6042,13 @@ function RadarReferenceCard() {
         </div>
         {editing ? (
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false}
-            className="h-96 w-full rounded-lg border bg-gray-900 p-3 font-mono text-[11px] text-gray-100 focus:outline-none" />
+            className="h-96 w-full rounded-lg border bg-gray-900 p-3 font-mono text-[11px] text-gray-100 focus:outline-hidden" />
         ) : (
           <div className="max-h-72 space-y-2 overflow-auto">
             {(ref?.model_lifecycle ?? []).map((m) => (
               <div key={`${m.model}-${m.version}`} className="flex items-center gap-2 rounded-lg border bg-white p-2 text-xs">
                 <span className="font-medium text-gray-800">{m.model} {m.version}</span>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{m.stage}</span>
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{m.stage}</span>
                 <span className="ml-auto text-gray-400">retires {m.retirement_date || "—"}</span>
               </div>
             ))}
@@ -6096,12 +6096,12 @@ function RadarReferenceCard() {
         <div className="space-y-1 text-xs">
           {(revsQ.data?.revisions ?? []).length === 0 && <p className="text-gray-400">No revisions yet.</p>}
           {(revsQ.data?.revisions ?? []).map((r) => (
-            <div key={r.id} className="flex items-center gap-2 rounded border bg-white px-2 py-1.5">
+            <div key={r.id} className="flex items-center gap-2 rounded-sm border bg-white px-2 py-1.5">
               <span className="font-medium">v{r.version}</span>
               <span className="text-gray-500">{r.reason}</span>
               <span className="text-gray-400">{r.rule_count} rules · {r.model_count} models</span>
               <span className="ml-auto text-gray-400">{r.by}</span>
-              <button onClick={() => void restore(r.id)} disabled={busy} className="rounded border px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50">Restore</button>
+              <button onClick={() => void restore(r.id)} disabled={busy} className="rounded-sm border px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50">Restore</button>
             </div>
           ))}
         </div>

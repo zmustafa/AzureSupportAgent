@@ -76,7 +76,7 @@ export function EntraCaExposureView({
         </div>
         <a
           href={api.entraCaExposureExportUrl(connectionId)}
-          className="rounded border px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
+          className="rounded-sm border px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
         >
           Export CSV
         </a>
@@ -135,7 +135,7 @@ function ExposureRow({
           {row.description && <div className="text-xs text-gray-500">{row.description}</div>}
         </td>
         <td className="px-2 py-2">
-          <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium ${sev.chip}`}>
+          <span className={`inline-block rounded-sm border px-1.5 py-0.5 text-[11px] font-medium ${sev.chip}`}>
             {sev.label}
           </span>
         </td>
@@ -151,7 +151,7 @@ function ExposureRow({
             <button
               onClick={onToggle}
               aria-expanded={open}
-              className="rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+              className="rounded-sm border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
             >
               {open ? "Hide" : "What this means"}
             </button>
@@ -163,7 +163,7 @@ function ExposureRow({
           <td colSpan={5} className="px-3 py-3">
             <div className="space-y-3">
               {row.findings.map((f) => (
-                <div key={f.signal_id} className="rounded border bg-white p-3">
+                <div key={f.signal_id} className="rounded-sm border bg-white p-3">
                   <div className="text-[13px] font-semibold text-gray-900">{f.title}</div>
                   <div className="mt-1 text-[13px] text-gray-700">{f.detail}</div>
                   {f.impact ? (

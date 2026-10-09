@@ -27,6 +27,21 @@ Report privately through GitHub's built-in private vulnerability reporting:
 If you cannot use GitHub's private reporting, open a minimal issue asking a
 maintainer to contact you — **without** disclosing the vulnerability details.
 
+## Dependency and Container Scanning
+
+Application dependency audits and container scans cover different Python environments.
+Azure CLI installs its own Python packages under `/opt/az`; updating
+`backend/requirements.txt` does not patch that environment. Both backend container
+definitions upgrade its security-sensitive packages separately.
+
+After updating those packages, scan the rebuilt image and verify that Azure CLI and
+its Resource Graph extension still load. Confirm fixes with fresh GitHub security
+scans rather than dismissing alerts solely because application requirements changed.
+
+The frontend uses Tailwind 4 to avoid the unpatched `braces` dependency in the
+Tailwind 3 build chain. Its KaTeX override keeps Mermaid's transitive renderer on
+a patched release; validate diagram and math rendering when updating that override.
+
 ## What to Include
 
 - A description of the issue and its impact.

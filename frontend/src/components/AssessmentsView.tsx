@@ -31,7 +31,7 @@ import { RunCleanup } from "./cleanup/RunCleanup";
 function Markdown({ children, className = "", inline = false }: { children: string; className?: string; inline?: boolean }) {
   if (inline) {
     return (
-      <span className={`[&_p]:m-0 [&_p]:inline [&_strong]:font-semibold [&_code]:rounded [&_code]:bg-black/5 [&_code]:px-1 ${className}`}>
+      <span className={`[&_p]:m-0 [&_p]:inline [&_strong]:font-semibold [&_code]:rounded-sm [&_code]:bg-black/5 [&_code]:px-1 ${className}`}>
         <LazyMarkdown>{children}</LazyMarkdown>
       </span>
     );
@@ -41,7 +41,7 @@ function Markdown({ children, className = "", inline = false }: { children: stri
       className={
         "[&_p]:my-0 [&_p+p]:mt-2 [&_strong]:font-semibold " +
         "[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 " +
-        "[&_code]:rounded [&_code]:bg-black/5 [&_code]:px-1 [&_code]:text-[0.9em] [&_a]:text-brand [&_a]:underline " +
+        "[&_code]:rounded-sm [&_code]:bg-black/5 [&_code]:px-1 [&_code]:text-[0.9em] [&_a]:text-brand [&_a]:underline " +
         className
       }
     >
@@ -250,11 +250,11 @@ function Sparkline({ values, width = 110, height = 28 }: { values: number[]; wid
 
 function SeverityChip({ severity }: { severity: string }) {
   const m = SEV_META[severity] ?? SEV_META.info;
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${m.cls}`}>{m.label}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${m.cls}`}>{m.label}</span>;
 }
 function StatusChip({ status }: { status: string }) {
   const m = STATUS_META[status] ?? STATUS_META.error;
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${m.cls}`}>{m.label}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${m.cls}`}>{m.label}</span>;
 }
 
 function PillarCard({ pillar, score, active, onClick }: { pillar: string; score: AssessmentPillarScore; active?: boolean; onClick?: () => void }) {
@@ -265,7 +265,7 @@ function PillarCard({ pillar, score, active, onClick }: { pillar: string; score:
       onClick={onClick}
       title={onClick ? `Filter controls to ${meta.label}` : undefined}
       className={`flex items-center gap-3 rounded-lg border bg-white px-4 py-3 text-left transition ${
-        onClick ? "cursor-pointer hover:border-brand/50 hover:shadow-sm" : "cursor-default"
+        onClick ? "cursor-pointer hover:border-brand/50 hover:shadow-xs" : "cursor-default"
       } ${active ? "border-brand ring-1 ring-brand/40" : ""}`}
     >
       <ScoreGauge score={score.score} size={72} />
@@ -289,7 +289,7 @@ function ComplianceView({ compliance }: { compliance: Record<string, AssessmentC
         <div key={key} className="rounded-lg border bg-white p-4">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2 font-medium text-gray-800"><span>{f.icon}</span>{f.label}</div>
-            <span className={`rounded px-2 py-0.5 text-xs font-semibold ${scoreBg(f.coverage)}`}>{f.coverage ?? "—"}% coverage</span>
+            <span className={`rounded-sm px-2 py-0.5 text-xs font-semibold ${scoreBg(f.coverage)}`}>{f.coverage ?? "—"}% coverage</span>
           </div>
           <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
             <div className="h-full rounded-full" style={{ width: `${f.coverage ?? 0}%`, background: scoreRing(f.coverage) }} />
@@ -356,7 +356,7 @@ function ResourcesView({ resources, totalCount }: { resources: AssessmentScanned
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search resources, type, RG, region…"
-          className="w-64 rounded-md border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
+          className="w-64 rounded-md border px-2.5 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-brand" />
         <span className="text-[11px] text-gray-400">
           {rows.length} of {resources.length} shown{capped ? ` · ${totalCount} total scanned` : ""}
         </span>
@@ -718,7 +718,7 @@ function FindingsTable({
   return (
     <div>
       {selected.size > 0 && (
-        <div className="sticky top-0 z-10 mb-2 rounded-lg border border-brand/40 bg-brand/5 px-3 py-2 shadow-sm">
+        <div className="sticky top-0 z-10 mb-2 rounded-lg border border-brand/40 bg-brand/5 px-3 py-2 shadow-xs">
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm font-medium text-gray-800">🚦 {selected.size} finding{selected.size === 1 ? "" : "s"} selected</span>
             <button
@@ -788,7 +788,7 @@ function FindingsTable({
       <div className="mb-2 space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search controls, frameworks…"
-            className="w-56 rounded-md border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand" />
+            className="w-56 rounded-md border px-2.5 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-brand" />
           <span className="text-[11px] text-gray-400">{rows.length} controls</span>
           {findings.some(eligible) && (
             <button
@@ -881,7 +881,7 @@ function FindingsTable({
                     <td className="py-2 pr-3 font-medium text-gray-800">
                       {f.title}
                       {plannedChecks.has(f.check_id) && (
-                        <span className="ml-1.5 rounded bg-green-100 px-1 py-0.5 text-[9px] font-medium text-green-700" title="An Azure Policy guardrail is planned for this finding">🛡 guardrail planned</span>
+                        <span className="ml-1.5 rounded-sm bg-green-100 px-1 py-0.5 text-[9px] font-medium text-green-700" title="An Azure Policy guardrail is planned for this finding">🛡 guardrail planned</span>
                       )}
                     </td>
                     <td className="py-2 pr-3 text-gray-600">{PILLAR_META[f.pillar]?.icon} {PILLAR_META[f.pillar]?.label ?? f.pillar}</td>
@@ -889,7 +889,7 @@ function FindingsTable({
                     <td className="py-2 pr-3">
                       {st ? (
                         <span className="flex items-center gap-1">
-                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${STATE_META[st.status]?.cls ?? ""}`}>{STATE_META[st.status]?.label ?? st.status}</span>
+                          <span className={`rounded-sm px-1.5 py-0.5 text-[9px] font-medium ${STATE_META[st.status]?.cls ?? ""}`}>{STATE_META[st.status]?.label ?? st.status}</span>
                           {st.assignee && <span className="text-[10px] text-gray-500">{st.assignee}</span>}
                           {st.ticket_id && <span className="text-[9px] text-blue-600">🎫{st.ticket_id}</span>}
                         </span>
@@ -898,12 +898,12 @@ function FindingsTable({
                     <td className="py-2 pr-3 text-gray-700">{f.status === "fail" ? (f.partial ? `${f.flagged_count}+` : f.flagged_count) : "—"}</td>
                     <td className="py-2 pr-3">
                       <div className="flex flex-wrap gap-1">
-                        {f.profile && <span title={`CIS profile ${f.profile === "L1" ? "Level 1 (baseline)" : "Level 2 (defense-in-depth)"}`} className={`rounded px-1 py-0.5 text-[9px] font-semibold ${f.profile === "L1" ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"}`}>{f.profile}</span>}
-                        {(f.frameworks.cis || []).map((x) => <span key={`cis-${x}`} className="rounded bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">{x}</span>)}
-                        {(f.frameworks.nist || []).map((x) => <span key={`nist-${x}`} className="rounded bg-teal-50 px-1 py-0.5 text-[9px] text-teal-600">NIST {x}</span>)}
-                        {(f.frameworks.iso || []).map((x) => <span key={`iso-${x}`} className="rounded bg-purple-50 px-1 py-0.5 text-[9px] text-purple-600">ISO {x}</span>)}
-                        {(f.frameworks.mcsb || []).map((x) => <span key={`mcsb-${x}`} className="rounded bg-sky-50 px-1 py-0.5 text-[9px] text-sky-600">MCSB {x}</span>)}
-                        {(f.frameworks.pci || []).map((x) => <span key={`pci-${x}`} className="rounded bg-rose-50 px-1 py-0.5 text-[9px] text-rose-600">{x}</span>)}
+                        {f.profile && <span title={`CIS profile ${f.profile === "L1" ? "Level 1 (baseline)" : "Level 2 (defense-in-depth)"}`} className={`rounded-sm px-1 py-0.5 text-[9px] font-semibold ${f.profile === "L1" ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"}`}>{f.profile}</span>}
+                        {(f.frameworks.cis || []).map((x) => <span key={`cis-${x}`} className="rounded-sm bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">{x}</span>)}
+                        {(f.frameworks.nist || []).map((x) => <span key={`nist-${x}`} className="rounded-sm bg-teal-50 px-1 py-0.5 text-[9px] text-teal-600">NIST {x}</span>)}
+                        {(f.frameworks.iso || []).map((x) => <span key={`iso-${x}`} className="rounded-sm bg-purple-50 px-1 py-0.5 text-[9px] text-purple-600">ISO {x}</span>)}
+                        {(f.frameworks.mcsb || []).map((x) => <span key={`mcsb-${x}`} className="rounded-sm bg-sky-50 px-1 py-0.5 text-[9px] text-sky-600">MCSB {x}</span>)}
+                        {(f.frameworks.pci || []).map((x) => <span key={`pci-${x}`} className="rounded-sm bg-rose-50 px-1 py-0.5 text-[9px] text-rose-600">{x}</span>)}
                       </div>
                     </td>
                   </tr>
@@ -912,9 +912,9 @@ function FindingsTable({
                       <td />
                       <td colSpan={8} className="px-3 py-3">
                         <p className="text-gray-600">{f.description}</p>
-                        {f.ai_rationale && <div className="mt-1.5 rounded bg-blue-50 px-2 py-1.5 text-blue-700"><span className="font-medium">Impact:</span> <Markdown inline className="text-blue-700">{f.ai_rationale}</Markdown></div>}
+                        {f.ai_rationale && <div className="mt-1.5 rounded-sm bg-blue-50 px-2 py-1.5 text-blue-700"><span className="font-medium">Impact:</span> <Markdown inline className="text-blue-700">{f.ai_rationale}</Markdown></div>}
                         {f.status === "waived" && f.waiver && (
-                          <p className="mt-1.5 rounded bg-indigo-50 px-2 py-1.5 text-indigo-700">
+                          <p className="mt-1.5 rounded-sm bg-indigo-50 px-2 py-1.5 text-indigo-700">
                             <span className="font-medium">Waived:</span> {f.waiver.justification}{f.waiver.approver ? ` — approved by ${f.waiver.approver}` : ""}
                           </p>
                         )}
@@ -927,13 +927,13 @@ function FindingsTable({
                                   content={() => f.flagged_resources.filter((r) => r.remediation_command).map((r) => r.remediation_command).join("\n")}
                                   label="Copy all fix commands"
                                   title="Copy every per-resource remediation command"
-                                  className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50"
+                                  className="inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50"
                                 />
                               )}
                             </div>
-                            <div className="max-h-56 space-y-1 overflow-y-auto rounded border bg-white p-1.5">
+                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-sm border bg-white p-1.5">
                               {f.flagged_resources.map((r) => (
-                                <div key={r.id} className="rounded border-b border-gray-100 px-1 py-1 last:border-0">
+                                <div key={r.id} className="rounded-sm border-b border-gray-100 px-1 py-1 last:border-0">
                                   <div className="flex items-center gap-2 text-[11px]">
                                     {r.id ? (
                                       <a href={portalUrl(r.id)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
@@ -948,8 +948,8 @@ function FindingsTable({
                                   </div>
                                   {r.remediation_command && (
                                     <div className="mt-1 flex items-start gap-1">
-                                      <pre className="min-w-0 flex-1 overflow-x-auto rounded bg-gray-900 px-2 py-1 font-mono text-[11px] text-gray-100">{r.remediation_command}</pre>
-                                      <CopyButton content={r.remediation_command} title="Copy fix command" className="mt-0.5 shrink-0 rounded border px-1 py-1 text-gray-500 hover:bg-gray-50" />
+                                      <pre className="min-w-0 flex-1 overflow-x-auto rounded-sm bg-gray-900 px-2 py-1 font-mono text-[11px] text-gray-100">{r.remediation_command}</pre>
+                                      <CopyButton content={r.remediation_command} title="Copy fix command" className="mt-0.5 shrink-0 rounded-sm border px-1 py-1 text-gray-500 hover:bg-gray-50" />
                                     </div>
                                   )}
                                 </div>
@@ -957,17 +957,17 @@ function FindingsTable({
                             </div>
                           </div>
                         )}
-                        {f.status === "error" && f.error && <p className="mt-2 rounded bg-purple-50 px-2 py-1.5 text-purple-700">Query error: {f.error}</p>}
-                        {f.status === "manual" && <p className="mt-2 rounded bg-indigo-50 px-2 py-1.5 text-indigo-700">Manual control — record an attestation (Settings → workload) for it to count toward the score.</p>}
-                        {f.status === "fail" && f.partial && <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-amber-700">Very large result set — the count is accurate, but only a capped sample of the matching resources is listed here.</p>}
-                        <div className="mt-2 rounded border border-gray-200 bg-white px-2 py-1.5">
+                        {f.status === "error" && f.error && <p className="mt-2 rounded-sm bg-purple-50 px-2 py-1.5 text-purple-700">Query error: {f.error}</p>}
+                        {f.status === "manual" && <p className="mt-2 rounded-sm bg-indigo-50 px-2 py-1.5 text-indigo-700">Manual control — record an attestation (Settings → workload) for it to count toward the score.</p>}
+                        {f.status === "fail" && f.partial && <p className="mt-2 rounded-sm bg-amber-50 px-2 py-1.5 text-amber-700">Very large result set — the count is accurate, but only a capped sample of the matching resources is listed here.</p>}
+                        <div className="mt-2 rounded-sm border border-gray-200 bg-white px-2 py-1.5">
                           <span className="font-medium text-gray-700">Remediation:</span> <span className="text-gray-600">{f.remediation}</span>
                           {f.remediation_command && (
                             <div className="mt-1 flex items-center justify-between gap-2">
                               <span className="text-[10px] text-gray-400">Template (placeholders filled per resource above):</span>
                             </div>
                           )}
-                          {f.remediation_command && <pre className="mt-0.5 overflow-x-auto rounded bg-gray-800 px-2 py-1 font-mono text-[11px] text-gray-300">{f.remediation_command}</pre>}
+                          {f.remediation_command && <pre className="mt-0.5 overflow-x-auto rounded-sm bg-gray-800 px-2 py-1 font-mono text-[11px] text-gray-300">{f.remediation_command}</pre>}
                         </div>
                         {/* Workflow actions */}
                         {(f.status === "fail" || f.status === "error") && (
@@ -1258,7 +1258,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
         <div className="rounded-lg border bg-white p-4 text-sm">
           <div className="mb-1 font-medium text-gray-700">
             Change since {run.diff.baseline_is_pinned ? "pinned baseline" : "previous run"}
-            {run.diff.new_criticals ? <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">{run.diff.new_criticals} new critical</span> : null}
+            {run.diff.new_criticals ? <span className="ml-2 rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">{run.diff.new_criticals} new critical</span> : null}
           </div>
           {run.diff.new_failures.length > 0 && (
             <div className="text-red-600">▲ {run.diff.new_failures.length} new: {run.diff.new_failures.slice(0, 5).map((nf) => (typeof nf === "string" ? nf : nf.title)).join(", ")}</div>
@@ -1380,7 +1380,7 @@ function RunFlow({ onQueued, preselectWorkloadId = "" }: { onQueued: () => void;
             <span className="text-xs font-medium text-gray-600">Workloads {selectedWl.length > 0 && <span className="text-brand">({selectedWl.length} selected)</span>}</span>
             <button onClick={toggleAll} disabled={busy || filtered.length === 0} className="text-xs text-brand hover:underline disabled:opacity-50">{allFilteredSelected ? "Clear all" : "Select all"}</button>
           </div>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter workloads…" className="mb-2 w-full rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter workloads…" className="mb-2 w-full rounded-lg border px-3 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand" />
           <div className="max-h-52 space-y-0.5 overflow-y-auto rounded-lg border bg-gray-50/60 p-1.5">
             {filtered.length === 0 && <div className="px-2 py-3 text-center text-xs text-gray-400">{wlQ.isLoading ? "Loading…" : "No workloads."}</div>}
             {filtered.map((w) => (
@@ -1535,9 +1535,9 @@ function RunHistory({ runs, onOpen, onDelete, onCancel }: { runs: AssessmentRunS
           </div>
           {view === "all" && groupBy !== "none" && groups.length > 1 && (
             <div className="inline-flex items-center gap-1">
-              <button onClick={expandAll} className="rounded px-1.5 py-0.5 hover:bg-gray-100">Expand all</button>
+              <button onClick={expandAll} className="rounded-sm px-1.5 py-0.5 hover:bg-gray-100">Expand all</button>
               <span className="text-gray-300">·</span>
-              <button onClick={collapseAll} className="rounded px-1.5 py-0.5 hover:bg-gray-100">Collapse all</button>
+              <button onClick={collapseAll} className="rounded-sm px-1.5 py-0.5 hover:bg-gray-100">Collapse all</button>
             </div>
           )}
           {view === "all" && (
@@ -1702,8 +1702,8 @@ function RunGroup({ label, runs, open, onToggle, limit = 0, onOpen, onDelete, on
                   <td className="py-2 pr-3 text-gray-400">{formatTimestamp(r.started_at ?? undefined)}</td>
                   <td className="py-2 pr-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      {cancellable(r) && <button onClick={(e) => { e.stopPropagation(); onCancel(r.id); }} className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-50">Cancel</button>}
-                      <button onClick={(e) => { e.stopPropagation(); onDelete(r.id); }} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50">Delete</button>
+                      {cancellable(r) && <button onClick={(e) => { e.stopPropagation(); onCancel(r.id); }} className="rounded-sm border border-amber-200 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-50">Cancel</button>}
+                      <button onClick={(e) => { e.stopPropagation(); onDelete(r.id); }} className="rounded-sm border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50">Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -1747,8 +1747,8 @@ function PortfolioView({ onOpen }: { onOpen: (runId: string) => void }) {
           {rows.map((w: AssessmentPortfolioRow) => (
             <tr key={w.workload_id} className="cursor-pointer border-b last:border-0 hover:bg-gray-50" onClick={() => onOpen(w.run_id)}>
               <td className="py-2 pl-4 font-medium text-gray-800">{w.workload_name}</td>
-              <td className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-semibold ${scoreBg(w.overall_score)}`}>{w.overall_score ?? "—"}</span></td>
-              {pillars.map((p) => <td key={p} className="py-2 pr-3"><span className={`rounded px-2 py-0.5 text-xs font-medium ${scoreBg(w.scores[p])}`}>{w.scores[p] ?? "—"}</span></td>)}
+              <td className="py-2 pr-3"><span className={`rounded-sm px-2 py-0.5 text-xs font-semibold ${scoreBg(w.overall_score)}`}>{w.overall_score ?? "—"}</span></td>
+              {pillars.map((p) => <td key={p} className="py-2 pr-3"><span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${scoreBg(w.scores[p])}`}>{w.scores[p] ?? "—"}</span></td>)}
               <td className="py-2 pr-3">{w.failed > 0 ? <span className="inline-flex items-center gap-1.5"><SeverityChip severity={w.severity} /> {w.failed}</span> : <span className="text-green-600">0</span>}</td>
               <td className="py-2 pr-3"><Sparkline values={w.sparkline} /></td>
               <td className="py-2 pr-3 text-gray-400">{formatTimestamp(w.at ?? undefined)}</td>
@@ -1804,7 +1804,7 @@ function CustomChecksView() {
         <p className="mt-0.5 text-xs text-gray-500">Describe an org-specific control; the AI drafts a Resource Graph query, severity, and framework mapping for you to review.</p>
         <div className="mt-2 flex gap-2">
           <input value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="e.g. Flag storage accounts without a 'CostCenter' tag"
-            className="flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand" />
+            className="flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand" />
           <button onClick={() => void generate()} disabled={generating || !goal.trim()}
             className="rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">{generating ? "Generating…" : "✨ Generate"}</button>
         </div>
@@ -1824,13 +1824,13 @@ function CustomChecksView() {
           <div key={c.id} className="flex items-center justify-between rounded-lg border bg-white px-4 py-2.5">
             <div className="min-w-0">
               <div className="flex items-center gap-2"><span className="text-sm font-medium text-gray-800">{c.title}</span><SeverityChip severity={c.severity} />
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{PILLAR_META[c.pillar]?.label}</span>
-                {!c.enabled && <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">disabled</span>}</div>
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{PILLAR_META[c.pillar]?.label}</span>
+                {!c.enabled && <span className="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">disabled</span>}</div>
               <div className="mt-0.5 truncate text-xs text-gray-500">{c.description}</div>
             </div>
             <div className="flex shrink-0 gap-1.5">
-              <button onClick={() => setEditing(c)} className="rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">Edit</button>
-              <button onClick={() => void del(c.id)} className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">Delete</button>
+              <button onClick={() => setEditing(c)} className="rounded-sm border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">Edit</button>
+              <button onClick={() => void del(c.id)} className="rounded-sm border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">Delete</button>
             </div>
           </div>
         ))}
@@ -1843,7 +1843,7 @@ function CustomChecksView() {
 
 function CustomCheckEditor({ draft, setDraft, onSave, onCancel }: { draft: Partial<AssessmentCheckMeta>; setDraft: (d: Partial<AssessmentCheckMeta>) => void; onSave: () => void; onCancel: () => void }) {
   const set = (p: Partial<AssessmentCheckMeta>) => setDraft({ ...draft, ...p });
-  const inputCls = "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  const inputCls = "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
   return (
     <div className="rounded-lg border border-brand/30 bg-brand/5 p-4">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -1980,7 +1980,7 @@ export function AssessmentsPanel() {
             {workloadFilter && (
               <div className="flex items-center gap-2 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
                 <span className="text-brand">Filtered to <b>{filterName}</b></span>
-                <button onClick={() => setWorkloadFilter("")} className="ml-auto rounded px-2 py-0.5 text-xs text-gray-500 hover:bg-white">Clear filter ✕</button>
+                <button onClick={() => setWorkloadFilter("")} className="ml-auto rounded-sm px-2 py-0.5 text-xs text-gray-500 hover:bg-white">Clear filter ✕</button>
               </div>
             )}
             <RunFlow onQueued={() => qc.invalidateQueries({ queryKey: ["assessmentRuns"] })} preselectWorkloadId={workloadFilter} />
@@ -2034,8 +2034,8 @@ function TrashView({ onOpen }: { onOpen: (id: string) => void }) {
                     <td className="py-2 pr-3 text-gray-400">{formatTimestamp(r.deleted_at ?? undefined)}</td>
                     <td className="py-2 pr-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={(e) => { e.stopPropagation(); void restore(r.id); }} className="rounded border border-green-200 px-2 py-0.5 text-xs text-green-700 hover:bg-green-50">Restore</button>
-                        <button onClick={(e) => { e.stopPropagation(); void purge(r.id); }} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50">Delete forever</button>
+                        <button onClick={(e) => { e.stopPropagation(); void restore(r.id); }} className="rounded-sm border border-green-200 px-2 py-0.5 text-xs text-green-700 hover:bg-green-50">Restore</button>
+                        <button onClick={(e) => { e.stopPropagation(); void purge(r.id); }} className="rounded-sm border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50">Delete forever</button>
                       </div>
                     </td>
                   </tr>

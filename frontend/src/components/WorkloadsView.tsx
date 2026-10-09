@@ -13,7 +13,7 @@ import { ConstellationMap } from "./workloads/ConstellationMap";
 import { DurableBatchBar, useDurableBatch } from "./DurableBatch";
 
 const input =
-  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
 const DEEP_RELIABILITY_REVIEW_PROMPT =
   "Do a full reliability review of the workload across networking, identity, compute, storage, security, monitoring and cost, and name the top risk.";
@@ -126,10 +126,10 @@ function WorkloadResourceTree({
   return (
     <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-lg border p-2 text-sm">
       {tree.mgs.map((m) => (
-        <div key={m.id} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-gray-50">
+        <div key={m.id} className="flex items-center gap-2 rounded-sm px-1 py-0.5 hover:bg-gray-50">
           <AzureIcon kind="mg" className="h-3.5 w-3.5" />
           <span className="truncate text-gray-800" title={m.id}>{m.name || m.id}</span>
-          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-500">management group</span>
+          <span className="shrink-0 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-500">management group</span>
           <RemoveBtn id={m.id} />
         </div>
       ))}
@@ -139,13 +139,13 @@ function WorkloadResourceTree({
         const subOpen = !collapsed.has(subKey);
         return (
           <div key={s.sub}>
-            <div className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-gray-50">
+            <div className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 hover:bg-gray-50">
               <button onClick={() => toggle(subKey)} className="shrink-0 text-gray-400" aria-label={subOpen ? "Collapse" : "Expand"}>
                 <span className={`inline-block transition-transform ${subOpen ? "rotate-90" : ""}`}>▸</span>
               </button>
               <AzureIcon kind="subscription" className="h-3.5 w-3.5" />
               <span className="truncate font-medium text-gray-800" title={s.sub}>{subName(s.sub)}</span>
-              {s.scope && <span className="shrink-0 rounded bg-brand/10 px-1.5 py-0.5 text-[9px] text-brand">entire subscription</span>}
+              {s.scope && <span className="shrink-0 rounded-sm bg-brand/10 px-1.5 py-0.5 text-[9px] text-brand">entire subscription</span>}
               {s.scope && <RemoveBtn id={s.scope.id} />}
             </div>
 
@@ -156,13 +156,13 @@ function WorkloadResourceTree({
                   const rgOpen = !collapsed.has(rgKey);
                   return (
                     <div key={g.rg}>
-                      <div className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-gray-50">
+                      <div className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 hover:bg-gray-50">
                         <button onClick={() => toggle(rgKey)} className="shrink-0 text-gray-400" aria-label={rgOpen ? "Collapse" : "Expand"}>
                           <span className={`inline-block transition-transform ${rgOpen ? "rotate-90" : ""}`}>▸</span>
                         </button>
                         <AzureIcon kind="resource_group" className="h-3.5 w-3.5" />
                         <span className="truncate text-gray-700" title={g.rg}>{g.rg}</span>
-                        {g.scope && <span className="shrink-0 rounded bg-brand/10 px-1.5 py-0.5 text-[9px] text-brand">entire group</span>}
+                        {g.scope && <span className="shrink-0 rounded-sm bg-brand/10 px-1.5 py-0.5 text-[9px] text-brand">entire group</span>}
                         {g.resources.length > 0 && <span className="shrink-0 text-[10px] text-gray-400">{g.resources.length}</span>}
                         {g.scope && <RemoveBtn id={g.scope.id} />}
                       </div>
@@ -170,7 +170,7 @@ function WorkloadResourceTree({
                       {rgOpen && (
                         <div className="ml-4 border-l pl-2">
                           {g.resources.map((r) => (
-                            <div key={r.id} className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-gray-50">
+                            <div key={r.id} className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 hover:bg-gray-50">
                               <AzureIcon kind="resource" type={r.resource_type} className="h-3.5 w-3.5" />
                               <span className="truncate text-gray-800" title={r.id}>{r.name || r.id}</span>
                               {r.resource_type && <span className="shrink-0 text-[10px] text-gray-400">{friendlyResourceType(r.resource_type)}</span>}
@@ -241,7 +241,7 @@ function EstateCoveragePanel({ onTrace }: { onTrace: (resourceId: string) => voi
             <select
               value={effConn}
               onChange={(e) => { setConnId(e.target.value); setScanConn(""); }}
-              className="mb-3 rounded border px-2 py-1 text-xs text-gray-600"
+              className="mb-3 rounded-sm border px-2 py-1 text-xs text-gray-600"
             >
               {connections.map((c) => (
                 <option key={c.id} value={c.id}>{c.display_name}</option>
@@ -300,9 +300,9 @@ function EstateCoveragePanel({ onTrace }: { onTrace: (resourceId: string) => voi
                   <div className="mb-1 text-xs font-medium text-gray-600">Orphaned resources by resource group</div>
                   <div className="max-h-44 space-y-1 overflow-auto">
                     {cov.orphan_resource_groups.slice(0, 30).map((g) => (
-                      <div key={g.resource_group} className="flex items-center justify-between rounded bg-gray-50 px-2 py-1 text-xs">
+                      <div key={g.resource_group} className="flex items-center justify-between rounded-sm bg-gray-50 px-2 py-1 text-xs">
                         <span className="truncate text-gray-700">{g.resource_group}</span>
-                        <span className="shrink-0 rounded bg-gray-200 px-1.5 text-[10px] tabular-nums text-gray-600">{g.count}</span>
+                        <span className="shrink-0 rounded-sm bg-gray-200 px-1.5 text-[10px] tabular-nums text-gray-600">{g.count}</span>
                       </div>
                     ))}
                   </div>
@@ -318,7 +318,7 @@ function EstateCoveragePanel({ onTrace }: { onTrace: (resourceId: string) => voi
                   </div>
                   <div className="max-h-52 space-y-1 overflow-auto">
                     {cov.orphans.slice(0, 50).map((o) => (
-                      <div key={o.id} className="flex items-center gap-2 rounded bg-gray-50 px-2 py-1 text-xs">
+                      <div key={o.id} className="flex items-center gap-2 rounded-sm bg-gray-50 px-2 py-1 text-xs">
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-gray-700">{o.name}</span>
                           <span className="block truncate text-[10px] text-gray-400">{o.resource_type} · {o.resource_group}</span>
@@ -326,7 +326,7 @@ function EstateCoveragePanel({ onTrace }: { onTrace: (resourceId: string) => voi
                         <button
                           onClick={() => onTrace(o.id)}
                           title="Reverse-engineer the workload around this resource"
-                          className="shrink-0 rounded border border-brand/40 px-2 py-0.5 text-[11px] font-medium text-brand transition hover:bg-brand/5"
+                          className="shrink-0 rounded-sm border border-brand/40 px-2 py-0.5 text-[11px] font-medium text-brand transition hover:bg-brand/5"
                         >
                           Trace →
                         </button>
@@ -382,7 +382,7 @@ function RollupChip({ tone, children }: { tone: "gray" | "green" | "amber" | "re
     red: "bg-red-50 text-red-700",
     indigo: "bg-indigo-50 text-indigo-700",
   }[tone];
-  return <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>;
+  return <span className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>;
 }
 
 const bandTone = (band?: string): "green" | "amber" | "red" | "gray" =>
@@ -1123,7 +1123,7 @@ export function WorkloadsPanel() {
                 <span key={s.stem} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs">
                   <span className="font-semibold text-gray-700">{s.name}</span>
                   <span className="text-gray-400">{s.members.map((m) => m.environment || "?").join(" · ")}</span>
-                  <button onClick={() => void acceptSuggestion(s)} className="rounded bg-indigo-600 px-1.5 py-0.5 text-[11px] font-medium text-white hover:bg-indigo-700" title={`Group ${s.members.map((m) => m.name).join(", ")}`}>
+                  <button onClick={() => void acceptSuggestion(s)} className="rounded-sm bg-indigo-600 px-1.5 py-0.5 text-[11px] font-medium text-white hover:bg-indigo-700" title={`Group ${s.members.map((m) => m.name).join(", ")}`}>
                     + Group {s.workload_ids.length}
                   </button>
                   <button onClick={() => setDismissedSuggest((d) => new Set(d).add(s.stem))} className="text-gray-300 hover:text-gray-500" title="Dismiss">✕</button>
@@ -1140,7 +1140,7 @@ export function WorkloadsPanel() {
         {/* Front door: first-run onboarding. When the estate has no workloads yet, lead
             with Autopilot so new users map their whole estate in one motion. */}
         {!wlQ.isLoading && workloads.length === 0 && !showTrash && (
-          <div className="rounded-xl border border-brand/30 bg-gradient-to-br from-brand/5 to-transparent p-6">
+          <div className="rounded-xl border border-brand/30 bg-linear-to-br from-brand/5 to-transparent p-6">
             <div className="flex items-start gap-4">
               <div className="text-3xl">✨</div>
               <div className="min-w-0 flex-1">
@@ -1212,7 +1212,7 @@ export function WorkloadsPanel() {
                 <button
                   key={v}
                   onClick={() => setViewMode(v)}
-                  className={`rounded-md px-2.5 py-1 capitalize ${view === v ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
+                  className={`rounded-md px-2.5 py-1 capitalize ${view === v ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}
                 >
                   {v === "cards" ? "\u25a6 Cards" : v === "table" ? "\u25a4 Table" : v === "board" ? "\u25a5 Board" : "\u2735 Map"}
                 </button>
@@ -1435,7 +1435,7 @@ export function WorkloadsPanel() {
         )}
 
         {showTrash && (
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-xs">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
@@ -1607,7 +1607,7 @@ export function WorkloadForm({
           <h2 className="text-lg font-semibold text-gray-800">
             {form.id ? "Edit workload" : "New workload"}
           </h2>
-          <button onClick={onClose} className="rounded p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">

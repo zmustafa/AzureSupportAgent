@@ -59,7 +59,7 @@ export function ActionPicker({ value, onChange }: { value: string; onChange: (ac
             onChange(e.target.value);
           }
         }}
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded-sm border border-gray-300 px-2 py-1 text-xs"
         aria-label="Common actions"
       >
         {COMMON_ACTIONS.map((c) => (
@@ -74,11 +74,11 @@ export function ActionPicker({ value, onChange }: { value: string; onChange: (ac
           onKeyDown={(e) => e.key === "Enter" && onChange(pending.trim())}
           placeholder="Microsoft.Provider/type/action"
           aria-label="Azure action"
-          className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 font-mono text-[11px]"
+          className="min-w-0 flex-1 rounded-sm border border-gray-300 px-2 py-1 font-mono text-[11px]"
         />
         <button
           onClick={() => onChange(pending.trim())}
-          className="rounded border px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+          className="rounded-sm border px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
         >
           Check
         </button>
@@ -97,7 +97,7 @@ export function DecisionResult({ d }: { d: IamDecision }) {
         <div className="flex items-baseline gap-2">
           <span className="text-lg">{v.icon}</span>
           <span className="text-sm font-semibold">{v.label}</span>
-          <span className="ml-auto rounded bg-white/60 px-1.5 text-[10px] uppercase text-gray-600">
+          <span className="ml-auto rounded-sm bg-white/60 px-1.5 text-[10px] uppercase text-gray-600">
             {d.plane} plane
           </span>
         </div>
@@ -167,7 +167,7 @@ export function DecisionResult({ d }: { d: IamDecision }) {
       )}
 
       {d.conditionUnevaluated.length > 0 && (
-        <div className="rounded border border-amber-300 bg-amber-50 p-2">
+        <div className="rounded-sm border border-amber-300 bg-amber-50 p-2">
           <div className="mb-1 text-xs font-semibold text-amber-900">
             {d.conditionUnevaluated.length} assignment(s) carry an ABAC condition
           </div>
@@ -186,7 +186,7 @@ export function DecisionResult({ d }: { d: IamDecision }) {
       )}
 
       {d.unknownRoles.length > 0 && (
-        <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
+        <div className="rounded-sm border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900">
           Role definition(s) not collected, so their permissions could not be checked:{" "}
           <b>{d.unknownRoles.join(", ")}</b>. Refresh the scope to resolve them.
         </div>
@@ -228,13 +228,13 @@ export function WhyPanel({
   const deepLink = `/iam/evaluate?principal_id=${encodeURIComponent(principalId)}&scope=${encodeURIComponent(scope)}&action=${encodeURIComponent(action)}`;
 
   return (
-    <div className="flex h-full min-h-0 w-[28rem] flex-col border-l bg-white">
+    <div className="flex h-full min-h-0 w-md flex-col border-l bg-white">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <span className="text-sm font-semibold text-gray-800">Why?</span>
         <span className="min-w-0 flex-1 truncate text-xs text-gray-500" title={principalName || principalId}>
           {principalName || principalId}
         </span>
-        <button onClick={onClose} className="rounded px-1.5 text-gray-400 hover:bg-gray-100" aria-label="Close">
+        <button onClick={onClose} className="rounded-sm px-1.5 text-gray-400 hover:bg-gray-100" aria-label="Close">
           ✕
         </button>
       </div>

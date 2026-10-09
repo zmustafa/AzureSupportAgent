@@ -194,7 +194,7 @@ export function GraphPanel() {
         const full = nodeDataRef.current.get(n.id());
         const lc = full ? lensColor(l, full) : "";
         const ring = lc || (full ? defaultRing(full) : KIND_META[n.data("kind") as GraphNodeKind]?.color || "#94a3b8");
-        n.data("ring", ring);
+        n.data("ring-3", ring);
         const halo = full ? haloColor(l, full) : "";
         if (halo) n.data("halo", halo); else n.removeData("halo");
       });
@@ -940,7 +940,7 @@ export function GraphPanel() {
             onKeyDown={(e) => { if (e.key === "Escape") { setSearchResults([]); setSearchTerm(""); (e.target as HTMLInputElement).blur(); } }}
             onBlur={() => window.setTimeout(() => setSearchResults([]), 150)}
             placeholder="Search… ( / )"
-            className={`w-60 rounded-md border px-3 py-1.5 text-sm focus:border-brand focus:outline-none ${dark ? "border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-400" : "border-slate-300"}`}
+            className={`w-60 rounded-md border px-3 py-1.5 text-sm focus:border-brand focus:outline-hidden ${dark ? "border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-400" : "border-slate-300"}`}
           />
           {searchResults.length > 0 && (
             <div className="absolute z-30 mt-1 max-h-80 w-72 overflow-auto rounded-md border bg-white shadow-lg">
@@ -1014,10 +1014,10 @@ export function GraphPanel() {
           <div>
             <div className="flex flex-col gap-0.5">
               {ALL_KINDS.map((k) => (
-                <label key={k} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-slate-50/10">
+                <label key={k} className="flex items-center gap-2 rounded-sm px-1 py-0.5 text-xs hover:bg-slate-50/10">
                   <input type="checkbox" checked={!hidden.has(k)} onChange={() => toggleKind(k)} />
                   <span
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white bg-contain bg-center bg-no-repeat"
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-white bg-contain bg-center bg-no-repeat"
                     style={{ border: `1.5px solid ${KIND_META[k].color}`, backgroundImage: `url("${kindIconUri(k)}")`, backgroundSize: "70%" }}
                   />
                   <span className="truncate text-slate-700">{KIND_META[k].label}</span>
@@ -1038,7 +1038,7 @@ export function GraphPanel() {
               value={wlFilter}
               onChange={(e) => setWlFilter(e.target.value)}
               placeholder="Filter workloads…"
-              className="mb-1 w-full rounded-md border border-slate-300 px-2 py-1 text-xs focus:border-brand focus:outline-none"
+              className="mb-1 w-full rounded-md border border-slate-300 px-2 py-1 text-xs focus:border-brand focus:outline-hidden"
             />
             <div className="flex items-center justify-between px-0.5 pb-1 text-[10px] text-slate-400">
               <button
@@ -1052,7 +1052,7 @@ export function GraphPanel() {
             <div className="max-h-52 overflow-y-auto">
               {filteredWorkloads.length === 0 && <div className="px-1 py-1 text-[11px] text-slate-400">No workloads.</div>}
               {filteredWorkloads.map((w) => (
-                <label key={w.id} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-slate-50">
+                <label key={w.id} className="flex items-center gap-2 rounded-sm px-1 py-0.5 text-xs hover:bg-slate-50">
                   <input type="checkbox" checked={selectedWls.has(w.id)} onChange={() => toggleWl(w.id)} />
                   <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${RISK_DOT[w.risk] || "bg-slate-300"}`} />
                   <span className="truncate text-slate-700">{w.label}</span>
@@ -1085,7 +1085,7 @@ export function GraphPanel() {
         {!railOpen && (
           <button
             onClick={() => setRailOpen(true)}
-            className={`absolute left-0 top-1/2 z-20 hidden -translate-y-1/2 rounded-r-md border border-l-0 px-1.5 py-2 text-xs shadow-sm lg:block ${dark ? "border-slate-700 bg-slate-800 text-slate-300" : "border-slate-200 bg-white text-slate-500"}`}
+            className={`absolute left-0 top-1/2 z-20 hidden -translate-y-1/2 rounded-r-md border border-l-0 px-1.5 py-2 text-xs shadow-xs lg:block ${dark ? "border-slate-700 bg-slate-800 text-slate-300" : "border-slate-200 bg-white text-slate-500"}`}
             title="Show left rail"
           >»</button>
         )}
@@ -1098,7 +1098,7 @@ export function GraphPanel() {
           {/* Empty / sparse state (item 27) */}
           {!overviewQ.isLoading && !focusScope && stats.nodes <= 1 && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className={`pointer-events-auto max-w-xs rounded-xl border p-5 text-center shadow-sm ${dark ? "border-slate-700 bg-slate-800 text-slate-300" : "border-slate-200 bg-white"}`}>
+              <div className={`pointer-events-auto max-w-xs rounded-xl border p-5 text-center shadow-xs ${dark ? "border-slate-700 bg-slate-800 text-slate-300" : "border-slate-200 bg-white"}`}>
                 <div className="text-2xl">🕸️</div>
                 <div className={`mt-1 font-semibold ${dark ? "text-slate-100" : "text-slate-800"}`}>Nothing to map yet</div>
                 <p className="mt-1 text-xs text-slate-400">This connection has no scanned inventory or workloads. Scan inventory or create a workload to populate the graph.</p>
@@ -1109,7 +1109,7 @@ export function GraphPanel() {
           {expanding && <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-slate-800/90 px-3 py-1 text-xs text-white">Working…</div>}
           {mode !== "explore" && <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-brand/90 px-3 py-1 text-xs text-white">{mode === "path" ? (pathSource ? "Pick target node" : "Pick source node") : "Click a node for blast radius"}</div>}
 
-          <div className={`pointer-events-none absolute bottom-2 left-2 z-10 rounded-md px-2.5 py-1 text-[11px] shadow-sm ${dark ? "bg-slate-800/90 text-slate-300" : "bg-white/90 text-slate-500"}`}>{stats.nodes} nodes · {stats.edges} edges{status ? ` — ${status}` : ""}</div>
+          <div className={`pointer-events-none absolute bottom-2 left-2 z-10 rounded-md px-2.5 py-1 text-[11px] shadow-xs ${dark ? "bg-slate-800/90 text-slate-300" : "bg-white/90 text-slate-500"}`}>{stats.nodes} nodes · {stats.edges} edges{status ? ` — ${status}` : ""}</div>
 
           {/* Floating legend (item 24) */}
           <FloatingLegend dark={dark} />
@@ -1251,20 +1251,20 @@ function FloatingLegend({ dark }: { dark: boolean }) {
   return (
     <div className={`absolute bottom-2 left-2 z-10 ${open ? "" : "pointer-events-auto"}`} style={{ marginBottom: 26 }}>
       {open ? (
-        <div className={`rounded-md border px-2.5 py-2 text-[11px] shadow-sm ${dark ? "border-slate-700 bg-slate-800/95 text-slate-200" : "border-slate-200 bg-white/95"}`} onMouseLeave={() => setOpen(false)}>
+        <div className={`rounded-md border px-2.5 py-2 text-[11px] shadow-xs ${dark ? "border-slate-700 bg-slate-800/95 text-slate-200" : "border-slate-200 bg-white/95"}`} onMouseLeave={() => setOpen(false)}>
           <div className="mb-1 flex items-center justify-between gap-3">
             <span className="font-semibold uppercase tracking-wide text-slate-400">Legend</span>
             <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
           </div>
           {KEY.map((k) => (
             <div key={k} className="flex items-center gap-2 py-0.5">
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-white bg-contain bg-center bg-no-repeat" style={{ border: `1.5px solid ${KIND_META[k].color}`, backgroundImage: `url("${kindIconUri(k)}")`, backgroundSize: "70%" }} />
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-white bg-contain bg-center bg-no-repeat" style={{ border: `1.5px solid ${KIND_META[k].color}`, backgroundImage: `url("${kindIconUri(k)}")`, backgroundSize: "70%" }} />
               <span className={dark ? "text-slate-300" : "text-slate-600"}>{KIND_META[k].label}</span>
             </div>
           ))}
         </div>
       ) : (
-        <button onClick={() => setOpen(true)} className={`rounded-md border px-2 py-1 text-[11px] shadow-sm ${dark ? "border-slate-700 bg-slate-800/90 text-slate-300" : "border-slate-200 bg-white/90 text-slate-500"}`} title="Show legend">⊞ Legend</button>
+        <button onClick={() => setOpen(true)} className={`rounded-md border px-2 py-1 text-[11px] shadow-xs ${dark ? "border-slate-700 bg-slate-800/90 text-slate-300" : "border-slate-200 bg-white/90 text-slate-500"}`} title="Show legend">⊞ Legend</button>
       )}
     </div>
   );

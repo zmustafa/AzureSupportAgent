@@ -102,7 +102,7 @@ function WorkbookTiles() {
         {tiles.map((t) => (
           <div
             key={t.workbook_id}
-            className={`rounded-xl border p-4 shadow-sm transition ${
+            className={`rounded-xl border p-4 shadow-xs transition ${
               t.format === "severity" ? TILE_SEV_STYLE[t.severity ?? "info"] : "border-gray-200 bg-white"
             }`}
           >
@@ -302,7 +302,7 @@ export function MonitorPanel() {
   const placedTileIds = new Set(workWidgets.filter((w) => w.type === "builtin").map((w) => w.tileId || ""));
 
   return (
-    <div ref={rootRef} className="h-full overflow-y-auto bg-gradient-to-b from-gray-50 to-gray-100/60">
+    <div ref={rootRef} className="h-full overflow-y-auto bg-linear-to-b from-gray-50 to-gray-100/60">
       <div className="space-y-4 p-6 lg:p-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -335,7 +335,7 @@ export function MonitorPanel() {
         </div>
 
         {/* Dashboard toolbar: select / new / customize / save */}
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-xs">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Dashboard</span>
           <select
             value={active?.id ?? "__default__"}
@@ -385,8 +385,8 @@ export function MonitorPanel() {
               {active && <button onClick={() => void saveDashboard(true)} disabled={savingDash} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">Save as…</button>}
               <button onClick={cancelEdit} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
               <span className="ml-auto flex items-center gap-1.5 text-[11px] text-gray-400">
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-500">Drag header</span> move
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-500">Drag edge / corner</span> resize
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 font-medium text-gray-500">Drag header</span> move
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 font-medium text-gray-500">Drag edge / corner</span> resize
               </span>
             </>
           )}
@@ -446,7 +446,7 @@ export function StatsPanel() {
   ];
 
   return (
-    <div className="h-full overflow-y-auto bg-gradient-to-b from-gray-50 to-gray-100/60">
+    <div className="h-full overflow-y-auto bg-linear-to-b from-gray-50 to-gray-100/60">
       <div className="space-y-4 p-6 lg:p-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -465,27 +465,27 @@ export function StatsPanel() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {/* Date-range quick picks — drive every visualization below. */}
-            <div className="flex items-center gap-0.5 rounded-full border border-gray-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Date range">
+            <div className="flex items-center gap-0.5 rounded-full border border-gray-200 bg-white p-0.5 shadow-xs" role="group" aria-label="Date range">
               {RANGES.map((r) => (
                 <button
                   key={r.days}
                   onClick={() => setRangeDays(r.days)}
                   className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
-                    rangeDays === r.days ? "bg-brand text-white shadow-sm" : "text-gray-500 hover:bg-gray-100"
+                    rangeDays === r.days ? "bg-brand text-white shadow-xs" : "text-gray-500 hover:bg-gray-100"
                   }`}
                 >
                   {r.label}
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-500 shadow-sm">
+            <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-500 shadow-xs">
               <span className={`h-1.5 w-1.5 rounded-full ${q.isFetching ? "animate-pulse bg-sky-500" : live ? "bg-emerald-500" : "bg-gray-300"}`} />
               <span className="tabular-nums">{q.data?.generated_at ? formatTimestamp(q.data.generated_at) : "Loading…"}</span>
             </div>
             <button
               onClick={() => setLive((v) => !v)}
               title={live ? "Pause auto-refresh" : "Resume auto-refresh"}
-              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition ${
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-xs transition ${
                 live ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
               }`}
             >
@@ -495,7 +495,7 @@ export function StatsPanel() {
             <button
               onClick={() => void q.refetch()}
               title="Refresh now"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:bg-gray-50"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-xs transition hover:bg-gray-50"
             >
               <svg className={`h-3.5 w-3.5 ${q.isFetching ? "animate-spin" : ""}`} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M15.5 8a6 6 0 1 0 .5 4" strokeLinecap="round" />
@@ -576,7 +576,7 @@ export function StatsPanel() {
                     <select
                       value={postureWorkloadId}
                       onChange={(e) => setPostureWorkloadId(e.target.value)}
-                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 shadow-xs focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand"
                       title="Scope the Well-Architected posture to a single workload"
                     >
                       <option value="">All workloads ({q.data.azure_posture.workload_options?.length ?? 0})</option>
@@ -647,8 +647,8 @@ function AddWidgetMenu({
   return (
     <>
       <div className="fixed inset-0 z-20" onClick={onClose} />
-      <div className="absolute left-0 z-30 mt-1 max-h-[28rem] w-80 overflow-y-auto rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
-        <button onClick={onAiWidget} className="mb-1.5 block w-full rounded-lg bg-gradient-to-r from-brand/10 to-violet-100 px-2.5 py-2 text-left text-[13px] font-medium text-brand hover:from-brand/15">
+      <div className="absolute left-0 z-30 mt-1 max-h-112 w-80 overflow-y-auto rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+        <button onClick={onAiWidget} className="mb-1.5 block w-full rounded-lg bg-linear-to-r from-brand/10 to-violet-100 px-2.5 py-2 text-left text-[13px] font-medium text-brand hover:from-brand/15">
           ✨ Build a widget with AI
         </button>
         <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">New data widget</div>
@@ -699,7 +699,7 @@ function ControlBar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-500 shadow-sm">
+      <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-500 shadow-xs">
         <span className={`h-1.5 w-1.5 rounded-full ${fetching ? "animate-pulse bg-sky-500" : live ? "bg-emerald-500" : "bg-gray-300"}`} />
         <span className="tabular-nums">{generatedAt ? formatTimestamp(generatedAt) : "Loading…"}</span>
       </div>
@@ -708,7 +708,7 @@ function ControlBar({
       <button
         onClick={onToggleLive}
         title={live ? "Pause auto-refresh" : "Resume auto-refresh"}
-        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition ${
+        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-xs transition ${
           live ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
         }`}
       >
@@ -722,7 +722,7 @@ function ControlBar({
         onChange={(e) => onIntervalChange(Number(e.target.value))}
         disabled={!live}
         title="Auto-refresh cadence"
-        className="rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600 shadow-sm disabled:opacity-50"
+        className="rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600 shadow-xs disabled:opacity-50"
       >
         <option value={5000}>5s</option>
         <option value={15000}>15s</option>
@@ -734,7 +734,7 @@ function ControlBar({
       <button
         onClick={onRefresh}
         title="Refresh now"
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:bg-gray-50"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-xs transition hover:bg-gray-50"
       >
         <svg className={`h-3.5 w-3.5 ${fetching ? "animate-spin" : ""}`} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
           <path d="M15.5 8a6 6 0 1 0 .5 4" strokeLinecap="round" />
@@ -747,7 +747,7 @@ function ControlBar({
         onClick={onExport}
         disabled={!canExport}
         title="Export dashboard snapshot (JSON)"
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-xs transition hover:bg-gray-50 disabled:opacity-50"
       >
         <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
           <path d="M10 3v9m0 0l-3-3m3 3l3-3" strokeLinecap="round" strokeLinejoin="round" />
@@ -759,7 +759,7 @@ function ControlBar({
       <button
         onClick={onToggleFullscreen}
         title={isFullscreen ? "Exit fullscreen" : "Fullscreen (NOC mode)"}
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:bg-gray-50"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-xs transition hover:bg-gray-50"
       >
         {isFullscreen ? (
           <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -1036,7 +1036,7 @@ function TileTopTools({ data }: { data: MonitorOverview }) {
         <div className="mt-3 border-t border-gray-100 pt-2">
           <div className="mb-1 text-[11px] font-medium text-red-500">Recent failures</div>
           {tc.failed_recent.map((f, i) => (
-            <button key={i} onClick={() => f.chat_id && nav(`/c/${f.chat_id}`)} className="flex w-full items-center justify-between rounded px-1 py-0.5 text-[11px] text-gray-500 transition hover:bg-red-50">
+            <button key={i} onClick={() => f.chat_id && nav(`/c/${f.chat_id}`)} className="flex w-full items-center justify-between rounded-sm px-1 py-0.5 text-[11px] text-gray-500 transition hover:bg-red-50">
               <span className="truncate font-mono text-gray-700">{f.tool_name}</span>
               <span className="shrink-0 text-gray-400">{formatTimestamp(f.created_at)}</span>
             </button>
@@ -1072,7 +1072,7 @@ function TileAutomations({ data }: { data: MonitorOverview }) {
           <div className="text-[11px] font-medium text-gray-400">Recent runs</div>
           <div className="mt-1 space-y-0.5">
             {data.automations.recent_runs.slice(0, 6).map((r, i) => (
-              <button key={i} onClick={() => (r.thread_id ? nav(`/c/${r.thread_id}`) : nav("/automations/tasks"))} className="flex w-full items-center gap-2 rounded px-1 py-1 text-[11px] transition hover:bg-gray-50">
+              <button key={i} onClick={() => (r.thread_id ? nav(`/c/${r.thread_id}`) : nav("/automations/tasks"))} className="flex w-full items-center gap-2 rounded-sm px-1 py-1 text-[11px] transition hover:bg-gray-50">
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${runDot(r.status)}`} />
                 <span className="min-w-0 flex-1 truncate text-left text-gray-700" title={r.task_name ?? ""}>{r.task_name ?? "(deleted task)"}</span>
                 {r.duration_ms != null && <span className="shrink-0 text-gray-400">{formatDuration(r.duration_ms)}</span>}
@@ -1086,7 +1086,7 @@ function TileAutomations({ data }: { data: MonitorOverview }) {
           <div className="text-[11px] font-medium text-gray-400">Upcoming</div>
           <div className="mt-1 space-y-0.5">
             {data.automations.upcoming.map((u) => (
-              <button key={u.id} onClick={() => nav("/automations/tasks")} className="flex w-full items-center justify-between rounded px-1 py-1 text-[11px] transition hover:bg-gray-50">
+              <button key={u.id} onClick={() => nav("/automations/tasks")} className="flex w-full items-center justify-between rounded-sm px-1 py-1 text-[11px] transition hover:bg-gray-50">
                 <span className="min-w-0 flex-1 truncate text-left text-gray-700" title={u.name}>{u.name}</span>
                 <span className="shrink-0 text-brand">{formatRelativeFromNow(u.next_run_at ?? undefined)}</span>
               </button>
@@ -1282,22 +1282,22 @@ function DashboardGrid({
         return (
           <div key={w.id} className="monitor-tile group/tile relative">
             {editing && (
-              <div className="tile-drag absolute inset-x-0 top-0 z-20 flex h-7 cursor-move items-center justify-between rounded-t-xl bg-gradient-to-r from-brand to-indigo-500 px-2 text-[11px] font-medium text-white shadow-sm">
+              <div className="tile-drag absolute inset-x-0 top-0 z-20 flex h-7 cursor-move items-center justify-between rounded-t-xl bg-linear-to-r from-brand to-indigo-500 px-2 text-[11px] font-medium text-white shadow-xs">
                 <span className="flex items-center gap-1 truncate"><span className="opacity-80">⠿</span>{title}</span>
                 <span className="flex items-center gap-0.5">
-                  <span className="mr-1 rounded bg-white/20 px-1 py-px font-mono text-[10px] tabular-nums" title="Width × Height (grid units) — drag the edges or corner to resize">{size}</span>
+                  <span className="mr-1 rounded-sm bg-white/20 px-1 py-px font-mono text-[10px] tabular-nums" title="Width × Height (grid units) — drag the edges or corner to resize">{size}</span>
                   {w.type !== "builtin" && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onEditWidget(w); }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="rounded p-0.5 hover:bg-white/20"
+                      className="rounded-sm p-0.5 hover:bg-white/20"
                       title="Edit widget"
                     >✎</button>
                   )}
                   <button
                     onClick={(e) => { e.stopPropagation(); onRemoveWidget(w.id); }}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className="rounded p-0.5 hover:bg-white/20"
+                    className="rounded-sm p-0.5 hover:bg-white/20"
                     title="Remove widget"
                   >✕</button>
                 </span>
@@ -1322,8 +1322,8 @@ function DashboardGrid({
 /** A self-contained card frame around a data-bound widget renderer. */
 function WidgetCard({ widget, live }: { widget: MonitorWidget; live: boolean }) {
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-gray-200/90 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-gray-100 bg-gradient-to-b from-gray-50/80 to-white px-3 py-1.5">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-gray-200/90 bg-white shadow-xs">
+      <div className="flex items-center justify-between border-b border-gray-100 bg-linear-to-b from-gray-50/80 to-white px-3 py-1.5">
         <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-gray-600">{widget.title}</span>
         {widget.refresh?.mode === "live" && live && (
           <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-600" title={`Live · ${widget.refresh.intervalSec}s`}>
@@ -1442,7 +1442,7 @@ function LiveOps({ turns }: { turns: MonitorOverview["live_turns"] }) {
             <button
               key={tr.chat_id}
               onClick={() => nav(`/c/${tr.chat_id}`)}
-              className="flex w-full items-center gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 text-left transition hover:border-brand/30 hover:bg-brand/[0.03]"
+              className="flex w-full items-center gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 text-left transition hover:border-brand/30 hover:bg-brand/3"
             >
               <span
                 className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
@@ -1514,7 +1514,7 @@ function ActivityFeed({ items }: { items: MonitorOverview["recent_activity"] }) 
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search…"
-            className="w-32 rounded-lg border border-gray-200 px-2 py-1 text-[11px] focus:w-44 focus:outline-none focus:ring-1 focus:ring-brand/30"
+            className="w-32 rounded-lg border border-gray-200 px-2 py-1 text-[11px] focus:w-44 focus:outline-hidden focus:ring-1 focus:ring-brand/30"
           />
           <select
             value={action}
@@ -1536,10 +1536,10 @@ function ActivityFeed({ items }: { items: MonitorOverview["recent_activity"] }) 
           const link = activityLink(a.action, a.chat_id);
           const Row = (
             <div className="flex items-center gap-3 py-1.5 text-xs">
-              <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] ${actionBadge(a.action)}`}>{a.action}</span>
+              <span className={`shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[10px] ${actionBadge(a.action)}`}>{a.action}</span>
               <span className="min-w-0 flex-1 truncate text-gray-400" title={a.target ?? ""}>{a.target ?? ""}</span>
               {a.model && (
-                <span className="hidden shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 sm:inline">
+                <span className="hidden shrink-0 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 sm:inline">
                   {(a.provider && PROVIDER_LABELS[a.provider]) || a.provider} · {a.model}
                 </span>
               )}
@@ -1548,7 +1548,7 @@ function ActivityFeed({ items }: { items: MonitorOverview["recent_activity"] }) 
             </div>
           );
           return link ? (
-            <button key={a.id} onClick={() => nav(link)} className="block w-full rounded text-left transition hover:bg-gray-50">
+            <button key={a.id} onClick={() => nav(link)} className="block w-full rounded-sm text-left transition hover:bg-gray-50">
               {Row}
             </button>
           ) : (
@@ -1629,7 +1629,7 @@ function AzurePosture({ data }: { data: MonitorOverview["azure_posture"] }) {
                 const max = Math.max(...Object.values(data.findings_by_severity), 1);
                 return (
                   <button key={s} onClick={() => nav("/assessments")} className="flex w-full items-center gap-2 text-left">
-                    <span className={`h-2 w-2 shrink-0 rounded-sm ${SEV_META[s].dot}`} />
+                    <span className={`h-2 w-2 shrink-0 rounded-xs ${SEV_META[s].dot}`} />
                     <span className="w-16 shrink-0 text-[11px] capitalize text-gray-600">{SEV_META[s].label}</span>
                     <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
                       <span className={`block h-full ${SEV_META[s].dot}`} style={{ width: `${pct(n, max)}%` }} />
@@ -1642,8 +1642,8 @@ function AzurePosture({ data }: { data: MonitorOverview["azure_posture"] }) {
             <div className="mt-3 text-[11px] font-medium text-gray-400">Top failing controls</div>
             <div className="mt-1 space-y-0.5">
               {data.top_failing.map((c, i) => (
-                <button key={i} onClick={() => nav("/assessments")} className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left transition hover:bg-gray-50">
-                  <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-medium ${SEV_META[c.severity]?.cls ?? ""}`}>{PILLAR_META[c.pillar]?.icon ?? ""}</span>
+                <button key={i} onClick={() => nav("/assessments")} className="flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left transition hover:bg-gray-50">
+                  <span className={`shrink-0 rounded-sm px-1 py-0.5 text-[9px] font-medium ${SEV_META[c.severity]?.cls ?? ""}`}>{PILLAR_META[c.pillar]?.icon ?? ""}</span>
                   <span className="min-w-0 flex-1 truncate text-[11px] text-gray-700" title={c.title}>{c.title}</span>
                   {c.resources > 0 && <span className="shrink-0 text-[10px] text-gray-400">{c.resources} res</span>}
                 </button>
@@ -1752,7 +1752,7 @@ function StatCard({
   return (
     <button
       onClick={onClick}
-      className={`group relative overflow-hidden rounded-xl border bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+      className={`group relative overflow-hidden rounded-xl border bg-white p-3 text-left shadow-xs transition hover:-translate-y-0.5 hover:shadow-md ${
         accent ? "border-amber-300 ring-1 ring-amber-100" : "border-gray-200"
       }`}
     >
@@ -1817,7 +1817,7 @@ function Panel({
   fill?: boolean;
 }) {
   return (
-    <section className={`rounded-xl border border-gray-200 bg-white p-4 shadow-sm ${fill ? "flex h-full flex-col" : ""} ${className}`}>
+    <section className={`rounded-xl border border-gray-200 bg-white p-4 shadow-xs ${fill ? "flex h-full flex-col" : ""} ${className}`}>
       {(title || action) && (
         <div className="mb-3 flex shrink-0 items-center justify-between">
           {title && <h2 className="text-sm font-semibold text-gray-700">{title}</h2>}
@@ -1840,7 +1840,7 @@ function LinkBtn({ children, onClick }: { children: React.ReactNode; onClick: ()
 function Legend({ color, label }: { color: string; label: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <span className={`h-2 w-2 rounded-sm ${color}`} />
+      <span className={`h-2 w-2 rounded-xs ${color}`} />
       {label}
     </span>
   );
@@ -1934,7 +1934,7 @@ function Donut({
       <div className="min-w-0 flex-1 space-y-1">
         {segments.slice(0, 5).map((s, i) => (
           <div key={i} className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="h-2 w-2 shrink-0 rounded-xs" style={{ background: s.color }} />
             <span className="min-w-0 flex-1 truncate capitalize text-gray-600">{s.label}</span>
             <span className="shrink-0 text-gray-400">{s.value}</span>
           </div>
@@ -2017,7 +2017,7 @@ function RadarChart({ axes }: { axes: { label: string; value: number; color: str
       <div className="min-w-0 flex-1 space-y-1">
         {axes.map((a) => (
           <div key={a.label} className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: a.color }} />
+            <span className="h-2 w-2 shrink-0 rounded-xs" style={{ background: a.color }} />
             <span className="min-w-0 flex-1 truncate capitalize text-gray-600">{a.label}</span>
             <span className="shrink-0 font-medium" style={{ color: scoreHex(a.value) }}>{a.value}</span>
           </div>
@@ -2047,7 +2047,7 @@ function Heatmap({ matrix, max }: { matrix: number[][]; max: number }) {
           <div key={d} className="flex items-center">
             <span className="w-9 shrink-0 pr-1 text-right text-[9px] text-gray-400">{HEAT_DOW[d]}</span>
             {row.map((v, h) => (
-              <div key={h} className="group relative aspect-square w-[3.6%] min-w-[14px] p-[1px]">
+              <div key={h} className="group relative aspect-square w-[3.6%] min-w-[14px] p-px">
                 <div className="h-full w-full rounded-[2px] transition group-hover:ring-1 group-hover:ring-brand" style={{ background: shade(v) }} title={`${HEAT_DOW[d]} ${h}:00 — ${v} events`} />
               </div>
             ))}
@@ -2197,7 +2197,7 @@ function TileFindingsSeverity({ data }: { data: MonitorOverview }) {
           <div className="grid grid-cols-2 gap-2">
             {order.map((s) => (
               <div key={s} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50/60 px-2.5 py-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm" style={{ background: sevColor[s] }} />
+                <span className="h-2.5 w-2.5 rounded-xs" style={{ background: sevColor[s] }} />
                 <span className="flex-1 text-[12px] capitalize text-gray-600">{s}</span>
                 <span className="text-sm font-bold text-gray-800">{fb[s] || 0}</span>
               </div>
@@ -2307,7 +2307,7 @@ function RangeBars({ points }: { points: NonNullable<MonitorOverview["activity_r
         const title = `${d.bucket === "hour" ? dt.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" }) : dt.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}: ${d.messages} msgs · ${d.tool_calls} tools · ${d.runs} runs`;
         return (
           <div key={d.ts} className="group flex flex-1 flex-col items-center gap-1">
-            <div className="flex w-full flex-col-reverse overflow-hidden rounded-sm transition group-hover:opacity-80" style={{ height: CHART_H }} title={title}>
+            <div className="flex w-full flex-col-reverse overflow-hidden rounded-xs transition group-hover:opacity-80" style={{ height: CHART_H }} title={title}>
               <div className="w-full bg-brand" style={{ height: px(d.messages) }} />
               <div className="w-full bg-sky-400" style={{ height: px(d.tool_calls) }} />
               <div className="w-full bg-emerald-400" style={{ height: px(d.runs) }} />

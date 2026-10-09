@@ -528,24 +528,24 @@ function MissionBoard({ workloadId, initialMissionId = "" }: { workloadId: strin
                           {m.started_at ? new Date(m.started_at).toLocaleString() : ""} · {m.systems_done}/{m.systems_total}
                         </div>
                       </button>
-                      <span className="shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-500">{m.status}</span>
+                      <span className="shrink-0 rounded-sm bg-gray-100 px-1 text-[10px] text-gray-500">{m.status}</span>
                       {confirmDelete === m.id ? (
                         <span className="flex shrink-0 items-center gap-1">
                           <button
                             onClick={() => void removeMission(m.id)}
-                            className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-red-700"
+                            className="rounded-sm bg-red-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-red-700"
                             title="Confirm delete"
                           >Delete</button>
                           <button
                             onClick={() => setConfirmDelete("")}
-                            className="rounded border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+                            className="rounded-sm border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
                           >Cancel</button>
                         </span>
                       ) : (
                         <button
                           onClick={() => setConfirmDelete(m.id)}
                           disabled={live}
-                          className="shrink-0 rounded px-1 py-0.5 text-[11px] text-gray-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 group-hover:text-gray-400"
+                          className="shrink-0 rounded-sm px-1 py-0.5 text-[11px] text-gray-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 group-hover:text-gray-400"
                           title={live ? "Cancel the mission before deleting" : "Delete this mission from history"}
                           aria-label={`Delete mission from ${m.started_at ? new Date(m.started_at).toLocaleString() : "history"}`}
                         >✕</button>
@@ -665,7 +665,7 @@ function MissionLanding() {
                     return (
                       <div
                         key={w.id}
-                        className="flex flex-col gap-2 rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow"
+                        className="flex flex-col gap-2 rounded-xl border bg-white p-4 shadow-xs transition hover:border-brand/40 hover:shadow-sm"
                       >
                         <button onClick={() => navigate(`/mission-control/${w.id}`)} className="flex flex-col gap-2 text-left">
                           <div className="flex items-start justify-between gap-2">
@@ -730,7 +730,7 @@ function MissionLanding() {
                     return (
                       <div
                         key={w.id}
-                        className="flex flex-col gap-2 rounded-xl border border-dashed bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow"
+                        className="flex flex-col gap-2 rounded-xl border border-dashed bg-white p-4 shadow-xs transition hover:border-brand/40 hover:shadow-sm"
                       >
                         <div className="flex flex-col gap-2">
                           <div className="flex items-start justify-between gap-2">

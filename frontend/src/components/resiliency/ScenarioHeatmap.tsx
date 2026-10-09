@@ -144,7 +144,7 @@ export function HeatCell({
           : cellTitle(verdict, scenarioLabel, classLabel)
       }
       aria-label={`${scenarioLabel}: ${meta.label}${critical ? ", with a recovery limit" : ""}`}
-      className={`relative h-7 w-full rounded text-center text-sm hover:bg-gray-100 ${meta.cls}`}
+      className={`relative h-7 w-full rounded-sm text-center text-sm hover:bg-gray-100 ${meta.cls}`}
     >
       <span aria-hidden="true">{meta.glyph}</span>
       {critical && (
@@ -241,7 +241,7 @@ export function ScenarioHeatmap({
           <span>Group by</span>
           <select value={grouped.groupBy} onChange={(e) => grouped.setGroupBy(e.target.value)}
                   data-testid="heatmap-group-by"
-                  className="rounded border px-1.5 py-0.5 text-[11px]">
+                  className="rounded-sm border px-1.5 py-0.5 text-[11px]">
             <option value="none">Nothing</option>
             {HEAT_DIMENSIONS.map((d) => (
               <option key={d.key} value={d.key}>{d.label}</option>
@@ -250,10 +250,10 @@ export function ScenarioHeatmap({
         </label>
         {sections && (
           <>
-            <button onClick={grouped.collapseAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+            <button onClick={grouped.collapseAll} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">
               Collapse all
             </button>
-            <button onClick={grouped.expandAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+            <button onClick={grouped.expandAll} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">
               Expand all
             </button>
             <span className="text-gray-600">{sections.length} groups · {ordered.length} resources</span>

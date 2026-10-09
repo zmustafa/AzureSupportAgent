@@ -64,33 +64,33 @@ function CreatorModal({ onClose, onCreated, presetScope }: {
       <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-semibold text-gray-900">📸 New evidence snapshot</div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4 text-xs">
           <label className="block"><span className="mb-1 block font-medium text-gray-700">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. RCA evidence — incident 4821" className="w-full rounded border px-2 py-1.5" /></label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. RCA evidence — incident 4821" className="w-full rounded-sm border px-2 py-1.5" /></label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block"><span className="mb-1 block font-medium text-gray-700">Scope</span>
-              <select value={scopeKind} onChange={(e) => setScopeKind(e.target.value)} className="w-full rounded border px-2 py-1.5">
+              <select value={scopeKind} onChange={(e) => setScopeKind(e.target.value)} className="w-full rounded-sm border px-2 py-1.5">
                 <option value="workload">Workload</option>
                 <option value="subscription">Subscription</option>
                 <option value="resources">Selected resources</option>
               </select></label>
             <label className="block"><span className="mb-1 block font-medium text-gray-700">Retention</span>
-              <select value={retention} onChange={(e) => setRetention(e.target.value)} className="w-full rounded border px-2 py-1.5">
+              <select value={retention} onChange={(e) => setRetention(e.target.value)} className="w-full rounded-sm border px-2 py-1.5">
                 <option value="standard">Standard (90 days)</option>
                 <option value="audit">Audit-class (7 years)</option>
               </select></label>
           </div>
           {scopeKind === "workload" ? (
-            <select value={scopeId} onChange={(e) => setScopeId(e.target.value)} className="w-full rounded border px-2 py-1.5">
+            <select value={scopeId} onChange={(e) => setScopeId(e.target.value)} className="w-full rounded-sm border px-2 py-1.5">
               <option value="">— pick a workload —</option>
               {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           ) : scopeKind === "subscription" ? (
-            <input value={scopeId} onChange={(e) => setScopeId(e.target.value)} placeholder="Subscription GUID" className="w-full rounded border px-2 py-1.5" />
+            <input value={scopeId} onChange={(e) => setScopeId(e.target.value)} placeholder="Subscription GUID" className="w-full rounded-sm border px-2 py-1.5" />
           ) : (
-            <textarea value={resourceIds} onChange={(e) => setResourceIds(e.target.value)} placeholder="One ARM id per line" className="h-20 w-full rounded border px-2 py-1.5" />
+            <textarea value={resourceIds} onChange={(e) => setResourceIds(e.target.value)} placeholder="One ARM id per line" className="h-20 w-full rounded-sm border px-2 py-1.5" />
           )}
           <div>
             <span className="mb-1 block font-medium text-gray-700">Include</span>
@@ -103,7 +103,7 @@ function CreatorModal({ onClose, onCreated, presetScope }: {
             </div>
           </div>
           <label className="block"><span className="mb-1 block font-medium text-gray-700">Tags</span>
-            <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="comma or space separated" className="w-full rounded border px-2 py-1.5" /></label>
+            <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="comma or space separated" className="w-full rounded-sm border px-2 py-1.5" /></label>
           {err && <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-700">{err}</div>}
         </div>
         <div className="flex items-center gap-2 border-t px-4 py-2">
@@ -177,25 +177,25 @@ function DetailModal({ id, onClose }: { id: string; onClose: () => void }) {
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
                 <span>{snap.scope.kind}:{snap.scope.id || "—"}</span>
                 <span>· {formatTimestamp(snap.created_at)} by {snap.created_by}</span>
-                <span className={`rounded px-1.5 py-0.5 ${snap.retention_class === "audit" ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}>{snap.retention_class}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 ${snap.retention_class === "audit" ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}>{snap.retention_class}</span>
                 <span className="font-mono" title={snap.sha256}>SHA {shortSha(snap.sha256)}</span>
                 <span className={verified ? "text-green-600" : "text-red-600"}>{verified ? "✓ verified" : "✗ tampered"}</span>
               </div>
             )}
           </div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="flex items-center gap-1 border-b px-3 text-xs">
           {tabsPresent.map((t) => (
             <button key={t} onClick={() => setTab(t)} className={`-mb-px border-b-2 px-2 py-1.5 capitalize ${tab === t ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>{t}</button>
           ))}
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="search…" className="ml-auto my-1 w-40 rounded border px-2 py-1" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="search…" className="ml-auto my-1 w-40 rounded-sm border px-2 py-1" />
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-3">
           {contentQ.isLoading ? <div className="py-10 text-center text-xs text-gray-400">Loading…</div> : (
-            <pre className="overflow-auto rounded bg-gray-900 p-3 text-[10px] leading-relaxed text-gray-100">{contentStr || "(empty section)"}</pre>
+            <pre className="overflow-auto rounded-sm bg-gray-900 p-3 text-[10px] leading-relaxed text-gray-100">{contentStr || "(empty section)"}</pre>
           )}
           {msg && <div className={`mt-2 rounded-lg border p-2 text-xs ${msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{msg.text}</div>}
         </div>
@@ -204,7 +204,7 @@ function DetailModal({ id, onClose }: { id: string; onClose: () => void }) {
           <button onClick={() => void attachRca()} className="rounded-lg border px-2.5 py-1 text-xs hover:bg-gray-50">📎 Attach to RCA</button>
           {ticketOpen ? (
             ticketConnectors.length > 0 ? (
-              <select autoFocus defaultValue="" onChange={(e) => e.target.value && void attachTicket(e.target.value)} className="rounded border px-1.5 py-1 text-xs">
+              <select autoFocus defaultValue="" onChange={(e) => e.target.value && void attachTicket(e.target.value)} className="rounded-sm border px-1.5 py-1 text-xs">
                 <option value="" disabled>Pick connector…</option>
                 {ticketConnectors.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
               </select>
@@ -234,13 +234,13 @@ function DiffModal({ a, b, onClose }: { a: string; b: string; onClose: () => voi
       <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-semibold text-gray-900">⇄ Snapshot diff</div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
         <div className="border-b px-4 py-2 text-[11px] text-gray-500">
           {diffQ.data && <span>{diffQ.data.a.name} ({formatTimestamp(diffQ.data.a.created_at)}) → {diffQ.data.b.name} ({formatTimestamp(diffQ.data.b.created_at)})</span>}
           <div className="mt-1 flex gap-2">
-            <input value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} placeholder="filter by resource type" className="rounded border px-2 py-1" />
-            <input value={findingFilter} onChange={(e) => setFindingFilter(e.target.value)} placeholder="filter by finding" className="rounded border px-2 py-1" />
+            <input value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} placeholder="filter by resource type" className="rounded-sm border px-2 py-1" />
+            <input value={findingFilter} onChange={(e) => setFindingFilter(e.target.value)} placeholder="filter by finding" className="rounded-sm border px-2 py-1" />
           </div>
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4 text-xs">
@@ -369,8 +369,8 @@ export function EvidenceLockerPanel() {
                   <span className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-gray-900">{s.name}</span>
-                      {s.demo && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>}
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${s.retention_class === "audit" ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}>{s.retention_class}</span>
+                      {s.demo && <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>}
+                      <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${s.retention_class === "audit" ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}>{s.retention_class}</span>
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
                       <span>{s.scope.kind}:{s.scope.id || "—"}</span>
@@ -394,14 +394,14 @@ export function EvidenceLockerPanel() {
                 <button onClick={() => setDetailId(s.id)} className="min-w-0 flex-1 text-left">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-900">{s.name}</span>
-                    {s.demo && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>}
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${s.retention_class === "audit" ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}>{s.retention_class}</span>
+                    {s.demo && <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>}
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${s.retention_class === "audit" ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}>{s.retention_class}</span>
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
                     <span>{s.scope.kind}:{s.scope.id || "—"}</span>
                     <span>· {formatTimestamp(s.created_at)} by {s.created_by}</span>
                     <span className="font-mono" title={s.sha256}>SHA {shortSha(s.sha256)}</span>
-                    {s.included.map((i) => <span key={i} className="rounded bg-gray-100 px-1 py-0.5 text-[10px]">{i}</span>)}
+                    {s.included.map((i) => <span key={i} className="rounded-sm bg-gray-100 px-1 py-0.5 text-[10px]">{i}</span>)}
                   </div>
                 </button>
                 {s.attachments.length > 0 && <span className="text-[11px] text-gray-400">{s.attachments.length} attach</span>}

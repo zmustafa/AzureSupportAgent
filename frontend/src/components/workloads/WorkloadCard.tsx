@@ -16,7 +16,7 @@ import {
 
 function RiskChip({ icon, label, tone }: { icon: string; label: string; tone: "red" | "amber" | "gray" }) {
   const cls = tone === "red" ? "bg-red-50 text-red-700" : tone === "amber" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500";
-  return <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>{icon} {label}</span>;
+  return <span className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>{icon} {label}</span>;
 }
 
 export function WorkloadCard({
@@ -73,13 +73,13 @@ export function WorkloadCard({
         if ((e.target as HTMLElement).closest("button, input, a, select")) return;
         onToggleSelect();
       }}
-      className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow ${
+      className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-white p-4 shadow-xs transition hover:border-brand/40 hover:shadow-sm ${
         selected ? "border-brand ring-2 ring-brand/40" : ""
       }`}
     >
       {profileLoading && (
         <div data-testid="workload-card-loading" aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 overflow-hidden rounded-xl">
-          <div className="absolute inset-y-0 left-0 w-1/3 animate-card-shimmer bg-gradient-to-r from-transparent via-white/75 to-transparent will-change-transform motion-reduce:animate-none" />
+          <div className="absolute inset-y-0 left-0 w-1/3 animate-card-shimmer bg-linear-to-r from-transparent via-white/75 to-transparent will-change-transform motion-reduce:animate-none" />
         </div>
       )}
       {/* Header */}
@@ -97,7 +97,7 @@ export function WorkloadCard({
               {w.name}
             </button>
             {w.origin?.kind && (
-              <span className="shrink-0 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">autopilot</span>
+              <span className="shrink-0 rounded-sm bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">autopilot</span>
             )}
           </div>
           {groupName && (
@@ -112,9 +112,9 @@ export function WorkloadCard({
           )}
           {profileLoading ? (
             <div className="mt-1 flex gap-1" aria-hidden="true">
-              <span className="h-4 w-16 rounded bg-gray-100" />
-              <span className="h-4 w-12 rounded bg-gray-100" />
-              <span className="h-4 w-20 rounded bg-gray-100" />
+              <span className="h-4 w-16 rounded-sm bg-gray-100" />
+              <span className="h-4 w-12 rounded-sm bg-gray-100" />
+              <span className="h-4 w-20 rounded-sm bg-gray-100" />
             </div>
           ) : profile ? <div className="mt-1"><ClassPills c={profile.classification} /></div> : null}
           {w.description && <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">{w.description}</p>}
@@ -141,12 +141,12 @@ export function WorkloadCard({
       {/* Body: donut + types | radar */}
       {profileLoading ? (
         <div aria-hidden="true" className="mt-3 grid min-h-[104px] grid-cols-[auto_1fr_auto] items-center gap-3">
-          <div className="h-[84px] w-[84px] rounded-full border-[12px] border-gray-100 bg-white" />
+          <div className="h-[84px] w-[84px] rounded-full border-12 border-gray-100 bg-white" />
           <div className="min-w-0 space-y-2">
-            <div className="h-3 w-full rounded bg-gray-100" />
-            <div className="h-3 w-5/6 rounded bg-gray-100" />
-            <div className="h-3 w-4/5 rounded bg-gray-100" />
-            <div className="h-3 w-2/3 rounded bg-gray-100" />
+            <div className="h-3 w-full rounded-sm bg-gray-100" />
+            <div className="h-3 w-5/6 rounded-sm bg-gray-100" />
+            <div className="h-3 w-4/5 rounded-sm bg-gray-100" />
+            <div className="h-3 w-2/3 rounded-sm bg-gray-100" />
           </div>
           <div className="h-[104px] w-[104px] rounded-lg bg-gray-50">
             <div className="m-auto mt-3 h-20 w-20 rotate-45 border border-gray-100" />
@@ -187,14 +187,14 @@ export function WorkloadCard({
       {/* Category legend chips */}
       {profileLoading ? (
         <div aria-hidden="true" className="mt-2 flex gap-1">
-          <span className="h-4 w-16 rounded bg-gray-100" />
-          <span className="h-4 w-20 rounded bg-gray-100" />
-          <span className="h-4 w-14 rounded bg-gray-100" />
+          <span className="h-4 w-16 rounded-sm bg-gray-100" />
+          <span className="h-4 w-20 rounded-sm bg-gray-100" />
+          <span className="h-4 w-14 rounded-sm bg-gray-100" />
         </div>
       ) : (comp?.by_category.length ?? 0) > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {comp!.by_category.map((c) => (
-            <span key={c.category} className="inline-flex items-center gap-1 rounded bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600">
+            <span key={c.category} className="inline-flex items-center gap-1 rounded-sm bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600">
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categoryColor(c.category) }} />
               {c.category} {c.count}
             </span>
@@ -205,7 +205,7 @@ export function WorkloadCard({
       {/* Risk row */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {profileLoading ? (
-          <><span aria-hidden="true" className="h-5 w-24 rounded bg-gray-100" /><span aria-hidden="true" className="h-5 w-16 rounded bg-gray-100" /></>
+          <><span aria-hidden="true" className="h-5 w-24 rounded-sm bg-gray-100" /><span aria-hidden="true" className="h-5 w-16 rounded-sm bg-gray-100" /></>
         ) : (
           <>
             {risk?.retirements_90d ? <RiskChip icon="⚠" label={`${risk.retirements_90d} retiring ≤90d`} tone="amber" /> : null}

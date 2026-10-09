@@ -146,10 +146,10 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search principal / role / scope…"
-            className="w-64 rounded border px-2 py-1 text-sm"
+            className="w-64 rounded-sm border px-2 py-1 text-sm"
           />
           {/* These option VALUES are the backend's SURFACE_* constants — not display strings. */}
-          <select value={surface} onChange={(e) => setSurface(e.target.value)} className="rounded border px-2 py-1 text-sm">
+          <select value={surface} onChange={(e) => setSurface(e.target.value)} className="rounded-sm border px-2 py-1 text-sm">
             <option value="">All surfaces</option>
             <option value="Azure RBAC">Azure RBAC</option>
             <option value="Entra ID RBAC">Entra ID RBAC</option>
@@ -157,7 +157,7 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
             <option value="Classic Admin">Classic Admin</option>
             <option value="Deny Assignment">Deny Assignment</option>
           </select>
-          <select value={ptype} onChange={(e) => setPtype(e.target.value)} className="rounded border px-2 py-1 text-sm">
+          <select value={ptype} onChange={(e) => setPtype(e.target.value)} className="rounded-sm border px-2 py-1 text-sm">
             <option value="">All principal types</option>
             <option value="User">User</option>
             <option value="Group">Group</option>
@@ -168,9 +168,9 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
           </label>
           <span className="ml-auto text-xs text-gray-500">{rows.length < total ? `${rows.length.toLocaleString()} / ${total.toLocaleString()}` : total.toLocaleString()} grant(s)</span>
           {q.isFetchingNextPage && <span className="text-[11px] text-gray-400">loading more…</span>}
-          <button type="button" onClick={() => download.start(api.iamExportUrl("csv", tab, exportFilter), `iam-access-${tab}.csv`, "CSV export")} disabled={download.phase !== "idle"} title="Export the current grid (honors scope, search, surface, principal-type & privileged filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50 disabled:opacity-50">⬇ CSV</button>
-          <button type="button" onClick={() => download.start(api.iamExportUrl("json", tab, exportFilter), `iam-access-${tab}.json`, "JSON export")} disabled={download.phase !== "idle"} title="Export the current grid (honors the active filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50 disabled:opacity-50">⬇ JSON</button>
-          <button type="button" onClick={() => download.start(api.iamWorkbookUrl(workbookFilter), "iam-access-review.xlsx", "IAM workbook")} disabled={download.phase !== "idle"} title="Multi-tab workbook of every IAM view (honors the active scope/workload, not the grid's search or lens)" className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50">⬇ Excel (all tabs)</button>
+          <button type="button" onClick={() => download.start(api.iamExportUrl("csv", tab, exportFilter), `iam-access-${tab}.csv`, "CSV export")} disabled={download.phase !== "idle"} title="Export the current grid (honors scope, search, surface, principal-type & privileged filters)" className="rounded-sm border px-2 py-1 text-xs text-brand hover:bg-gray-50 disabled:opacity-50">⬇ CSV</button>
+          <button type="button" onClick={() => download.start(api.iamExportUrl("json", tab, exportFilter), `iam-access-${tab}.json`, "JSON export")} disabled={download.phase !== "idle"} title="Export the current grid (honors the active filters)" className="rounded-sm border px-2 py-1 text-xs text-brand hover:bg-gray-50 disabled:opacity-50">⬇ JSON</button>
+          <button type="button" onClick={() => download.start(api.iamWorkbookUrl(workbookFilter), "iam-access-review.xlsx", "IAM workbook")} disabled={download.phase !== "idle"} title="Multi-tab workbook of every IAM view (honors the active scope/workload, not the grid's search or lens)" className="rounded-sm border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50">⬇ Excel (all tabs)</button>
         </div>
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           {q.isLoading ? (
@@ -238,7 +238,7 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
                               scope: (r.scope || "") as string,
                             })
                           }
-                          className="rounded border px-1.5 py-0.5 text-[11px] text-brand hover:bg-gray-50"
+                          className="rounded-sm border px-1.5 py-0.5 text-[11px] text-brand hover:bg-gray-50"
                           title="Can this principal perform a given action here, and why?"
                         >
                           Why?

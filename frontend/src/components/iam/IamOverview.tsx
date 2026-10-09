@@ -33,14 +33,14 @@ export function OverviewTab({
           onClick={refreshCtl.refreshChanged}
           disabled={refreshCtl.isBusy}
           title="Ask Resource Graph which subscriptions had authorization activity since their last collection and re-collect only those. Falls back to a full refresh if that question cannot be answered."
-          className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-sm border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
           ⚡ Quick refresh
         </button>
         <button
           onClick={refreshCtl.refreshDirectory}
           disabled={refreshCtl.isBusy}
-          className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-sm border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
           {refreshCtl.refreshing.has("directory") ? "Refreshing…" : "↻ Refresh directory"}
         </button>
@@ -49,16 +49,16 @@ export function OverviewTab({
             a review of a live tenant unreadable. Removing demo data stays here, and stays
             conditional, because that is the only way out once it IS loaded. */}
         {data.demo && (
-          <button onClick={onPurgeDemo} disabled={purging} className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">
+          <button onClick={onPurgeDemo} disabled={purging} className="rounded-sm border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">
             {purging ? "Removing…" : "🗑️ Remove demo data"}
           </button>
         )}
-        {data.demo && <span className="rounded bg-violet-100 px-2 py-0.5 text-xs text-violet-700">demo dataset</span>}
+        {data.demo && <span className="rounded-sm bg-violet-100 px-2 py-0.5 text-xs text-violet-700">demo dataset</span>}
         <button
           type="button"
           onClick={() => download.start(api.iamWorkbookUrl({ connection_id: connectionId }), "iam-access-review.xlsx")}
           disabled={download.phase !== "idle"}
-          className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+          className="rounded-sm border border-green-300 bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
           title="Download a comprehensive multi-sheet Excel workbook of every IAM view"
         >
           ⬇ Export to Excel

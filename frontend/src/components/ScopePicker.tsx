@@ -68,14 +68,14 @@ export function ScopePicker({
         <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
           <button
             onClick={() => onScopeKindChange("workload")}
-            className={`flex items-center gap-1 rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
+            className={`flex items-center gap-1 rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}
           >
             <AzureIcon kind="workload" className="h-3.5 w-3.5" />
             Workload
           </button>
           <button
             onClick={() => onScopeKindChange("subscription")}
-            className={`flex items-center gap-1 rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
+            className={`flex items-center gap-1 rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}
           >
             <AzureIcon kind="subscription" className="h-3.5 w-3.5" />
             Subscription

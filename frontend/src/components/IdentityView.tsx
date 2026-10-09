@@ -49,7 +49,7 @@ function agoText(seconds: number | null): string {
 
 function SevBadge({ sev }: { sev: string }) {
   const m = SEV_META[sev] ?? SEV_META.info;
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${m.cls}`}>{m.label}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${m.cls}`}>{m.label}</span>;
 }
 
 function DaysBadge({ days }: { days?: number | null }) {
@@ -63,7 +63,7 @@ function DaysBadge({ days }: { days?: number | null }) {
     ? "bg-amber-100 text-amber-700"
     : "bg-sky-100 text-sky-700";
   return (
-    <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>
+    <span className={`whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>
       {expired ? `expired ${Math.abs(days)}d` : `${days}d left`}
     </span>
   );
@@ -231,7 +231,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
                   key={w}
                   onClick={() => setDays(w)}
                   className={`rounded-md px-2.5 py-1 transition ${
-                    days === w ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                    days === w ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-700"
                   }`}
                 >
                   {w}d
@@ -243,7 +243,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
                 onBlur={applyCustom}
                 onKeyDown={(e) => e.key === "Enter" && applyCustom()}
                 placeholder="custom"
-                className="w-16 rounded-md bg-transparent px-2 py-1 text-gray-700 outline-none placeholder:text-gray-400"
+                className="w-16 rounded-md bg-transparent px-2 py-1 text-gray-700 outline-hidden placeholder:text-gray-400"
               />
             </div>
             <span className="text-xs text-gray-500">
@@ -255,7 +255,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
                 <>
                   Updated {agoText(data.age_seconds)}
                   {data.stale && <span className="ml-1 text-amber-600">· stale</span>}
-                  <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">cached</span>
+                  <span className="ml-1 rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">cached</span>
                 </>
               )}
             </span>
@@ -279,7 +279,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
               <button
                 key={kpi.key}
                 onClick={() => scrollToGroup(kpi.group)}
-                className="rounded-lg border bg-white px-3 py-2 text-left transition hover:border-gray-300 hover:shadow-sm"
+                className="rounded-lg border bg-white px-3 py-2 text-left transition hover:border-gray-300 hover:shadow-xs"
               >
                 <div className="flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${count > 0 ? m.dot : "bg-gray-300"}`} />
@@ -297,12 +297,12 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search findings…"
-            className="w-48 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400"
+            className="w-48 rounded-lg border px-2.5 py-1.5 outline-hidden focus:border-gray-400"
           />
           <select
             value={sevFilter}
             onChange={(e) => setSevFilter(e.target.value)}
-            className="rounded-lg border px-2 py-1.5 outline-none focus:border-gray-400"
+            className="rounded-lg border px-2 py-1.5 outline-hidden focus:border-gray-400"
           >
             <option value="all">All severities</option>
             <option value="critical">Critical</option>
@@ -315,7 +315,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
             Mapped to workload only
           </label>
           {!data?.connection_configured && (
-            <span className="rounded bg-amber-50 px-2 py-1 text-amber-700">
+            <span className="rounded-sm bg-amber-50 px-2 py-1 text-amber-700">
               No default Azure connection — configure one in Settings → Azure Tenants.
             </span>
           )}
@@ -358,7 +358,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
             )}
           </div>
         ) : (
-          <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
+          <div className="mx-auto max-w-6xl 2xl:max-w-(--breakpoint-2xl) space-y-4">
             {msg && msg.id === "refresh" && (
               <div
                 className={`rounded-lg border p-2 text-xs ${
@@ -385,7 +385,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
                         <h2 className="text-sm font-semibold text-gray-900">{g.label}</h2>
                         <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{total}</span>
                         {g.key === "users_without_mfa" && data?.meta.mfa_sampled && (
-                          <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
+                          <span className="rounded-sm bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">
                             sampled {data.meta.mfa_scanned}
                           </span>
                         )}
@@ -419,7 +419,7 @@ export function IdentityFindingsPanel({ connectionId = null }: { connectionId?: 
                               <div className="mt-0.5 text-xs text-gray-500">{f.detail}</div>
                               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                                 {f.workload_name ? (
-                                  <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700">
+                                  <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-indigo-700">
                                     ⬡ {f.workload_name}
                                   </span>
                                 ) : (

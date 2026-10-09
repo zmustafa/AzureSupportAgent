@@ -290,11 +290,11 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter by principal or role…"
-          className="ml-auto w-72 rounded border px-2 py-1 text-sm"
+          className="ml-auto w-72 rounded-sm border px-2 py-1 text-sm"
         />
       </div>
       {!d.capabilities?.permanence_known && (
-        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="mb-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           PIM schedule data was unavailable, so an active assignment cannot be distinguished from a
           live activation. Permanence is reported as unknown rather than assumed.
         </div>
@@ -331,9 +331,9 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
                 <td className="px-2 py-1.5 text-gray-800">{a.role_name}</td>
                 <td className="px-2 py-1.5">
                   {a.role_tier === "tier0" ? (
-                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">tier 0</span>
+                    <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">tier 0</span>
                   ) : a.role_tier === "tier1" ? (
-                    <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[11px] text-orange-700">tier 1</span>
+                    <span className="rounded-sm bg-orange-100 px-1.5 py-0.5 text-[11px] text-orange-700">tier 1</span>
                   ) : (
                     <span className="text-xs text-gray-400">tier 2</span>
                   )}
@@ -483,7 +483,7 @@ function PimConfig({ connectionId, onOpenSetup }: { connectionId: string | null;
                 <td className="px-3 py-1.5">
                   <span className="text-gray-900">{p.role_name}</span>
                   {p.role_tier === "tier0" && (
-                    <span className="ml-1 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700">tier 0</span>
+                    <span className="ml-1 rounded-sm bg-red-100 px-1 py-0.5 text-[10px] text-red-700">tier 0</span>
                   )}
                 </td>
                 <td className="w-24 px-2 py-1.5">

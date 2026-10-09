@@ -145,7 +145,7 @@ function IamPanelBody({
               onClick={refreshCtl.refreshAll}
               disabled={refreshCtl.isBusy}
               title="Re-collect every scope and the directory"
-              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
             >
               {refreshCtl.isBusy ? "Scanning…" : "↻ Rescan"}
             </button>
@@ -198,7 +198,7 @@ function IamPanelBody({
           <button
             onClick={() => void overviewQ.refetch()}
             disabled={overviewQ.isFetching}
-            className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
+            className="rounded-sm bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
           >
             {overviewQ.isFetching ? "Retrying…" : "↻ Retry"}
           </button>
@@ -212,10 +212,10 @@ function IamPanelBody({
             review without an Azure connection.
           </p>
           <div className="flex gap-2">
-            <button onClick={refreshCtl.refreshAll} disabled={refreshCtl.isBusy} className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50">
+            <button onClick={refreshCtl.refreshAll} disabled={refreshCtl.isBusy} className="rounded-sm bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50">
               {refreshCtl.isBusy ? "Scanning…" : "↻ Run access scan"}
             </button>
-            <button onClick={seedDemo} disabled={seeding} className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+            <button onClick={seedDemo} disabled={seeding} className="rounded-sm border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               {seeding ? "Seeding…" : "🎬 Seed demo data"}
             </button>
           </div>

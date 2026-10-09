@@ -30,8 +30,8 @@ function daysLabel(d: number | null): string {
 }
 
 function renewBadge(v: boolean | null) {
-  if (v === true) return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">Auto-renew</span>;
-  if (v === false) return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">No renew</span>;
+  if (v === true) return <span className="rounded-sm bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">Auto-renew</span>;
+  if (v === false) return <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">No renew</span>;
   return <span className="text-gray-400">—</span>;
 }
 
@@ -41,7 +41,7 @@ function utilBadge(v: number | null) {
   return (
     <span className={low ? "font-medium text-amber-600" : "text-gray-700"}>
       {`${v}%`}
-      {low && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-700">low</span>}
+      {low && <span className="ml-1 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-700">low</span>}
     </span>
   );
 }
@@ -66,7 +66,7 @@ function Stat({ label, value, tone, active, onClick }: { label: string; value: s
   );
   if (!onClick) return <div className={base}>{inner}</div>;
   return (
-    <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-sm`} title={active ? "Click to clear filter" : `Filter to ${label}`}>
+    <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-xs`} title={active ? "Click to clear filter" : `Filter to ${label}`}>
       {inner}
     </button>
   );
@@ -383,19 +383,19 @@ export function ReservationsMonitorPanel() {
           </div>
         </div>
         {data?.demo && (
-          <div className="mt-2 rounded bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700">
+          <div className="mt-2 rounded-sm bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700">
             Showing synthetic demo reservations. Untick “Demo data” for your live tenant.
           </div>
         )}
         {/* RU4 — stale-data nudge once past the 6h backend TTL. */}
         {!demo && data && !data.never_loaded && typeof data.age_seconds === "number" && data.age_seconds > 6 * 3600 && (
-          <div className="mt-2 flex items-center gap-2 rounded bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
+          <div className="mt-2 flex items-center gap-2 rounded-sm bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
             Data is {agoText(data.age_seconds)} — reservation status may have changed.
-            <button onClick={doRefresh} disabled={refreshing} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
+            <button onClick={doRefresh} disabled={refreshing} className="rounded-sm border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
           </div>
         )}
         {msg && (
-          <div className={`mt-2 rounded px-2.5 py-1 text-[11px] ${msg.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+          <div className={`mt-2 rounded-sm px-2.5 py-1 text-[11px] ${msg.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
             {msg.text}
           </div>
         )}
@@ -580,7 +580,7 @@ export function ReservationsMonitorPanel() {
                     <>
                       <div className="mb-2 text-sm text-gray-700">{digestQ.data.summary}</div>
                       <div
-                        className="overflow-auto rounded border bg-gray-50 p-2 text-sm"
+                        className="overflow-auto rounded-sm border bg-gray-50 p-2 text-sm"
                         // The preview HTML is generated server-side from your own reservation data.
                         dangerouslySetInnerHTML={{ __html: digestQ.data.html }}
                       />

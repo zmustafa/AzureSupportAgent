@@ -14,7 +14,9 @@ call-counting half is the deterministic one and is what should fail if this regr
 """
 from __future__ import annotations
 
+import gc
 import time
+from statistics import median
 
 import pytest
 from openpyxl import load_workbook
@@ -59,6 +61,7 @@ def test_the_writer_never_rescans_the_sheet_per_row(monkeypatch):
 def test_writing_rows_stays_roughly_linear():
     """Quadratic growth is ~16x per 4x of rows; linear is ~4x. The bound sits between them."""
     def elapsed(n: int) -> float:
+        gc.collect()
         rows = _rows(n)
         builder = WorkbookBuilder()
         started = time.perf_counter()
@@ -66,8 +69,8 @@ def test_writing_rows_stays_roughly_linear():
         return time.perf_counter() - started
 
     elapsed(500)  # warm the import/allocator so the first sample is not the outlier
-    base = elapsed(1000)
-    scaled = elapsed(4000)
+    base = median(elapsed(1000) for _ in range(3))
+    scaled = median(elapsed(4000) for _ in range(3))
     ratio = scaled / max(base, 1e-4)
     assert ratio < 10, (
         f"4x the rows cost {ratio:.1f}x the time (expected ~4x). Before the fix this was ~16x."

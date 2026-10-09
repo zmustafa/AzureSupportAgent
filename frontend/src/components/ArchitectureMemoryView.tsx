@@ -144,7 +144,7 @@ function SectionCard({
   const needsReview = !!section.needs_review;
   return (
     <div
-      className={`rounded-xl border bg-white p-3 shadow-sm ${
+      className={`rounded-xl border bg-white p-3 shadow-xs ${
         needsReview ? "border-amber-300 ring-1 ring-amber-200" : isEmpty ? "border-dashed border-gray-300" : "border-gray-200"
       }`}
     >
@@ -162,20 +162,20 @@ function SectionCard({
             onClick={onRegenerate}
             disabled={regenerating || !canRegenerate}
             title={canRegenerate ? "Regenerate just this section with AI" : "Save the memory first to regenerate"}
-            className="rounded p-1 text-brand hover:bg-brand/10 disabled:opacity-30"
+            className="rounded-sm p-1 text-brand hover:bg-brand/10 disabled:opacity-30"
           >
             {regenerating ? <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand border-t-transparent align-middle" /> : "✨"}
           </button>
           <button
             onClick={onToggleReview}
             title={needsReview ? "Clear the “needs review” flag" : "Flag this section for review"}
-            className={`rounded p-1 hover:bg-amber-50 ${needsReview ? "text-amber-600" : "text-gray-400 hover:text-amber-600"}`}
+            className={`rounded-sm p-1 hover:bg-amber-50 ${needsReview ? "text-amber-600" : "text-gray-400 hover:text-amber-600"}`}
           >
             ⚑
           </button>
-          <button onClick={onMoveUp} disabled={isFirst} title="Move up" className="rounded p-1 text-gray-400 hover:bg-gray-100 disabled:opacity-30">▲</button>
-          <button onClick={onMoveDown} disabled={isLast} title="Move down" className="rounded p-1 text-gray-400 hover:bg-gray-100 disabled:opacity-30">▼</button>
-          <button onClick={onRemove} title="Remove section" className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600">✕</button>
+          <button onClick={onMoveUp} disabled={isFirst} title="Move up" className="rounded-sm p-1 text-gray-400 hover:bg-gray-100 disabled:opacity-30">▲</button>
+          <button onClick={onMoveDown} disabled={isLast} title="Move down" className="rounded-sm p-1 text-gray-400 hover:bg-gray-100 disabled:opacity-30">▼</button>
+          <button onClick={onRemove} title="Remove section" className="rounded-sm p-1 text-gray-400 hover:bg-red-50 hover:text-red-600">✕</button>
         </div>
       </div>
       <textarea
@@ -184,7 +184,7 @@ function SectionCard({
         onChange={(e) => onChange(e.target.value)}
         placeholder={hint || "Write this section in Markdown…"}
         spellCheck
-        className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50/50 px-3 py-2 text-[13px] leading-relaxed text-gray-800 focus:border-brand focus:bg-white focus:outline-none focus:ring-1 focus:ring-brand"
+        className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50/50 px-3 py-2 text-[13px] leading-relaxed text-gray-800 focus:border-brand focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-brand"
       />
     </div>
   );
@@ -247,7 +247,7 @@ function AddSectionMenu({
                   value={custom}
                   onChange={(e) => setCustom(e.target.value)}
                   placeholder="Section title…"
-                  className="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-1 text-[13px] focus:border-brand focus:outline-none"
+                  className="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-1 text-[13px] focus:border-brand focus:outline-hidden"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && custom.trim()) {
                       const key = `custom_${custom.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`;
@@ -680,7 +680,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
           value={title}
           onChange={(e) => update({ title: e.target.value })}
           placeholder="Memory title…"
-          className="min-w-[12rem] flex-1 rounded-md border border-transparent px-2 py-1 text-sm text-gray-800 hover:border-gray-200 focus:border-brand focus:outline-none"
+          className="min-w-48 flex-1 rounded-md border border-transparent px-2 py-1 text-sm text-gray-800 hover:border-gray-200 focus:border-brand focus:outline-hidden"
         />
         <button
           onClick={() => navigate("/knowme")}
@@ -805,7 +805,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
 
       {/* Import grounding notes */}
       {showImport && (
-        <div className="border-b border-brand/20 bg-brand/[0.03] px-3 py-2">
+        <div className="border-b border-brand/20 bg-brand/3 px-3 py-2">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">📎 Grounding notes (folded into AI drafts)</span>
             <button onClick={() => setExtraContext("")} className="text-[11px] text-gray-400 hover:text-gray-600">Clear</button>
@@ -815,7 +815,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
             onChange={(e) => setExtraContext(e.target.value)}
             placeholder="Paste a runbook, incident RCA, design doc, or operator notes here — the AI treats these as authoritative when drafting or regenerating sections."
             rows={4}
-            className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-800 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+            className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] text-gray-800 focus:border-brand focus:outline-hidden focus:ring-1 focus:ring-brand"
           />
         </div>
       )}
@@ -873,7 +873,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
                 value={rawText}
                 onChange={(e) => setRawText(e.target.value)}
                 spellCheck
-                className="min-h-0 flex-1 resize-none rounded-lg border border-gray-200 bg-gray-50/50 px-3 py-2 font-mono text-[12px] leading-relaxed text-gray-800 focus:border-brand focus:bg-white focus:outline-none focus:ring-1 focus:ring-brand"
+                className="min-h-0 flex-1 resize-none rounded-lg border border-gray-200 bg-gray-50/50 px-3 py-2 font-mono text-[12px] leading-relaxed text-gray-800 focus:border-brand focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-brand"
               />
             </div>
           ) : (
@@ -919,7 +919,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
                 <button
                   key={r.id}
                   onClick={() => setPreviewRev(r)}
-                  className="flex w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left transition hover:border-brand/30 hover:bg-brand/[0.03]"
+                  className="flex w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left transition hover:border-brand/30 hover:bg-brand/3"
                 >
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5">
@@ -1021,7 +1021,7 @@ export function MemoryIndex() {
             <button
               key={m.id}
               onClick={() => navigate(`/architectures/${m.architecture_id}/memory`)}
-              className="flex w-full items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left transition hover:border-brand/30 hover:shadow-sm"
+              className="flex w-full items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left transition hover:border-brand/30 hover:shadow-xs"
             >
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">

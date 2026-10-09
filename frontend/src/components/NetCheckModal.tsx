@@ -150,7 +150,7 @@ export function NetCheckModal({
       <div className="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-semibold text-gray-900">🔌 Test connectivity</div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -158,7 +158,7 @@ export function NetCheckModal({
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
               <div className="mb-1 font-medium text-gray-700">Source (sandbox VM)</div>
-              <select value={sourceVmId} onChange={(e) => setSourceVmId(e.target.value)} className="w-full rounded border px-2 py-1.5">
+              <select value={sourceVmId} onChange={(e) => setSourceVmId(e.target.value)} className="w-full rounded-sm border px-2 py-1.5">
                 <option value="">— pick a sandbox VM —</option>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id} disabled={s.disabled}>
@@ -167,7 +167,7 @@ export function NetCheckModal({
                 ))}
               </select>
               <input value={sourceHost} onChange={(e) => setSourceHost(e.target.value)} placeholder="…or source FQDN/IP"
-                className="mt-1 w-full rounded border px-2 py-1.5" />
+                className="mt-1 w-full rounded-sm border px-2 py-1.5" />
               {sources.length === 0 ? (
                 <p className="mt-1 text-[10px] text-amber-600">No sandbox VM onboarded — add one in Settings → Sandbox VMs (or enter a source FQDN/IP above).</p>
               ) : sourcesFallback ? (
@@ -177,13 +177,13 @@ export function NetCheckModal({
             <div>
               <div className="mb-1 font-medium text-gray-700">Target</div>
               <input value={targetHost} onChange={(e) => setTargetHost(e.target.value)} placeholder="FQDN / private IP"
-                className="w-full rounded border px-2 py-1.5" />
+                className="w-full rounded-sm border px-2 py-1.5" />
               {targetNodeId && !targetHost && <p className="mt-1 text-[10px] text-gray-400">Defaults to the clicked node's private address.</p>}
               <div className="mt-1 flex gap-2">
                 <label className="flex-1"><span className="mb-0.5 block text-[10px] text-gray-500">Port</span>
-                  <input type="number" value={port} onChange={(e) => setPort(parseInt(e.target.value || "0", 10))} className="w-full rounded border px-2 py-1" /></label>
+                  <input type="number" value={port} onChange={(e) => setPort(parseInt(e.target.value || "0", 10))} className="w-full rounded-sm border px-2 py-1" /></label>
                 <label className="flex-1"><span className="mb-0.5 block text-[10px] text-gray-500">Protocol</span>
-                  <select value={protocol} onChange={(e) => setProtocol(e.target.value)} className="w-full rounded border px-1.5 py-1">
+                  <select value={protocol} onChange={(e) => setProtocol(e.target.value)} className="w-full rounded-sm border px-1.5 py-1">
                     <option value="tcp">TCP</option>
                     <option value="tls">TLS</option>
                     <option value="http">HTTP</option>
@@ -193,10 +193,10 @@ export function NetCheckModal({
             </div>
           </div>
           {(protocol === "http" || protocol === "https") && (
-            <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} placeholder="HTTP path (e.g. /health)" className="mt-2 w-full rounded border px-2 py-1.5 text-xs" />
+            <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} placeholder="HTTP path (e.g. /health)" className="mt-2 w-full rounded-sm border px-2 py-1.5 text-xs" />
           )}
           {(protocol === "tls" || protocol === "https" || port === 443) && (
-            <input value={sni} onChange={(e) => setSni(e.target.value)} placeholder="TLS SNI (optional, defaults to target)" className="mt-2 w-full rounded border px-2 py-1.5 text-xs" />
+            <input value={sni} onChange={(e) => setSni(e.target.value)} placeholder="TLS SNI (optional, defaults to target)" className="mt-2 w-full rounded-sm border px-2 py-1.5 text-xs" />
           )}
 
           <div className="mt-3 flex items-center gap-2">
@@ -221,11 +221,11 @@ export function NetCheckModal({
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-gray-800">{STEP_LABEL[s.step] || s.step}</span>
                         <span className="text-gray-500">{s.evidence}</span>
-                        {d && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">{d.from} → {d.to}</span>}
+                        {d && <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">{d.from} → {d.to}</span>}
                         <span className="ml-auto text-[10px] text-gray-400">{s.duration_ms}ms</span>
                       </div>
                       {s.raw && (
-                        <pre className="mt-1 max-h-24 overflow-auto rounded bg-gray-900 p-1.5 text-[10px] leading-tight text-gray-100">{s.raw}</pre>
+                        <pre className="mt-1 max-h-24 overflow-auto rounded-sm bg-gray-900 p-1.5 text-[10px] leading-tight text-gray-100">{s.raw}</pre>
                       )}
                     </div>
                   </div>
@@ -237,9 +237,9 @@ export function NetCheckModal({
           {/* Verdict + diff */}
           {run && (
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-              <span className={`rounded px-2 py-0.5 font-medium ${VERDICT_CLS[run.verdict]}`}>{run.verdict.toUpperCase()}</span>
-              {run.demo && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>}
-              {diffByStep.verdict && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">changed: {diffByStep.verdict.from} → {diffByStep.verdict.to}</span>}
+              <span className={`rounded-sm px-2 py-0.5 font-medium ${VERDICT_CLS[run.verdict]}`}>{run.verdict.toUpperCase()}</span>
+              {run.demo && <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>}
+              {diffByStep.verdict && <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">changed: {diffByStep.verdict.from} → {diffByStep.verdict.to}</span>}
             </div>
           )}
 

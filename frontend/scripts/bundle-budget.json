@@ -2,7 +2,7 @@
   "budgets": {
     "entryRawKB": 437,
     "entryGzipKB": 98,
-    "totalRawKB": 10733,
+    "totalRawKB": 10754,
     "chunkCount": 196,
     "largestChunkRawKB": 665
   },

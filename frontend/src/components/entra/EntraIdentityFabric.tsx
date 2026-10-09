@@ -73,11 +73,11 @@ function TrustRow({ trust }: { trust: FabricTrust }) {
         <span className="text-gray-400">{open ? "▾" : "▸"}</span>
         <span className="font-medium text-gray-900">{trust.domain}</span>
         <span className="text-gray-400">→</span>
-        <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
+        <span className="rounded-sm bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
           {vendor}
         </span>
         {trust.protocol && (
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">
+          <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">
             {trust.protocol}
           </span>
         )}
@@ -87,13 +87,13 @@ function TrustRow({ trust }: { trust: FabricTrust }) {
           </span>
         )}
         {trust.mfa_behaviour?.trusted && (
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+          <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
                 title={trust.mfa_behaviour.label}>
             MFA claim trusted
           </span>
         )}
         {trust.auto_rollover && !trust.auto_rollover.healthy && trust.auto_rollover.result && (
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+          <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
                 title={`Automatic certificate rollover reports ${trust.auto_rollover.result}`}>
             rollover: {trust.auto_rollover.result}
           </span>
@@ -157,7 +157,7 @@ function Flag({ on, label, warnWhenOff }: { on?: boolean; label: string; warnWhe
   const tone = on
     ? "bg-green-100 text-green-700"
     : warnWhenOff ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-500";
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] ${tone}`}>{label} {on ? "on" : "off"}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${tone}`}>{label} {on ? "on" : "off"}</span>;
 }
 
 export function IdentityFabricCard({ fabric }: { fabric?: IdentityFabric }) {
@@ -179,7 +179,7 @@ export function IdentityFabricCard({ fabric }: { fabric?: IdentityFabric }) {
           <StateChip state="blind" title={fabric?.blind_reason || "The domain list could not be read."} />
         ) : (
           <>
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
+            <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
               {fabric?.managed_count ?? 0} managed
             </span>
             <span className={`rounded px-1.5 py-0.5 text-[11px] ${
@@ -230,7 +230,7 @@ export function IdentityFabricCard({ fabric }: { fabric?: IdentityFabric }) {
                 <span key={idp.id}
                       title={[idp.kind_label, idp.issuer_uri, idp.domain, idp.client_id ? `client ${idp.client_id}` : ""]
                         .filter(Boolean).join(" · ")}
-                      className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800">
+                      className="rounded-sm bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800">
                   {idp.display_name || idp.identity_provider_type || idp.id}
                 </span>
               ))
@@ -258,7 +258,7 @@ export function IdentityFabricCard({ fabric }: { fabric?: IdentityFabric }) {
               <Flag on={hybrid.user_writeback} label="user writeback" />
               <Flag on={hybrid.group_writeback} label="group writeback" />
               {hybrid.deletion_prevention?.type && (
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
+                <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
                   deletion prevention {hybrid.deletion_prevention.threshold ?? ""}
                 </span>
               )}
@@ -310,7 +310,7 @@ export function FederationNote({ fabric, context }: {
     );
   }
   return (
-    <div className="mb-3 rounded border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+    <div className="mb-3 rounded-sm border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
       <span className="font-semibold">
         {users != null ? `${users.toLocaleString()} user(s)${share} authenticate at ${vendors}.` : `This tenant federates to ${vendors}.`}
       </span>{" "}

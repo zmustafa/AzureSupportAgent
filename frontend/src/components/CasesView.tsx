@@ -124,7 +124,7 @@ function CaseList() {
                 type="checkbox"
                 checked={openOnly}
                 onChange={(e) => setOpenOnly(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-gray-300"
+                className="h-3.5 w-3.5 rounded-sm border-gray-300"
               />
               Open only
             </label>
@@ -191,7 +191,7 @@ function CaseList() {
         ) : q.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             Couldn&apos;t load case files. You may not have the{" "}
-            <code className="rounded bg-red-100 px-1">cases.read</code> permission.
+            <code className="rounded-sm bg-red-100 px-1">cases.read</code> permission.
             <button onClick={() => q.refetch()} className="ml-2 underline">Retry</button>
           </div>
         ) : !data || data.cases.length === 0 ? (
@@ -411,7 +411,7 @@ function CaseDetailView({ caseId }: { caseId: string }) {
                       <div className="text-[12px] font-medium text-gray-700">{a.label} ({a.ids.length})</div>
                       <div className="mt-0.5 flex flex-wrap gap-1">
                         {a.ids.slice(0, 12).map((id) => (
-                          <code key={id} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600" title={id}>
+                          <code key={id} className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600" title={id}>
                             {id.length > 14 ? `${id.slice(0, 14)}…` : id}
                           </code>
                         ))}

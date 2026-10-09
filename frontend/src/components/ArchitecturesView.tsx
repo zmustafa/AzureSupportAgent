@@ -36,7 +36,7 @@ function HealthBadge({ score }: { score: number | null | undefined }) {
   if (score == null) return null;
   const s = score;
   const cls = s >= 80 ? "bg-green-100 text-green-700" : s >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
-  return <span className={`rounded px-1.5 py-0.5 font-medium ${cls}`} title="Latest Well-Architected assessment score">🛡 {s}/100</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 font-medium ${cls}`} title="Latest Well-Architected assessment score">🛡 {s}/100</span>;
 }
 
 /** Compact native-select to change an architecture's lifecycle state inline. */
@@ -48,7 +48,7 @@ function StateSelect({ value, onChange, disabled }: { value: ArchitectureState; 
       disabled={disabled}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onChange(e.target.value as ArchitectureState); }}
-      className={`rounded-md border px-1.5 py-1 text-[11px] font-medium focus:outline-none focus:ring-1 focus:ring-brand ${m.badge}`}
+      className={`rounded-md border px-1.5 py-1 text-[11px] font-medium focus:outline-hidden focus:ring-1 focus:ring-brand ${m.badge}`}
       title="Lifecycle state"
     >
       {STATE_ORDER.map((s) => <option key={s} value={s}>{STATE_META[s].label}</option>)}
@@ -64,7 +64,7 @@ function CategorySelect({ value, collections, onChange, disabled }: { value: str
       disabled={disabled}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onChange(e.target.value); }}
-      className="max-w-[10rem] truncate rounded-md border px-1.5 py-1 text-[11px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-brand"
+      className="max-w-40 truncate rounded-md border px-1.5 py-1 text-[11px] text-gray-600 focus:outline-hidden focus:ring-1 focus:ring-brand"
       title="Category / solution"
     >
       <option value="">Uncategorized</option>
@@ -81,7 +81,7 @@ function WorkloadSelect({ value, workloads, onChange, disabled }: { value: strin
       disabled={disabled}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onChange(e.target.value); }}
-      className="max-w-[11rem] truncate rounded-md border px-1.5 py-1 text-[11px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-brand"
+      className="max-w-44 truncate rounded-md border px-1.5 py-1 text-[11px] text-gray-600 focus:outline-hidden focus:ring-1 focus:ring-brand"
       title="Linked workload"
     >
       <option value="">🔗 No workload</option>
@@ -216,7 +216,7 @@ function ArchitecturesList() {
 
   function renderCard(a: Architecture) {
     return (
-      <div key={a.id} className="group rounded-xl border bg-white p-4 shadow-sm transition hover:shadow-md">
+      <div key={a.id} className="group rounded-xl border bg-white p-4 shadow-xs transition hover:shadow-md">
         {/* Deliberately a div with role="button" rather than a real <button>. The thumbnail below
             renders an @xyflow/react canvas, and ReactFlow's <Controls> emits its own <button>
             elements — nesting those inside a <button> is invalid HTML and an a11y violation.
@@ -249,8 +249,8 @@ function ArchitecturesList() {
           </div>
           {a.description && <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{a.description}</p>}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.nodes.length} resources</span>
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.edges.length} links</span>
+            <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.nodes.length} resources</span>
+            <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.edges.length} links</span>
             {a.workload_id && <HealthBadge score={scoreByWorkload.get(a.workload_id)} />}
             {a.workload_name && <span>· {a.workload_name}</span>}
             {(a.updated_by || a.created_by) && <span>· by {a.updated_by || a.created_by}</span>}
@@ -298,7 +298,7 @@ function ArchitecturesList() {
         {managing && <ManageCategoriesModal collections={collections} onClose={() => setManaging(false)} />}
 
         {showTrash && (
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-xs">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
@@ -325,8 +325,8 @@ function ArchitecturesList() {
                     </div>
                     {a.description && <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{a.description}</p>}
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.nodes.length} resources</span>
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.edges.length} links</span>
+                      <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.nodes.length} resources</span>
+                      <span className="rounded-sm bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.edges.length} links</span>
                       {a.workload_name && <span>· {a.workload_name}</span>}
                     </div>
                     {a.deleted_at && <div className="mt-1.5 text-[10px] text-gray-400">Deleted {formatTimestamp(a.deleted_at)}</div>}
@@ -347,7 +347,7 @@ function ArchitecturesList() {
         {architectures.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search architectures…"
-              className="w-48 rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand" />
+              className="w-48 rounded-lg border px-3 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand" />
             <div className="flex rounded-lg border bg-white p-0.5 text-xs">
               {([["active", "Active"], ["draft", "Draft"], ["in_review", "In Review"], ["ready", "Ready"], ["archived", "Archived"]] as [typeof stateFilter, string][]).map(([v, label]) => (
                 <button key={v} onClick={() => setStateFilter(v)} className={`rounded-md px-2.5 py-1 font-medium ${stateFilter === v ? "bg-brand text-white" : "text-gray-500 hover:text-gray-700"}`}>{label}</button>
@@ -355,14 +355,14 @@ function ArchitecturesList() {
             </div>
             {collections.length > 0 && (
               <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
-                className="rounded-lg border px-2.5 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand">
+                className="rounded-lg border px-2.5 py-1.5 text-sm text-gray-600 focus:outline-hidden focus:ring-2 focus:ring-brand">
                 <option value="all">All categories</option>
                 {collections.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
                 <option value="">Uncategorized</option>
               </select>
             )}
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} title="Sort"
-              className="rounded-lg border px-2.5 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand">
+              className="rounded-lg border px-2.5 py-1.5 text-sm text-gray-600 focus:outline-hidden focus:ring-2 focus:ring-brand">
               <option value="updated">Sort: Last updated</option>
               <option value="name">Sort: Name</option>
               <option value="health">Sort: Health</option>
@@ -456,7 +456,7 @@ function FromWorkloadModal({ onClose, onQueued }: { onClose: () => void; onQueue
 
         <div className="mt-3 flex items-center gap-2">
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter workloads…"
-            className="w-full rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand" />
+            className="w-full rounded-lg border px-3 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-brand" />
           {shown.length > 0 && (
             <button onClick={toggleAllShown} className="shrink-0 rounded-lg border px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50">
               {allShownSelected ? "Clear" : "All"}
@@ -535,7 +535,7 @@ function GenerationJobs() {
   const finished = jobs.filter((j) => j.status !== "queued" && j.status !== "running");
 
   return (
-    <div className="space-y-2 rounded-xl border bg-white p-3 shadow-sm">
+    <div className="space-y-2 rounded-xl border bg-white p-3 shadow-xs">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-gray-700">AI generation{active.length > 0 ? ` · ${active.length} running` : ""}</h2>
         {finished.length > 0 && (
@@ -804,7 +804,7 @@ function RevisionsPanel({ architectureId, previewingId, onClose, onPreview, onEx
     <aside className="flex w-80 shrink-0 flex-col border-l bg-white">
       <div className="flex items-center justify-between border-b px-3 py-2">
         <h2 className="text-sm font-semibold text-gray-800">🕘 Version history</h2>
-        <button onClick={onClose} title="Close" className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕</button>
+        <button onClick={onClose} title="Close" className="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕</button>
       </div>
       <p className="border-b px-3 py-2 text-[11px] text-gray-500">Click a version to view it (read-only); restoring snapshots the current version first, so nothing is lost.</p>
       {error && <div className="m-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-700">{error}</div>}
@@ -879,7 +879,7 @@ function ActivityModal({ architectureId, onClose }: { architectureId: string; on
             <ol className="relative space-y-3 border-l border-gray-200 pl-4">
               {entries.map((e) => (
                 <li key={e.id} className="relative">
-                  <span className="absolute -left-[1.42rem] flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm ring-1 ring-gray-200">{ACTIVITY_ICON[e.event] ?? "•"}</span>
+                  <span className="absolute left-[-1.42rem] flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm ring-1 ring-gray-200">{ACTIVITY_ICON[e.event] ?? "•"}</span>
                   <div className="text-sm text-gray-700">{e.detail}</div>
                   <div className="mt-0.5 text-[11px] text-gray-400">{e.by ? `${e.by} · ` : ""}{e.at ? formatTimestamp(e.at) : ""}</div>
                 </li>
@@ -952,28 +952,28 @@ function ManageCategoriesModal({ collections, onClose }: { collections: Architec
           {collections.length === 0 && <p className="text-sm text-gray-400">No categories yet. Create one below.</p>}
           {collections.map((c, idx) => (
             <div key={c.id} className="flex items-center gap-2 rounded-lg border px-2.5 py-2">
-              <input type="color" value={c.color} onChange={(e) => void save(c, { color: e.target.value })} className="h-7 w-7 shrink-0 cursor-pointer rounded border p-0.5" title="Color" />
+              <input type="color" value={c.color} onChange={(e) => void save(c, { color: e.target.value })} className="h-7 w-7 shrink-0 cursor-pointer rounded-sm border p-0.5" title="Color" />
               <select value={c.icon} onChange={(e) => void save(c, { icon: e.target.value })} className="shrink-0 rounded-md border px-1 py-1 text-sm" title="Icon">
                 {ICON_CHOICES.map((i) => <option key={i} value={i}>{i}</option>)}
               </select>
               <input defaultValue={c.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== c.name) void save(c, { name: e.target.value.trim() }); }}
-                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
+                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-sm focus:outline-hidden focus:ring-1 focus:ring-brand" />
               <div className="flex shrink-0 items-center gap-0.5">
-                <button onClick={() => void move(idx, -1)} disabled={idx === 0} className="rounded border px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-30" title="Move up">↑</button>
-                <button onClick={() => void move(idx, 1)} disabled={idx === collections.length - 1} className="rounded border px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-30" title="Move down">↓</button>
-                <button onClick={() => void remove(c)} className="rounded border border-red-200 px-1.5 py-1 text-xs text-red-600 hover:bg-red-50" title="Delete">✕</button>
+                <button onClick={() => void move(idx, -1)} disabled={idx === 0} className="rounded-sm border px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-30" title="Move up">↑</button>
+                <button onClick={() => void move(idx, 1)} disabled={idx === collections.length - 1} className="rounded-sm border px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-30" title="Move down">↓</button>
+                <button onClick={() => void remove(c)} className="rounded-sm border border-red-200 px-1.5 py-1 text-xs text-red-600 hover:bg-red-50" title="Delete">✕</button>
               </div>
             </div>
           ))}
         </div>
 
         <div className="mt-3 flex items-center gap-2 border-t pt-3">
-          <input type="color" value={newColor} onChange={(e) => setNewColor(e.target.value)} className="h-8 w-8 shrink-0 cursor-pointer rounded border p-0.5" title="Color" />
+          <input type="color" value={newColor} onChange={(e) => setNewColor(e.target.value)} className="h-8 w-8 shrink-0 cursor-pointer rounded-sm border p-0.5" title="Color" />
           <select value={newIcon} onChange={(e) => setNewIcon(e.target.value)} className="shrink-0 rounded-md border px-1 py-1.5 text-sm">
             {ICON_CHOICES.map((i) => <option key={i} value={i}>{i}</option>)}
           </select>
           <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
-            placeholder="New category name…" className="min-w-0 flex-1 rounded-md border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
+            placeholder="New category name…" className="min-w-0 flex-1 rounded-md border px-2 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-brand" />
           <button onClick={() => void add()} disabled={!newName.trim()} className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">Add</button>
         </div>
         <div className="mt-3 flex justify-end">

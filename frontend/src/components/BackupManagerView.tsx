@@ -156,7 +156,7 @@ function Stat({ label, value, hint, band }: { label: string; value: string | num
 }
 
 function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>{children}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>{children}</span>;
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
@@ -237,7 +237,7 @@ function SortableTh<K extends string>({
       <button
         type="button"
         onClick={() => onSort(column, first)}
-        className="inline-flex w-full items-center gap-1 rounded text-left hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand/40"
+        className="inline-flex w-full items-center gap-1 rounded-sm text-left hover:text-gray-800 focus:outline-hidden focus:ring-2 focus:ring-brand/40"
         aria-label={`Sort by ${label.toLowerCase()}${directionLabel ? `; currently ${directionLabel}` : ""}`}
         title={directionLabel}
       >
@@ -358,7 +358,7 @@ function AnalysisProgress({ state }: { state?: BackupRefreshJobResponse }) {
             <span className="text-[10px] tabular-nums text-gray-500">
               Elapsed {elapsedText(job.started_at, job.finished_at)}
             </span>
-            {running && <span className="rounded bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">Running on server</span>}
+            {running && <span className="rounded-sm bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">Running on server</span>}
             <span className="text-[10px] tabular-nums text-gray-500">{lines.length} step(s)</span>
           </div>
           <p className="mt-0.5 text-xs text-gray-700">{failed ? job.error || current : current}</p>
@@ -703,7 +703,7 @@ export function BackupManagerPanel() {
                       setScopeKind(kind);
                       if (kind === "management_group") setMgRefreshToken((value) => value + 1);
                     }}
-                    className={`rounded-md px-2.5 py-1 ${scopeKind === kind ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
+                    className={`rounded-md px-2.5 py-1 ${scopeKind === kind ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}
                   >
                     {kind === "workload" ? "Workload" : kind === "subscription" ? "Subscription" : "Management group"}
                   </button>
@@ -738,7 +738,7 @@ export function BackupManagerPanel() {
               )}
             </div>
             {scopeKind === "subscription" && (
-              <PortalLink subscriptionId={subId} portalHost={portalHost} label="Open selected subscription" className="rounded border px-2 py-1 text-xs" />
+              <PortalLink subscriptionId={subId} portalHost={portalHost} label="Open selected subscription" className="rounded-sm border px-2 py-1 text-xs" />
             )}
             {scopeKind === "management_group" && analyzed && (
               <span className="text-[11px] text-gray-500" title={snapshot?.scope.scope_id}>
@@ -759,7 +759,7 @@ export function BackupManagerPanel() {
                 title={analyzed
                   ? "Download every Backup Manager section from the last completed analysis."
                   : "Analyze backups before exporting a review pack."}
-                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {exportingWorkbook ? "Preparing workbook…" : "⬇ Excel review pack"}
               </button>
@@ -1091,13 +1091,13 @@ function InventoryTab({ snapshot, scope, caps, onBanner, portalHost }: {
                         <button
                           onClick={() => backupNowM.mutate(row.id)}
                           disabled={backupNowM.isPending || row.protection_stopped}
-                          className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
+                          className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
                         >Back up now</button>
                         {!row.protection_stopped && (
                           <button
                             onClick={() => stopM.mutate(row.id)}
                             disabled={stopM.isPending}
-                            className="rounded border px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                            className="rounded-sm border px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 disabled:opacity-40"
                             title="Stops future backups but keeps every existing recovery point"
                           >Stop (retain data)</button>
                         )}
@@ -1151,14 +1151,14 @@ function InventoryTab({ snapshot, scope, caps, onBanner, portalHost }: {
             </dl>
             <div className="mt-3 flex flex-wrap gap-2 border-t pt-3 text-xs">
               {selected.orphaned ? (
-                <span className="rounded bg-gray-100 px-2 py-1 text-gray-600">Source deleted</span>
+                <span className="rounded-sm bg-gray-100 px-2 py-1 text-gray-600">Source deleted</span>
               ) : (
-                <PortalLink resourceId={selected.datasource_id} portalHost={portalHost} label="Open source resource" className="rounded border px-2 py-1" />
+                <PortalLink resourceId={selected.datasource_id} portalHost={portalHost} label="Open source resource" className="rounded-sm border px-2 py-1" />
               )}
-              <PortalLink resourceId={selected.id} portalHost={portalHost} label="Open protected item" className="rounded border px-2 py-1" />
-              <PortalLink resourceId={selected.vault_id} portalHost={portalHost} label="Open vault" className="rounded border px-2 py-1" />
-              <PortalLink resourceId={selected.policy_id} portalHost={portalHost} label="Open policy" className="rounded border px-2 py-1" />
-              <PortalLink subscriptionId={selected.subscription_id} portalHost={portalHost} label="Open subscription" className="rounded border px-2 py-1" />
+              <PortalLink resourceId={selected.id} portalHost={portalHost} label="Open protected item" className="rounded-sm border px-2 py-1" />
+              <PortalLink resourceId={selected.vault_id} portalHost={portalHost} label="Open vault" className="rounded-sm border px-2 py-1" />
+              <PortalLink resourceId={selected.policy_id} portalHost={portalHost} label="Open policy" className="rounded-sm border px-2 py-1" />
+              <PortalLink subscriptionId={selected.subscription_id} portalHost={portalHost} label="Open subscription" className="rounded-sm border px-2 py-1" />
             </div>
             {selected.last_error_message && (
               <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
@@ -1303,7 +1303,7 @@ function JobsTab({ snapshot, scope, caps, onBanner, portalHost }: {
                   <td className="px-3 py-2 text-right">
                     {canWrite && (
                       <button onClick={() => retryM.mutate(row.instance_id)} disabled={retryM.isPending}
-                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40">
+                        className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40">
                         Back up now
                       </button>
                     )}
@@ -1411,7 +1411,7 @@ function JobsTab({ snapshot, scope, caps, onBanner, portalHost }: {
                   <td className="px-3 py-2 text-right">
                     {canWrite && job.status_bucket === "running" && (
                       <button onClick={() => cancelM.mutate(job.id)} disabled={cancelM.isPending}
-                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40">Cancel</button>
+                        className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40">Cancel</button>
                     )}
                   </td>
                 </tr>
@@ -1550,7 +1550,7 @@ function PoliciesTab({ snapshot, scope, caps, portalHost }: { snapshot: BackupSn
                     disabled={caps?.analysis_only_scope}
                     title={caps?.analysis_only_scope ? "Narrow to a workload or subscription to model a retention change." : undefined}
                     onClick={() => { setImpactFor(policy); setProposed(policy.retention_days ?? 30); impactM.reset(); }}
-                    className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                   >Model retention change</button>
                 </td>
               </tr>
@@ -1727,7 +1727,7 @@ function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId, portalHost }
                   </div>
                   <span className="text-gray-400">{isOpen ? "▲" : "▼"}</span>
                 </button>
-                <PortalLink resourceId={vault.vault_id} portalHost={portalHost} label="Open vault" className="mr-4 rounded border px-2 py-1 text-xs" />
+                <PortalLink resourceId={vault.vault_id} portalHost={portalHost} label="Open vault" className="mr-4 rounded-sm border px-2 py-1 text-xs" />
               </div>
               {isOpen && (
                 <div className="border-t px-4 py-3">
@@ -1774,7 +1774,7 @@ function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId, portalHost }
                           resourceId={workspaceId}
                           portalHost={portalHost}
                           label={`Open diagnostic workspace ${index + 1}`}
-                          className="rounded border px-2 py-1"
+                          className="rounded-sm border px-2 py-1"
                         />
                       ))}
                     </div>
@@ -2123,10 +2123,10 @@ function DrTab({ snapshot, scope, caps, onBanner, portalHost }: {
                     {canDrill && (
                       item.test_failover_active ? (
                         <button onClick={() => cleanupM.mutate(item.id)} disabled={cleanupM.isPending}
-                          className="rounded border px-2 py-1 text-xs hover:bg-gray-50">Clean up drill</button>
+                          className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50">Clean up drill</button>
                       ) : (
                         <button onClick={() => failoverM.mutate(item.id)} disabled={failoverM.isPending}
-                          className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                          className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50"
                           title="Isolated (no-network) test failover, approval-gated">Run test failover</button>
                       )
                     )}
@@ -2231,9 +2231,9 @@ function DrTab({ snapshot, scope, caps, onBanner, portalHost }: {
                     {canDrill && ["scheduled", "in_progress"].includes(drill.status) && (
                       <div className="flex justify-end gap-1">
                         <button onClick={() => outcomeM.mutate({ id: drill.id, status: "passed" })}
-                          className="rounded border px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">Passed</button>
+                          className="rounded-sm border px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">Passed</button>
                         <button onClick={() => outcomeM.mutate({ id: drill.id, status: "failed" })}
-                          className="rounded border px-2 py-1 text-xs text-rose-700 hover:bg-rose-50">Failed</button>
+                          className="rounded-sm border px-2 py-1 text-xs text-rose-700 hover:bg-rose-50">Failed</button>
                       </div>
                     )}
                   </td>
@@ -2699,11 +2699,11 @@ function ChangesTab({ scope, caps, onBanner, portalHost }: { scope: BackupManage
                   <td className="px-3 py-2 text-right">
                     {canApprove && change.requires_dual_approval && change.status === "pending" && (
                       <button onClick={() => singleDecideM.mutate({ id: change.id, decision: "approved" })}
-                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50">Approve</button>
+                        className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50">Approve</button>
                     )}
                     {canApprove && change.can_rollback && (
                       <button onClick={() => rollbackM.mutate(change.id)} disabled={rollbackM.isPending}
-                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50">Roll back</button>
+                        className="rounded-sm border px-2 py-1 text-xs hover:bg-gray-50">Roll back</button>
                     )}
                   </td>
                 </tr>

@@ -161,7 +161,7 @@ function AnalysisProgress({ job }: { job?: ResiliencyJob | null }) {
               Elapsed {elapsedText(job.started_at, job.finished_at)}
             </span>
             {running && (
-              <span className="rounded bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">
+              <span className="rounded-sm bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">
                 Running on server
               </span>
             )}
@@ -386,7 +386,7 @@ export function ResiliencyPanel() {
                 {(["workload", "subscription"] as const).map((k) => (
                   <button key={k} type="button" aria-pressed={scopeKind === k}
                           onClick={() => setScopeKind(k)}
-                          className={`rounded-md px-2.5 py-1 ${scopeKind === k ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
+                          className={`rounded-md px-2.5 py-1 ${scopeKind === k ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}>
                     {k === "workload" ? "Workload" : "Subscription"}
                   </button>
                 ))}
@@ -470,7 +470,7 @@ export function ResiliencyPanel() {
             <p>Could not load the saved recovery analysis. {formatError(snapshot.error)}</p>
             {snap?.report_exists && <p className="mt-1 text-xs">Showing the last loaded analysis.</p>}
             <button onClick={() => void snapshot.refetch()} disabled={snapshot.isFetching}
-                    className="mt-2 rounded border border-rose-300 px-2 py-1 text-xs font-medium disabled:opacity-50">
+                    className="mt-2 rounded-sm border border-rose-300 px-2 py-1 text-xs font-medium disabled:opacity-50">
               {snapshot.isFetching ? "Retrying…" : "Retry saved analysis"}
             </button>
           </div>
@@ -487,7 +487,7 @@ export function ResiliencyPanel() {
               {scenarios.length > 0 && " Showing the last loaded scenario definitions."}</p>
             {!meta.isPending && (
               <button onClick={() => void meta.refetch()} disabled={meta.isFetching}
-                      className="mt-2 rounded border border-amber-300 px-2 py-1 font-medium disabled:opacity-50">
+                      className="mt-2 rounded-sm border border-amber-300 px-2 py-1 font-medium disabled:opacity-50">
                 {meta.isFetching ? "Retrying…" : "Retry scenario definitions"}
               </button>
             )}
@@ -537,7 +537,7 @@ export function ResiliencyPanel() {
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <input value={search} onChange={(e) => setSearch(e.target.value)}
                          placeholder="Filter resources…" data-testid="resiliency-search"
-                         className="rounded border px-2 py-1 text-xs" />
+                         className="rounded-sm border px-2 py-1 text-xs" />
                   <Legend />
                 </div>
                 <ScenarioHeatmap rows={rows} scenarios={scenarios} classLabels={classLabels}
@@ -689,7 +689,7 @@ function TrendStrip({ trend }: { trend: ResiliencyTrend | undefined }) {
         </span>
       </div>
       {trend.reading_degraded && (
-        <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900"
+        <div className="mt-2 rounded-sm border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900"
              data-testid="resiliency-trend-caveat">
           <span className="font-semibold">Not necessarily an improvement.</span>{" "}
           {trend.caveat}
@@ -771,7 +771,7 @@ function AnalysisTab({ data, loading, classLabels }: {
           </div>
           <select value={scenario} onChange={(e) => setScenario(e.target.value)}
                   data-testid="analysis-scenario"
-                  className="rounded border px-2 py-1 text-xs">
+                  className="rounded-sm border px-2 py-1 text-xs">
             <option value="">All scenarios</option>
             {scenarios.map((s) => (
               <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
@@ -887,7 +887,7 @@ function ResourcesTab({ rows, search, setSearch, portalHost, onOpen }: {
     <div className="rounded-xl border bg-white p-4">
       <input value={search} onChange={(e) => setSearch(e.target.value)}
              placeholder="Filter resources…"
-             className="mb-2 rounded border px-2 py-1 text-xs" />
+             className="mb-2 rounded-sm border px-2 py-1 text-xs" />
       <table className="w-full text-xs">
         <thead>
           <tr className="text-left text-gray-500">
@@ -948,7 +948,7 @@ function TargetsTab({
         {(["breaches", "objectives"] as const).map((v) => (
           <button key={v} type="button" aria-pressed={view === v}
                   onClick={() => setView(v)} data-testid={`targets-view-${v}`}
-                  className={`rounded-md px-2.5 py-1 ${view === v ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
+                  className={`rounded-md px-2.5 py-1 ${view === v ? "bg-white font-medium text-gray-900 shadow-xs" : "text-gray-500"}`}>
             {v === "breaches" ? "Breaches" : "Objectives & rates"}
           </button>
         ))}
@@ -964,7 +964,7 @@ function TargetsTab({
           </p>
           <button onClick={() => void onAcknowledge()} data-testid="resiliency-acknowledge"
                   disabled={!canEdit}
-                  className="mt-2 rounded bg-gray-900 px-2 py-1 text-[11px] text-white disabled:opacity-50">
+                  className="mt-2 rounded-sm bg-gray-900 px-2 py-1 text-[11px] text-white disabled:opacity-50">
             Acknowledge these objectives
           </button>
         </div>
@@ -1046,17 +1046,17 @@ function BreachTable({ breaches, classLabels, onOpen }: {
           <span>Group by</span>
           <select value={grouped.groupBy} onChange={(e) => grouped.setGroupBy(e.target.value)}
                   data-testid="breaches-group-by"
-                  className="rounded border px-1.5 py-0.5 text-[11px]">
+                  className="rounded-sm border px-1.5 py-0.5 text-[11px]">
             <option value="none">Nothing</option>
             {BREACH_DIMENSIONS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
           </select>
         </label>
         {sections && (
           <>
-            <button onClick={grouped.collapseAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+            <button onClick={grouped.collapseAll} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">
               Collapse all
             </button>
-            <button onClick={grouped.expandAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+            <button onClick={grouped.expandAll} className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">
               Expand all
             </button>
             <span className="text-gray-400">{sections.length} groups</span>

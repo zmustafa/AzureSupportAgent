@@ -17,7 +17,7 @@ const STEP_LABEL: Record<string, string> = {
   resolve: "Resolve FQDN",
   cname: "CNAME chain",
   classify: "Public / private",
-  hosts: "Hosts shadow",
+  hosts: "Hosts shadow-sm",
   gate: "Gate",
 };
 const MARK: Record<string, string> = { ok: "✓", fail: "✗", warn: "⚠", skip: "–" };
@@ -152,7 +152,7 @@ export function DnsDebugModal({
       <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-semibold text-gray-900">🧭 Debug Private Endpoint resolution</div>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          <button onClick={onClose} className="rounded-sm p-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -160,7 +160,7 @@ export function DnsDebugModal({
           <div className="text-xs">
             <div className="mb-1 font-medium text-gray-700">Target FQDN</div>
             <input value={fqdn} onChange={(e) => setFqdn(e.target.value)} placeholder="e.g. shopassets.blob.core.windows.net"
-              className="w-full rounded border px-2 py-1.5" />
+              className="w-full rounded-sm border px-2 py-1.5" />
           </div>
 
           <div className="mt-3 text-xs">
@@ -189,7 +189,7 @@ export function DnsDebugModal({
               </>
             )}
             <input value={vnetId} onChange={(e) => setVnetId(e.target.value)} placeholder="Source VNet resource id (optional, for zone-link check)"
-              className="mt-2 w-full rounded border px-2 py-1.5" />
+              className="mt-2 w-full rounded-sm border px-2 py-1.5" />
           </div>
 
           <div className="mt-3 flex items-center gap-2">
@@ -203,7 +203,7 @@ export function DnsDebugModal({
           {/* Verdict */}
           {run && (
             <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs">
-              <span className={`mr-2 rounded px-2 py-0.5 font-medium ${CLASS_CLS[run.overall_classification] ?? ""}`}>{run.overall_classification?.toUpperCase()}</span>
+              <span className={`mr-2 rounded-sm px-2 py-0.5 font-medium ${CLASS_CLS[run.overall_classification] ?? ""}`}>{run.overall_classification?.toUpperCase()}</span>
               <span className="text-gray-700">{run.verdict}</span>
             </div>
           )}
@@ -216,12 +216,12 @@ export function DnsDebugModal({
                   <div className="flex items-center justify-between border-b px-3 py-1.5">
                     <span className="text-xs font-medium text-gray-800">{col.source}</span>
                     {col.result && (
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${CLASS_CLS[col.result.classification] ?? ""}`}>
+                      <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${CLASS_CLS[col.result.classification] ?? ""}`}>
                         {col.result.classification}{col.result.resolved_ip ? ` · ${col.result.resolved_ip}` : ""}
                       </span>
                     )}
                     {diffBySource[col.source] && (
-                      <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">{diffBySource[col.source].from} → {diffBySource[col.source].to}</span>
+                      <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">{diffBySource[col.source].from} → {diffBySource[col.source].to}</span>
                     )}
                   </div>
                   <div className="space-y-1 p-2">
@@ -235,7 +235,7 @@ export function DnsDebugModal({
                       </div>
                     ))}
                     {col.result?.verdict && col.result.classification !== "private" && (
-                      <div className="mt-1 rounded border border-amber-200 bg-amber-50 p-1.5 text-[10px] text-amber-800">{col.result.verdict}</div>
+                      <div className="mt-1 rounded-sm border border-amber-200 bg-amber-50 p-1.5 text-[10px] text-amber-800">{col.result.verdict}</div>
                     )}
                   </div>
                 </div>
@@ -263,9 +263,9 @@ export function DnsDebugModal({
             <div className="mt-2">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs font-medium text-gray-700">Bicep remediation</span>
-                <button onClick={() => download(iac, "dns-fix.bicep")} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">⬇ Download</button>
+                <button onClick={() => download(iac, "dns-fix.bicep")} className="rounded-sm border px-2 py-0.5 text-[11px] hover:bg-gray-50">⬇ Download</button>
               </div>
-              <pre className="max-h-56 overflow-auto rounded bg-gray-900 p-2 text-[10px] leading-tight text-gray-100">{iac}</pre>
+              <pre className="max-h-56 overflow-auto rounded-sm bg-gray-900 p-2 text-[10px] leading-tight text-gray-100">{iac}</pre>
             </div>
           )}
 

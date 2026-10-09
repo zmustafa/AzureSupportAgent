@@ -246,7 +246,7 @@ function WorkloadChip({ name, via, onClick }: { name: string; via: string; onCli
   return (
     <button onClick={onClick} className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:border-brand/40 hover:text-brand" title={lbl ? `Member ${lbl}` : "Explicit member"}>
       {name}
-      {lbl && <span className="rounded bg-amber-50 px-1 text-[9px] text-amber-600">{lbl}</span>}
+      {lbl && <span className="rounded-sm bg-amber-50 px-1 text-[9px] text-amber-600">{lbl}</span>}
     </button>
   );
 }
@@ -322,7 +322,7 @@ function KeepInControl({
   }
   return (
     <div className="flex items-center gap-1.5">
-      <select value={keep} onChange={(e) => setKeep(e.target.value)} className="rounded border px-1.5 py-1 text-[11px]">
+      <select value={keep} onChange={(e) => setKeep(e.target.value)} className="rounded-sm border px-1.5 py-1 text-[11px]">
         {explicit.map((w) => (
           <option key={w.id} value={w.id}>{w.name}</option>
         ))}
@@ -349,7 +349,7 @@ function PairList({ pairs, onPick }: { pairs: WorkloadOverlaps["by_pair"]; onPic
           <span className="min-w-0 flex-1 truncate text-gray-700">
             <span className="font-medium">{p.a.name}</span> <span className="text-gray-400">↔</span> <span className="font-medium">{p.b.name}</span>
           </span>
-          <span className="h-2 rounded bg-amber-300" style={{ width: `${Math.max(8, (p.shared_count / max) * 160)}px` }} />
+          <span className="h-2 rounded-sm bg-amber-300" style={{ width: `${Math.max(8, (p.shared_count / max) * 160)}px` }} />
           <span className="w-16 text-right tabular-nums text-xs text-gray-600">{p.shared_count} shared</span>
         </button>
       ))}

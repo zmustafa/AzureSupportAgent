@@ -71,7 +71,7 @@ export function UserMenu({ user, onLogout, onRefresh }: { user: Me; onLogout: ()
               value={activeRole}
               disabled={busy || roles.length <= 1}
               onChange={(e) => void switchRole(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-brand-dark focus:border-brand-dark focus:outline-none disabled:opacity-60"
+              className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-brand-dark focus:border-brand-dark focus:outline-hidden disabled:opacity-60"
             >
               {roles.map((r) => (
                 <option key={r} value={r}>{roleLabel(r)}</option>
@@ -133,7 +133,7 @@ function ProfileModal({ user, roles, onClose, onSaved }: { user: Me; roles: stri
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-white text-slate-700 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-5 py-3">
           <h3 className="font-semibold text-slate-900">Update Profile</h3>
@@ -179,7 +179,7 @@ function ProfileModal({ user, roles, onClose, onSaved }: { user: Me; roles: stri
 }
 
 const inputCls =
-  "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none";
+  "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-hidden";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

@@ -525,7 +525,7 @@ export function QuotaMonitorPanel() {
                       value={regionQuery}
                       onChange={(e) => setRegionQuery(e.target.value)}
                       placeholder="Search region / geography…"
-                      className="m-1.5 rounded border px-2 py-1 text-xs"
+                      className="m-1.5 rounded-sm border px-2 py-1 text-xs"
                     />
                     <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-1.5">
                       {regionsQ.isLoading && <div className="px-2 py-1 text-xs text-gray-400">Loading regions…</div>}
@@ -550,17 +550,17 @@ export function QuotaMonitorPanel() {
                             </button>
                           </div>
                           {regs.map((r) => (
-                            <label key={r.name} className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-gray-50">
+                            <label key={r.name} className="flex items-center gap-2 rounded-sm px-2 py-1 text-xs hover:bg-gray-50">
                               <input type="checkbox" checked={selRegions.includes(r.name)} onChange={() => toggleRegion(r.name)} />
                               <span className="min-w-0 flex-1 truncate" title={`${r.name}${r.physical_location ? ` · ${r.physical_location}` : ""}${r.paired_region ? ` · paired: ${r.paired_region}` : ""}`}>
                                 {r.display_name}
                                 {r.physical_location && <span className="ml-1 text-[10px] text-gray-400">{r.physical_location}</span>}
                               </span>
                               {r.has_availability_zones && (
-                                <span className="shrink-0 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600" title="Availability zones">AZ</span>
+                                <span className="shrink-0 rounded-sm bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600" title="Availability zones">AZ</span>
                               )}
                               {r.category === "Recommended" && (
-                                <span className="shrink-0 rounded bg-blue-50 px-1 py-0.5 text-[9px] font-medium text-blue-600" title="Recommended region">★</span>
+                                <span className="shrink-0 rounded-sm bg-blue-50 px-1 py-0.5 text-[9px] font-medium text-blue-600" title="Recommended region">★</span>
                               )}
                             </label>
                           ))}
@@ -585,7 +585,7 @@ export function QuotaMonitorPanel() {
                     <button className="text-[11px] text-gray-400 hover:underline" onClick={() => setShowCats(false)}>Close</button>
                   </div>
                   {allCats.map((c) => (
-                    <label key={c} className="flex items-center gap-2 rounded px-2 py-1 text-xs capitalize hover:bg-gray-50">
+                    <label key={c} className="flex items-center gap-2 rounded-sm px-2 py-1 text-xs capitalize hover:bg-gray-50">
                       <input type="checkbox" checked={selCats.includes(c)} onChange={() => toggleCat(c)} />
                       <span>{c}</span>
                     </label>
@@ -761,7 +761,7 @@ export function QuotaMonitorPanel() {
             {/* Table (virtualized) */}
             <div ref={tableScrollRef} className="max-h-[60vh] overflow-auto rounded-lg border bg-white">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500 shadow-sm">
+                <thead className="sticky top-0 z-10 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500 shadow-xs">
                   <tr>
                     <Th k="quota" label="Quota" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <Th k="sku_family" label="SKU family" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -792,7 +792,7 @@ export function QuotaMonitorPanel() {
                       </td>
                       <td className="px-3 py-2 text-xs text-gray-600">
                         {r.sku_family
-                          ? <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{r.sku_family}</span>
+                          ? <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{r.sku_family}</span>
                           : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-xs text-gray-600">{r.region || "—"}</td>
@@ -804,7 +804,7 @@ export function QuotaMonitorPanel() {
                       <td className="px-3 py-2 text-xs text-gray-600">{r.adjustable_status}</td>
                       <td className="px-3 py-2 text-[11px] text-gray-500">{SOURCE_LABEL[r.source_type] ?? r.source_type}</td>
                       <td className="px-3 py-2">
-                        <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${RISK_BADGE[r.risk_level] ?? "bg-gray-100 text-gray-600"}`}>
+                        <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${RISK_BADGE[r.risk_level] ?? "bg-gray-100 text-gray-600"}`}>
                           {RISK_LABEL[r.risk_level] ?? r.risk_level}
                         </span>
                       </td>
@@ -863,13 +863,13 @@ export function QuotaMonitorPanel() {
                 <div className="truncate text-xs text-violet-600">{scan?.status || "Working…"}</div>
               </div>
               <span className="shrink-0 tabular-nums text-xs text-violet-500">{fmtElapsed(scanElapsed)}</span>
-              <button onClick={() => setScanMinimized(true)} title="Run in background" className="shrink-0 rounded border px-2 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50">— Minimise</button>
+              <button onClick={() => setScanMinimized(true)} title="Run in background" className="shrink-0 rounded-sm border px-2 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50">— Minimise</button>
             </div>
             <div className="max-h-72 overflow-y-auto bg-white px-4 py-2 font-mono text-[11px] leading-relaxed text-gray-600">
               {(scan?.log ?? []).map((l, i) => (
                 <div key={i} className="flex gap-2">
                   <span className="shrink-0 text-gray-400">{l.t}</span>
-                  <span className="min-w-0 flex-1 break-words">{l.msg}</span>
+                  <span className="min-w-0 flex-1 wrap-break-word">{l.msg}</span>
                 </div>
               ))}
               <div ref={logEndRef} />
@@ -946,7 +946,7 @@ export function QuotaMonitorPanel() {
             {drawer.raw_provider_response != null && (
               <details className="mt-3">
                 <summary className="cursor-pointer text-xs font-medium text-gray-600">Raw provider response</summary>
-                <pre className="mt-1 max-h-72 overflow-auto rounded bg-gray-900 p-2 text-[10px] leading-relaxed text-gray-100">
+                <pre className="mt-1 max-h-72 overflow-auto rounded-sm bg-gray-900 p-2 text-[10px] leading-relaxed text-gray-100">
                   {JSON.stringify(drawer.raw_provider_response, null, 2)}
                 </pre>
               </details>

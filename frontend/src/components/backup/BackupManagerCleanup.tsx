@@ -96,12 +96,12 @@ function StoredSnapshots({ canPurge }: { canPurge: boolean }) {
             {stats?.orphans ? ` · ${stats.orphans} orphaned (${fmtBytes(stats.orphan_bytes)})` : ""}
           </span>
           {orphans.length > 0 && (
-            <button onClick={() => selectMany(orphans)} className="rounded border px-2 py-1 hover:bg-gray-50">
+            <button onClick={() => selectMany(orphans)} className="rounded-sm border px-2 py-1 hover:bg-gray-50">
               Select orphaned ({orphans.length})
             </button>
           )}
           {older30.length > 0 && (
-            <button onClick={() => selectMany(older30)} className="rounded border px-2 py-1 hover:bg-gray-50">
+            <button onClick={() => selectMany(older30)} className="rounded-sm border px-2 py-1 hover:bg-gray-50">
               Older than 30 days ({older30.length})
             </button>
           )}
@@ -123,7 +123,7 @@ function StoredSnapshots({ canPurge }: { canPurge: boolean }) {
         <div className="border-b bg-red-50 px-4 py-2 text-xs text-red-800">
           Purge {selected.size} stored analysis{selected.size === 1 ? "" : "es"}? The scopes have to be analyzed
           again to come back. Nothing in Azure changes.
-          <button onClick={purge} className="ml-2 rounded bg-red-600 px-2 py-0.5 font-medium text-white">Yes, purge</button>
+          <button onClick={purge} className="ml-2 rounded-sm bg-red-600 px-2 py-0.5 font-medium text-white">Yes, purge</button>
           <button onClick={() => setConfirm(false)} className="ml-2 text-red-700 hover:underline">Cancel</button>
         </div>
       )}
@@ -166,9 +166,9 @@ function StoredSnapshots({ canPurge }: { canPurge: boolean }) {
                         <td className="px-2 py-1.5 tabular-nums text-gray-600">{fmtBytes(row.size_bytes)}</td>
                         <td className="px-2 py-1.5">
                           {row.orphan
-                            ? <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700" title={row.orphan_reasons.join(", ")}>orphaned</span>
-                            : row.partial ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">partial</span>
-                              : row.demo ? <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>
+                            ? <span className="rounded-sm bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700" title={row.orphan_reasons.join(", ")}>orphaned</span>
+                            : row.partial ? <span className="rounded-sm bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">partial</span>
+                              : row.demo ? <span className="rounded-sm bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo</span>
                                 : <span className="text-[10px] text-gray-400">ok</span>}
                         </td>
                       </tr>

@@ -67,7 +67,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-title"
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 px-4 backdrop-blur-[1px]"
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/50 px-4 backdrop-blur-[1px]"
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.stopPropagation();
@@ -90,13 +90,13 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               <button
                 ref={cancelRef}
                 onClick={() => close(false)}
-                className="rounded-lg border px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brand/40"
+                className="rounded-lg border px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-100 focus:outline-hidden focus:ring-2 focus:ring-brand/40"
               >
                 {state.opts.cancelLabel ?? "Cancel"}
               </button>
               <button
                 onClick={() => close(true)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium text-white transition focus:outline-none focus:ring-2 ${
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium text-white transition focus:outline-hidden focus:ring-2 ${
                   state.opts.destructive
                     ? "bg-red-600 hover:bg-red-700 focus:ring-red-400"
                     : "bg-brand hover:bg-brand/90 focus:ring-brand/40"

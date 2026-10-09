@@ -27,7 +27,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: str
   const tabBtn = (active: boolean) =>
     `inline-flex h-7 w-7 items-center justify-center rounded-md border text-gray-600 transition ${
       active
-        ? "border-gray-300 bg-white text-gray-900 shadow-sm"
+        ? "border-gray-300 bg-white text-gray-900 shadow-xs"
         : "border-transparent hover:border-gray-200 hover:bg-white/70"
     }`;
 
@@ -88,7 +88,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: str
       )}
 
       {fullscreen && svg && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-black/60 backdrop-blur-sm" onClick={() => setFullscreen(false)}>
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/60 backdrop-blur-xs" onClick={() => setFullscreen(false)}>
           <div className="flex items-center justify-between px-4 py-2 text-white">
             <span className="text-sm font-medium">Mermaid</span>
             <button onClick={() => setFullscreen(false)} title="Close (Esc)" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-white/80 transition hover:bg-white/20 hover:text-white">

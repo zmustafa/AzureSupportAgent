@@ -71,7 +71,7 @@ function UsageWindowPicker({
         onClick={() => setOpen((o) => !o)}
         aria-label="Usage window"
         title="The window the NEXT usage scan will read. The window the figures below were measured over is stated on the left."
-        className="flex items-center gap-1.5 rounded border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        className="flex items-center gap-1.5 rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
       >
         <span>🕒</span>
         <span>Last {days} days</span>
@@ -109,13 +109,13 @@ function UsageWindowPicker({
                 onChange={(e) => setCustom(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && apply(Number(custom))}
                 aria-label="Custom usage window in days"
-                className="w-20 rounded border px-2 py-1 text-sm"
+                className="w-20 rounded-sm border px-2 py-1 text-sm"
               />
               <span className="text-sm text-gray-600">days</span>
               <button
                 type="button"
                 onClick={() => apply(Number(custom))}
-                className="ml-auto rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-dark"
+                className="ml-auto rounded-sm bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-dark"
               >
                 Apply
               </button>
@@ -142,7 +142,7 @@ const CONFIDENCE_CLASS: Record<string, string> = {
 function Row({ r }: { r: IamRightsizeRecommendation }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded border bg-white">
+    <div className="rounded-sm border bg-white">
       {/* The disclosure control and the investigate jump are SIBLINGS, not nested. A button
           inside a button is invalid HTML, and the browser resolves it by swallowing the
           inner click — the link would render and simply never fire. */}
@@ -152,7 +152,7 @@ function Row({ r }: { r: IamRightsizeRecommendation }) {
           onClick={() => setOpen((v) => !v)}
           className="flex min-w-0 flex-1 items-baseline gap-2 px-3 py-2 text-left"
         >
-          <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${CONFIDENCE_CLASS[r.confidence] ?? "bg-gray-100"}`}>
+          <span className={`shrink-0 rounded-sm px-1.5 text-[10px] font-semibold uppercase ${CONFIDENCE_CLASS[r.confidence] ?? "bg-gray-100"}`}>
             {r.confidence}
           </span>
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">{r.principalName || r.principalId}</span>
@@ -186,7 +186,7 @@ function Row({ r }: { r: IamRightsizeRecommendation }) {
           )}
 
           {r.recommendation ? (
-            <div className="rounded border border-emerald-200 bg-emerald-50 p-2">
+            <div className="rounded-sm border border-emerald-200 bg-emerald-50 p-2">
               <div className="text-[11px] font-semibold text-emerald-900">Narrower proposal</div>
               <div className="text-[11px] text-emerald-900">
                 {r.recommendation.roles.join(" + ")} at {r.recommendation.scope}
@@ -197,7 +197,7 @@ function Row({ r }: { r: IamRightsizeRecommendation }) {
               </div>
             </div>
           ) : (
-            <div className="rounded border bg-gray-50 p-2 text-[11px] text-gray-700">{r.note}</div>
+            <div className="rounded-sm border bg-gray-50 p-2 text-[11px] text-gray-700">{r.note}</div>
           )}
         </div>
       )}
@@ -251,7 +251,7 @@ export function LeastPrivilegeTab() {
               type="button"
               onClick={() => scan.mutate()}
               disabled={scan.isPending}
-              className="rounded border bg-white px-2 py-1 text-xs text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-sm border bg-white px-2 py-1 text-xs text-gray-700 shadow-xs hover:bg-gray-50 disabled:opacity-50"
               title="Reads the Activity Log per subscription. Slow, and separate from the access refresh."
             >
               {scan.isPending ? "Scanning…" : "Scan usage"}
@@ -281,7 +281,7 @@ export function LeastPrivilegeTab() {
             different instructions: usage was never collected, or usage WAS collected but no
             role could be resolved to its actions so there was nothing to compare it against. */}
         {d && !d.measured && (d.unresolved_roles ?? 0) > 0 && (
-          <div data-testid="ciem-no-role-catalogue" className="rounded border border-red-300 bg-red-50 p-3">
+          <div data-testid="ciem-no-role-catalogue" className="rounded-sm border border-red-300 bg-red-50 p-3">
             <div className="text-xs font-semibold text-red-900">
               Nothing could be assessed — the role catalog is missing
             </div>
@@ -296,7 +296,7 @@ export function LeastPrivilegeTab() {
         )}
 
         {d && !d.measured && (d.unresolved_roles ?? 0) === 0 && (
-          <div data-testid="usage-unmeasured" className="rounded border border-amber-300 bg-amber-50 p-3">
+          <div data-testid="usage-unmeasured" className="rounded-sm border border-amber-300 bg-amber-50 p-3">
             <div className="text-xs font-semibold text-amber-900">Usage has not been collected</div>
             <p className="mt-1 text-[11px] text-amber-900">
               Nothing on this screen is a claim about what is unused. Run a usage scan to compare
@@ -309,7 +309,7 @@ export function LeastPrivilegeTab() {
         {d?.measured && (
           <>
             {(d.excluded.length > 0 || d.limitations.length > 0) && (
-              <div data-testid="ciem-limitations" className="mb-2 rounded border border-amber-300 bg-amber-50 p-2">
+              <div data-testid="ciem-limitations" className="mb-2 rounded-sm border border-amber-300 bg-amber-50 p-2">
                 <div className="mb-1 text-[11px] font-semibold text-amber-900">What this cannot see</div>
                 <ul className="space-y-1">
                   {[...new Set([...d.excluded, ...d.limitations])].map((l) => (
@@ -324,7 +324,7 @@ export function LeastPrivilegeTab() {
               ))}
             </div>
             {d.recommendations.length === 0 && (
-              <div className="rounded border bg-white p-3 text-xs text-gray-600">
+              <div className="rounded-sm border bg-white p-3 text-xs text-gray-600">
                 Nothing crossed the over-privilege threshold in this window. Read the limitations
                 above before taking that as a clean result.
               </div>

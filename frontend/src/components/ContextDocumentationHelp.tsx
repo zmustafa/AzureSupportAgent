@@ -21,7 +21,7 @@ export function ContextDocumentationHelp({ pathname }: { pathname: string }) {
         rel="noopener noreferrer"
         aria-label={`Open ${docs.label} documentation`}
         title={`Feature guide for ${docs.label}`}
-        className="inline-flex items-center gap-1 rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-white/80 no-underline hover:bg-white/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/40"
+        className="inline-flex items-center gap-1 rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-white/80 no-underline hover:bg-white/20 hover:text-white focus:outline-hidden focus:ring-2 focus:ring-white/40"
       >
         <span aria-hidden>?</span><span>{docs.label}</span><span aria-hidden className="text-[9px]">↗</span>
       </a>
@@ -32,7 +32,7 @@ export function ContextDocumentationHelp({ pathname }: { pathname: string }) {
           rel="noopener noreferrer"
           aria-label={`Open ${docs.label} how-to guide`}
           title={`How-to guide for ${docs.label}`}
-          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-white/60 no-underline hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/40"
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-white/60 no-underline hover:bg-white/10 hover:text-white focus:outline-hidden focus:ring-2 focus:ring-white/40"
         >
           <span>How-to</span><span aria-hidden className="text-[9px]">↗</span>
         </a>

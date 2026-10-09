@@ -67,7 +67,7 @@ export const SEV_STYLE: Record<string, { label: string; chip: string; dot: strin
 
 export function SevBadge({ sev }: { sev: string }) {
   const m = SEV_STYLE[sev] ?? SEV_STYLE.info;
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${m.chip}`}>{m.label}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${m.chip}`}>{m.label}</span>;
 }
 
 // ============================================================================ sorting
@@ -284,7 +284,7 @@ const STATE_STYLE: Record<string, { label: string; chip: string }> = {
 export function StateChip({ state, title }: { state: string; title?: string }) {
   const m = STATE_STYLE[state] ?? STATE_STYLE.not_collected;
   return (
-    <span title={title} className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${m.chip}`}>
+    <span title={title} className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${m.chip}`}>
       {m.label}
     </span>
   );
@@ -325,7 +325,7 @@ export function FreshnessBadge({
         <button
           onClick={onRefresh}
           disabled={refreshing}
-          className="rounded border px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-sm border px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
@@ -380,7 +380,7 @@ export function CoverageBanner({ meta, onOpenSetup, compact }: { meta?: EntraMet
     // `compact` drops the full-width band so this can sit inline in a header row. Same
     // content and same expand behaviour — it only stops claiming a band of its own.
     <div className={compact
-      ? `min-w-0 max-w-full rounded border px-2 py-0.5 text-[11px] ${tone}`
+      ? `min-w-0 max-w-full rounded-sm border px-2 py-0.5 text-[11px] ${tone}`
       : `mx-4 mt-3 rounded-lg border px-3 py-2 text-[13px] ${tone}`}>
       <button
         onClick={() => setOpen(!open)}
@@ -405,7 +405,7 @@ export function CoverageBanner({ meta, onOpenSetup, compact }: { meta?: EntraMet
             {blind.length > 0 && (
               <li>
                 <span className="font-medium">Not permitted:</span> {blind.map((d) => d.name).join(", ")}
-                {missing.length > 0 && <> — missing <code className="rounded bg-amber-100 px-1">{missing.join(", ")}</code></>}
+                {missing.length > 0 && <> — missing <code className="rounded-sm bg-amber-100 px-1">{missing.join(", ")}</code></>}
               </li>
             )}
             {/* A whole domain lost to licensing never produces a blocker — the collector
@@ -489,12 +489,12 @@ export function EntraEmpty({
       )}
       <div className="mt-3 flex gap-2">
         {kind === "cold" && onRefresh && (
-          <button onClick={onRefresh} className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white">
+          <button onClick={onRefresh} className="rounded-sm bg-brand px-3 py-1.5 text-sm font-medium text-white">
             Refresh now
           </button>
         )}
         {(kind === "blind" || kind === "unlicensed") && onOpenSetup && (
-          <button onClick={onOpenSetup} className="rounded border px-3 py-1.5 text-sm font-medium text-gray-700">
+          <button onClick={onOpenSetup} className="rounded-sm border px-3 py-1.5 text-sm font-medium text-gray-700">
             Setup &amp; coverage
           </button>
         )}
@@ -654,10 +654,10 @@ export function EntraTimeWindow({
             .map(([text, ms]) => (
               <button key={text} onClick={() => onChange([maxTs - ms, maxTs])}
                       title={`The last ${text} of the loaded range`}
-                      className="rounded border px-1.5 py-0.5 hover:bg-gray-50">{text}</button>
+                      className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">{text}</button>
             ))}
           <button onClick={() => onChange(null)}
-                  className="rounded border px-1.5 py-0.5 hover:bg-gray-50">All</button>
+                  className="rounded-sm border px-1.5 py-0.5 hover:bg-gray-50">All</button>
         </div>
       </div>
 
@@ -693,7 +693,7 @@ export function EntraTimeWindow({
             );
           })}
         </div>
-        <div className="pointer-events-none absolute inset-y-0 rounded bg-brand/10"
+        <div className="pointer-events-none absolute inset-y-0 rounded-sm bg-brand/10"
              style={{ left: `${pct(lo)}%`, right: `${100 - pct(hi)}%` }} />
       </div>
 
@@ -754,11 +754,11 @@ export function BlockerList({ blockers }: { blockers: EntraBlocker[] }) {
         const meta = BLOCKER_META[b.kind] ?? BLOCKER_META.cap;
         return (
           <li key={`${b.kind}-${b.scope}-${i}`} className="flex flex-wrap items-baseline gap-x-1.5">
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.chip}`}>
+            <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${meta.chip}`}>
               {meta.label}
             </span>
             {b.scope && (
-              <code className="rounded bg-white/70 px-1 text-[11px]">{b.scope}</code>
+              <code className="rounded-sm bg-white/70 px-1 text-[11px]">{b.scope}</code>
             )}
             {b.subject && <span className="text-[11px] opacity-80">on {b.subject}</span>}
             <span>{b.text}</span>
