@@ -478,20 +478,20 @@ if ($Stage -eq 'image') {
         }
 
         docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest `
-            image --severity CRITICAL --quiet --format json $ImageRef 2>$null |
+            image --scanners vuln --quiet --format json $ImageRef 2>$null |
             Set-Variable trivyJson
         $trivyExit = $LASTEXITCODE
-        $crit = -1
+        $fixable = -1
         try {
             if ($trivyExit -ne 0) { throw 'Trivy execution failed' }
             $trivyReport = ConvertFrom-Json -InputObject ($trivyJson -join "`n") -ErrorAction Stop
             if (-not $trivyReport.SchemaVersion -or -not $trivyReport.ArtifactName) {
                 throw 'Trivy did not return an image report'
             }
-            $crit = @($trivyReport.Results.Vulnerabilities | Where-Object { $_.FixedVersion }).Count
-        } catch { $crit = -1 }
-        if ($crit -eq 0) {
-            Add-Check 'image CRITICAL CVEs with fixes' 'PASS'
+            $fixable = @($trivyReport.Results.Vulnerabilities | Where-Object { $_.FixedVersion }).Count
+        } catch { $fixable = -1 }
+        if ($fixable -eq 0) {
+            Add-Check 'image CVEs with fixes (all severities)' 'PASS'
             # A clean image CVE scan IS the 'container-cve' suite.
             $lp = Join-Path $repo '.security\deep-suite-ledger.json'
             if (Test-Path $lp) {
@@ -502,14 +502,14 @@ if ($Stage -eq 'image') {
                 }
             }
         }
-        elseif ($crit -lt 0) {
-            Add-Check 'image CRITICAL CVEs with fixes' 'ERROR'
+        elseif ($fixable -lt 0) {
+            Add-Check 'image CVEs with fixes (all severities)' 'ERROR'
             Add-Finding -Id 'S9.0-cve' -Severity 'BLOCKER' -Title 'Image vulnerability scan could not be verified' `
                 -Action 'Resolve the Trivy execution or report error before publishing the image.'
         }
         else {
-            Add-Check 'image CRITICAL CVEs with fixes' 'FAIL' "$crit fixable"
-            Add-Finding -Id 'S9.2' -Severity 'HIGH' -Title "$crit CRITICAL CVE(s) with an available upstream fix" `
+            Add-Check 'image CVEs with fixes (all severities)' 'FAIL' "$fixable fixable"
+            Add-Finding -Id 'S9.2' -Severity 'HIGH' -Title "$fixable CVE(s) with an available upstream fix" `
                 -Action 'Fixable CVEs are not acceptable to ship. Rebuild with updated packages.'
         }
     }

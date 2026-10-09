@@ -38,6 +38,11 @@ After updating those packages, scan the rebuilt image and verify that Azure CLI 
 its Resource Graph extension still load. Confirm fixes with fresh GitHub security
 scans rather than dismissing alerts solely because application requirements changed.
 
+Local image gates and GitHub container scanning fail on fixable vulnerabilities
+at every severity, including advisories whose severity is still unknown. A clean
+critical-only scan is not sufficient. The image rebuilds Azure Quick Review from
+checksum-verified source with separately pinned, patched Go and embedded modules.
+
 The frontend uses Tailwind 4 to avoid the unpatched `braces` dependency in the
 Tailwind 3 build chain. Its KaTeX override keeps Mermaid's transitive renderer on
 a patched release; validate diagram and math rendering when updating that override.

@@ -233,9 +233,11 @@ jobs:
           # and still reported in the deploy gate's image scan, which is where the action
           # (rebuild the image) actually lives.
           ignore-unfixed: true
+          scanners: vuln
+          exit-code: "1"
           format: sarif
           output: trivy.sarif
-          severity: HIGH,CRITICAL
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
       - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:

@@ -27,11 +27,9 @@ ENV VITE_APP_RELEASE=$APP_RELEASE
 RUN npm run build
 
 # ---- Stage 2: rebuild Azure Quick Review with a patched Go toolchain ----------------
-# azqr v4.0.1's official archive was built with Go 1.26.0. Its embedded standard library
-# has multiple fixed CVEs (including CVE-2026-56862). The source itself remains pinned to
-# the signed release commit; only the compiler is raised to the first release containing
-# every listed fix. This avoids waiting for another azqr release while preserving behavior.
-FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS azqr
+# Keep azqr's checksum-verified release source unchanged while patching the compiler and
+# embedded modules independently; upstream binary releases lag their security fixes.
+FROM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS azqr
 ARG AZQR_VERSION=4.0.1
 ARG AZQR_SOURCE_COMMIT=ffda262cbccc33bf4f472c07f81758839b165b1a
 ARG AZQR_SOURCE_SHA256=afef4ba8c09945668145d0a035da87922ec26ba1461077d2c1bf418a12e8321f
@@ -40,6 +38,8 @@ ARG AZQR_APRL_SHA256=9f5125e2992649057328c0fb8e7430d5eac0db574d07316b4876236a66a
 # The release source pins x/crypto v0.54.0, which contains CVE-2026-56854.
 # Override only that module to its first fixed release before compiling.
 ARG GO_X_CRYPTO_VERSION=v0.56.0
+ARG GO_X_NET_VERSION=v0.60.0
+ARG GO_EXCELIZE_VERSION=v2.11.1-0.20261003002531-6258dcebc4e2
 WORKDIR /src
 RUN curl -fsSLo /tmp/azqr.tar.gz \
         "https://github.com/Azure/azqr/archive/${AZQR_SOURCE_COMMIT}.tar.gz" \
@@ -50,8 +50,11 @@ RUN curl -fsSLo /tmp/azqr.tar.gz \
     && echo "${AZQR_APRL_SHA256}  /tmp/aprl.tar.gz" | sha256sum -c - \
     && mkdir -p internal/graph/aprl \
     && tar -xzf /tmp/aprl.tar.gz -C internal/graph/aprl --strip-components=1 \
-    && go get "golang.org/x/crypto@${GO_X_CRYPTO_VERSION}" \
-    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+    && GOTOOLCHAIN=local go get \
+        "golang.org/x/crypto@${GO_X_CRYPTO_VERSION}" \
+        "golang.org/x/net@${GO_X_NET_VERSION}" \
+        "github.com/xuri/excelize/v2@${GO_EXCELIZE_VERSION}" \
+    && GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
         -ldflags "-s -w -X github.com/Azure/azqr/cmd/azqr/commands.version=${AZQR_VERSION}" \
         -o /usr/local/bin/azqr ./cmd/azqr/main.go \
     && /usr/local/bin/azqr --version \
