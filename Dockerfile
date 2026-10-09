@@ -36,8 +36,8 @@ ARG AZQR_SOURCE_SHA256=afef4ba8c09945668145d0a035da87922ec26ba1461077d2c1bf418a1
 ARG AZQR_APRL_COMMIT=60eaddda76541f6adbc1c5ffa686829807e55e29
 ARG AZQR_APRL_SHA256=9f5125e2992649057328c0fb8e7430d5eac0db574d07316b4876236a66a10deb
 # The release source pins x/crypto v0.54.0, which contains CVE-2026-56854.
-# Override only that module to its first fixed release before compiling.
-ARG GO_X_CRYPTO_VERSION=v0.56.0
+# Align the patched modules on the x/crypto version required by x/net and Excelize.
+ARG GO_X_CRYPTO_VERSION=v0.57.0
 ARG GO_X_NET_VERSION=v0.60.0
 ARG GO_EXCELIZE_VERSION=v2.11.1-0.20261003002531-6258dcebc4e2
 WORKDIR /src
