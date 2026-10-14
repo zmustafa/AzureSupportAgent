@@ -19,7 +19,7 @@ azure-servicebus==7.14.3
 beartype==0.22.9
 boto3==1.43.108
 botocore==1.43.108
-cachetools==7.1.8
+cachetools==7.2.1
 caio==0.12.2
 certifi==2026.7.22
 cffi==2.1.1
