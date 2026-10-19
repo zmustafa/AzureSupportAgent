@@ -69,7 +69,7 @@ lxml==6.1.1
 Mako==1.4.2
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
-mcp==1.28.1
+mcp==1.30.0
 mdurl==0.1.2
 microsoft-kiota-abstractions==1.14.1
 microsoft-kiota-authentication-azure==1.14.1
