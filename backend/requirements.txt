@@ -115,7 +115,7 @@ requests==2.34.2
 rich==15.0.0
 rich-rst==2.1.0
 rpds-py==2026.5.1
-ruff==0.15.16
+ruff==0.17.1
 s3transfer==0.19.2
 signxml==5.1.0
 six==1.17.0
