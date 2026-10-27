@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.1",
-    "@tanstack/react-virtual": "^3.14.15",
+    "@tanstack/react-virtual": "^3.14.22",
     "@tiptap/extension-image": "^3.32.0",
     "@tiptap/extension-table": "^3.32.0",
     "@tiptap/extension-table-cell": "^3.32.0",
