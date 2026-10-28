@@ -92,7 +92,7 @@ packaging==26.3
 pathable==0.6.0
 platformdirs==4.13.0
 pluggy==1.6.0
-propcache==0.5.2
+propcache==0.5.4
 py-key-value-aio==0.4.5
 pycparser==3.0
 pydantic==2.13.4
