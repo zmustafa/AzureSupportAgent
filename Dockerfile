@@ -37,8 +37,8 @@ ARG AZQR_APRL_COMMIT=60eaddda76541f6adbc1c5ffa686829807e55e29
 ARG AZQR_APRL_SHA256=9f5125e2992649057328c0fb8e7430d5eac0db574d07316b4876236a66a10deb
 # The release source pins x/crypto v0.54.0, which contains CVE-2026-56854.
 # Align the patched modules on the x/crypto version required by x/net and Excelize.
-ARG GO_X_CRYPTO_VERSION=v0.57.0
-ARG GO_X_NET_VERSION=v0.60.0
+ARG GO_X_CRYPTO_VERSION=v0.58.0
+ARG GO_X_NET_VERSION=v0.62.0
 ARG GO_EXCELIZE_VERSION=v2.11.1-0.20261003002531-6258dcebc4e2
 WORKDIR /src
 RUN curl -fsSLo /tmp/azqr.tar.gz \
@@ -187,6 +187,7 @@ RUN python -m venv /opt/eidmcp \
     && /opt/eidmcp/bin/pip install --no-cache-dir \
         "cryptography>=50.0.0" "aiohttp>=3.14.4" "yarl>=1.25.1" "certifi>=2026.10.19" \
         "opentelemetry-api>=1.45.1" "opentelemetry-sdk>=1.45.1" \
+        "Authlib>=1.9.1" "dnspython>=2.9.0" "joserfc>=1.7.6" \
         azure-core azure-identity "mcp[cli]>=1.30.0,<2" "fastmcp>=3.4.11,<4" msgraph-core msgraph-sdk python-dotenv \
     && rm -rf /opt/eidmcp/lib/python*/site-packages/pip \
         /opt/eidmcp/lib/python*/site-packages/pip-*.dist-info \

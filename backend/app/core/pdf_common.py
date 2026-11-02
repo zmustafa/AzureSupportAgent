@@ -325,7 +325,7 @@ h1 {{ font-size: 17px; color: {BRAND}; margin: 0 0 8px 0; padding-bottom: 4px; b
       -pdf-outline: true; -pdf-outline-level: 0; -pdf-outline-open: false; -pdf-keep-with-next: true; }}
 h2 {{ font-size: 12.5px; color: {INK}; margin: 12px 0 5px 0;
       -pdf-outline: true; -pdf-outline-level: 1; -pdf-outline-open: false; -pdf-keep-with-next: true; }}
-h3 {{ font-size: 10.5px; color: {MUTED}; margin: 11px 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;
+h3 {{ font-size: 10.5px; color: {MUTED}; margin: 11px 0 4px 0; letter-spacing: 0.5px;
     -pdf-outline: true; -pdf-outline-level: 2; -pdf-outline-open: false; -pdf-keep-with-next: true; }}
 p {{ margin: 0 0 5px 0; }}
 .muted {{ color: {MUTED}; font-size: 9px; }}
@@ -369,7 +369,7 @@ a {{ color: {BRAND}; text-decoration: none; }}
 /* visual snapshot */
 .viz-grid {{ width: 100%; }}
 .viz-grid td {{ width: 50%; vertical-align: top; padding: 0 4px 8px 0; }}
-.viz-card {{ border: 0.5px solid {LINE}; border-radius: 4px; padding: 8px; page-break-inside: avoid; }}
+.viz-card {{ border: 0.5px solid {LINE}; border-radius: 4px; padding: 8px; }}
 .viz-title {{ font-size: 10.5px; font-weight: bold; color: {INK}; margin-bottom: 2px; }}
 .viz-sub {{ font-size: 8px; color: {MUTED}; margin-bottom: 5px; }}
 .viz-body {{ display: block; }}

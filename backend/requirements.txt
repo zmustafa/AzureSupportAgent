@@ -10,9 +10,9 @@ anyio==4.15.1
 argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
 asyncpg==0.31.0
-asyncssh==2.24.0
+asyncssh==2.24.1
 attrs==26.1.0
-Authlib==1.8.0
+Authlib==1.9.1
 azure-core==1.41.0
 azure-identity==1.26.0
 azure-servicebus==7.14.3
@@ -20,7 +20,7 @@ beartype==0.22.9
 boto3==1.43.108
 botocore==1.43.108
 cachetools==7.2.1
-caio==0.12.2
+caio==0.12.10
 certifi==2026.10.23
 cffi==2.1.1
 charset-normalizer==3.4.9
@@ -30,7 +30,7 @@ croniter==6.2.2
 cryptography==50.0.1
 cyclopts==4.22.4
 distro==1.9.0
-dnspython==2.8.0
+dnspython==2.9.0
 defusedxml==0.7.1
 docstring_parser==0.18.0
 email-validator==2.3.0
@@ -59,7 +59,7 @@ jaraco.context==6.1.2
 jaraco.functools==4.6.0
 jiter==0.16.0
 jmespath==1.1.0
-joserfc==1.7.4
+joserfc==1.7.6
 jsonref==1.1.0
 jsonschema==4.26.0
 jsonschema-path==0.5.0
@@ -92,7 +92,7 @@ packaging==26.3
 pathable==0.6.0
 platformdirs==4.13.0
 pluggy==1.6.0
-propcache==0.5.2
+propcache==0.5.4
 py-key-value-aio==0.4.5
 pycparser==3.0
 pydantic==2.13.4
@@ -121,7 +121,7 @@ signxml==5.1.0
 six==1.17.0
 sniffio==1.3.1
 SQLAlchemy==2.1.6
-sse-starlette==3.4.11
+sse-starlette==3.5.1
 starlette==1.6.0
 std-uritemplate==2.0.10
 tqdm==4.68.1
@@ -145,11 +145,11 @@ oscrypto==1.3.0
 pillow==13.0.0
 pyHanko==0.37.0
 pyhanko-certvalidator==0.32.1
-pypdf==6.21.2
+pypdf==6.21.4
 python-bidi==0.6.10
 reportlab==4.5.1
 svglib==2.2.0
 tinycss2==1.5.1
 tzlocal==5.4
 webencodings==0.5.1
-xhtml2pdf==0.2.17
+xhtml2pdf==0.2.27
