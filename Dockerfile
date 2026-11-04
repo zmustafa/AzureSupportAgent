@@ -29,7 +29,7 @@ RUN npm run build
 # ---- Stage 2: rebuild Azure Quick Review with a patched Go toolchain ----------------
 # Keep azqr's checksum-verified release source unchanged while patching the compiler and
 # embedded modules independently; upstream binary releases lag their security fixes.
-FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS azqr
+FROM golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS azqr
 ARG AZQR_VERSION=4.0.1
 ARG AZQR_SOURCE_COMMIT=ffda262cbccc33bf4f472c07f81758839b165b1a
 ARG AZQR_SOURCE_SHA256=afef4ba8c09945668145d0a035da87922ec26ba1461077d2c1bf418a12e8321f
