@@ -131,7 +131,7 @@ typing_extensions==4.16.0
 tzdata==2026.2
 uncalled-for==0.4.0
 urllib3==2.8.0
-uvicorn==0.52.1
+uvicorn==0.54.0
 watchfiles==1.2.0
 websockets==17.2
 yarl==1.25.1
